@@ -1,0 +1,1 @@
+BMI270 SPI timing and interrupt status register. Configure reset sequence before enabling normal mode.

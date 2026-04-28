@@ -1,0 +1,16 @@
+{
+  "name": "spi_protocol_skill",
+  "protocol": "spi",
+  "path": "C:\\Users\\Gugugu\\Documents\\Codex\\2026-04-24-review-spec-md-kimi-code-codex\\skill_library\\protocols\\spi\\SKILL.md",
+  "platforms": [
+    "stm32cubemx"
+  ],
+  "runtimes": [
+    "baremetal"
+  ],
+  "source_projects": [
+    "DirectF1C"
+  ],
+  "validation_count": 1,
+  "updated_at": "2026-04-24T19:45:27.230920"
+}

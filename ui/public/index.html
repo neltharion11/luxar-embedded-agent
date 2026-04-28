@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Luxar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-webkit-font-smoothing:antialiased;height:100vh;overflow:hidden}
+#app{display:flex;height:100vh}
+#sidebar{width:260px;min-width:260px;background:#fff;border-right:1px solid #e0e1e6;display:flex;flex-direction:column;height:100vh}
+#sidebar .logo{padding:20px 20px 12px;font-weight:800;font-size:20px;letter-spacing:-0.5px;color:#1c2024}
+#sidebar .logo span{color:#60646c;font-weight:400}
+.logo-row{display:flex;align-items:center;justify-content:space-between;padding:20px 16px 8px 20px}
+.logo-row .logo{padding:0}
+.sidebar-actions{display:flex;gap:6px}
+.sidebar-mini-btn{cursor:pointer;width:28px;height:28px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;color:#60646c;font-size:14px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:all .15s}
+.sidebar-mini-btn:hover{background:#1c2024;color:#fff;border-color:#1c2024}
+.sidebar-section{padding:8px 12px}
+.sidebar-section .label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#60646c;padding:4px 8px;margin-bottom:2px}
+.sidebar-project{cursor:pointer;padding:6px 8px;border-radius:8px;font-size:13px;color:#1c2024;transition:background .15s;display:flex;align-items:center;gap:8px}
+.sidebar-project:hover{background:#f0f0f3}
+.sidebar-project .dot{width:6px;height:6px;border-radius:50%;background:#b0b4ba;flex-shrink:0}
+.sidebar-project.active .dot{background:#0d74ce}
+.sidebar-project.active{font-weight:600}
+.sidebar-project .proj-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-project .proj-del{display:none;margin-left:auto;cursor:pointer;font-size:14px;color:#b0b4ba;padding:0 4px;border-radius:4px;flex-shrink:0}
+.sidebar-project:hover .proj-del{display:block}
+.sidebar-project .proj-del:hover{color:#e54d42;background:#fce4e4}
+.sidebar-global-chat{cursor:pointer;padding:8px;border-radius:8px;font-size:13px;font-weight:500;color:#0d74ce;transition:all .15s;display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.sidebar-global-chat:hover{background:#f0f0f3}
+.sidebar-global-chat.active{background:#0d74ce;color:#fff}
+.sidebar-section-label{padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px}
+#sidebar-projects{flex:1;overflow-y:auto;min-height:0}
+#sidebar-projects::-webkit-scrollbar{width:4px}
+#sidebar-projects::-webkit-scrollbar-thumb{background:#e0e1e6;border-radius:4px}
+#sidebar-projects::-webkit-scrollbar-track{background:transparent}
+.sidebar-nav{padding:4px 12px}
+.nav-item{cursor:pointer;padding:8px;border-radius:8px;font-size:13px;font-weight:500;color:#60646c;transition:all .15s;display:flex;align-items:center;gap:10px}
+.nav-item:hover{background:#f0f0f3;color:#1c2024}
+.nav-item.active{background:#1c2024;color:#fff}
+.nav-item .nav-icon{width:18px;text-align:center;flex-shrink:0;font-size:14px}
+#sidebar-bottom{padding:12px;border-top:1px solid #e0e1e6;display:flex;align-items:center;justify-content:space-between}
+.api-status{display:flex;align-items:center;gap:6px;font-size:12px;color:#60646c}
+.api-status .led{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0}
+#lang-btn{cursor:pointer;padding:4px 10px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;font-size:11px;font-weight:600;color:#1c2024;transition:background .15s}
+#lang-btn:hover{background:#f0f0f3}
+#main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+[data-page]{display:none;flex:1;overflow-y:auto;padding:24px 32px}
+[data-page].active{display:flex;flex-direction:column}
+[data-page].active:not([data-page="chat"]){display:block}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:#e0e1e6;border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+#chat-page{height:100%}
+#chat-messages{flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column;gap:16px;min-height:0}
+.chat-welcome{text-align:center;padding:40px 20px}
+.chat-welcome h2{font-size:24px;font-weight:700;color:#1c2024;margin-bottom:8px}
+.chat-welcome p{font-size:14px;color:#60646c;max-width:480px;margin:0 auto}
+.chat-landing{text-align:center;padding:40px 20px;max-width:480px;margin:0 auto}
+.chat-landing h2{font-size:28px;font-weight:800;color:#1c2024;margin-bottom:6px;letter-spacing:-1px}
+.chat-landing p{font-size:14px;color:#60646c;margin-bottom:28px}
+.landing-actions{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.landing-btn{cursor:pointer;padding:16px 32px;border-radius:16px;border:2px solid #e0e1e6;background:#fff;font-size:15px;font-weight:600;transition:all .2s;display:inline-flex;align-items:center;gap:8px}
+.landing-btn:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(28,32,36,.08)}
+.landing-btn-new:hover{border-color:#0d74ce;color:#0d74ce}
+.landing-btn-open:hover{border-color:#1c2024;color:#1c2024}
+.landing-slogan{margin-top:28px;font-size:16px;font-weight:300;color:#b0b4ba;letter-spacing:1px}
+.tab-switch{display:flex;gap:0;margin-bottom:20px;border:1px solid #e0e1e6;border-radius:10px;overflow:hidden}
+.tab-switch button{flex:1;cursor:pointer;padding:10px;border:none;background:#fff;font-size:13px;font-weight:500;color:#60646c;transition:all .15s}
+.tab-switch button.active{background:#1c2024;color:#fff}
+.tab-switch button:not(:last-child){border-right:1px solid #e0e1e6}
+.chat-bubble{max-width:75%;padding:12px 16px;border-radius:16px;font-size:14px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.chat-bubble.user{align-self:flex-end;background:#1c2024;color:#fff;border-bottom-right-radius:4px}
+.chat-bubble.assistant{align-self:flex-start;background:#fff;color:#1c2024;border:1px solid #e0e1e6;border-bottom-left-radius:4px}
+.chat-bubble.system{align-self:center;background:transparent;color:#60646c;font-size:12px;max-width:100%;text-align:center}
+#chat-input-area{padding:16px 0;border-top:1px solid #e0e1e6;display:flex;gap:8px;align-items:flex-end;background:#f0f0f3}
+#chat-input{flex:1;resize:none;border:1px solid #e0e1e6;border-radius:12px;padding:10px 14px;font-family:'Inter',sans-serif;font-size:14px;outline:none;background:#fff;color:#1c2024;max-height:120px;line-height:1.4;transition:border-color .15s}
+#chat-input:focus{border-color:#0d74ce}
+.chat-context-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chat-context-input{flex:1;min-width:220px;padding:8px 12px;border:1px solid #e0e1e6;border-radius:9999px;background:#fff;color:#60646c;font-size:12px;outline:none;transition:border-color .15s}
+.chat-context-input:focus{border-color:#0d74ce;color:#1c2024}
+.chat-attach-btn{cursor:pointer;padding:8px 10px;border:1px solid #e0e1e6;border-radius:9999px;background:#fff;font-size:14px;transition:all .15s;line-height:1}
+.chat-attach-btn:hover{background:#f0f0f3;border-color:#0d74ce}
+.attach-tag{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:9999px;background:#f0f0f3;color:#60646c;font-size:11px;font-weight:500;white-space:nowrap}
+.attach-tag:hover{background:#e0e1e6}
+.chat-toggle{display:none}
+.chat-context-input{display:none}
+.chat-context-row{display:none}
+.chat-toggle{cursor:pointer;padding:6px 12px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;font-size:11px;font-weight:600;color:#60646c;transition:all .15s;white-space:nowrap}
+.chat-toggle:hover{background:#f6f8fa;color:#1c2024}
+.chat-toggle.active{background:#1c2024;color:#fff;border-color:#1c2024}
+#chat-send-btn{cursor:pointer;padding:10px 20px;border-radius:9999px;border:none;background:#1c2024;color:#fff;font-size:13px;font-weight:600;transition:opacity .15s;white-space:nowrap}
+#chat-send-btn:hover{opacity:.85}
+#chat-send-btn:disabled{opacity:.4;cursor:not-allowed}
+#chat-stop-btn{cursor:pointer;padding:10px 16px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;color:#60646c;font-size:13px;font-weight:500;transition:all .15s;white-space:nowrap}
+#chat-stop-btn:hover{background:#f0f0f3;color:#1c2024;border-color:#1c2024}
+.typing-indicator{display:inline-flex;gap:4px;padding:8px 0;align-items:center}
+.typing-indicator span{width:6px;height:6px;border-radius:50%;background:#b0b4ba;animation:bounce 1.4s infinite ease-in-out}
+.typing-indicator span:nth-child(2){animation-delay:.2s}
+.typing-indicator span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
+.chat-bubble.assistant .md *{max-width:100%}
+.chat-bubble.assistant .md p{margin:0 0 8px;line-height:1.6}
+.chat-bubble.assistant .md p:last-child{margin-bottom:0}
+.chat-bubble.assistant .md pre{background:#f6f8fa;border:1px solid #e0e1e6;border-radius:8px;padding:12px 16px;overflow-x:auto;margin:8px 0}
+.chat-bubble.assistant .md code{font-family:'JetBrains Mono',monospace;font-size:12px}
+.chat-bubble.assistant .md :not(pre) > code{background:#f0f0f3;padding:2px 6px;border-radius:4px;font-size:12px}
+.chat-bubble.assistant .md ul,.chat-bubble.assistant .md ol{padding-left:20px;margin:4px 0 8px}
+.chat-bubble.assistant .md li{margin:2px 0}
+.chat-bubble.assistant .md h1,.chat-bubble.assistant .md h2,.chat-bubble.assistant .md h3{font-weight:600;margin:12px 0 6px}
+.chat-bubble.assistant .md h1{font-size:16px}
+.chat-bubble.assistant .md h2{font-size:14px}
+.chat-bubble.assistant .md h3{font-size:13px}
+.chat-bubble.assistant .md table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
+.chat-bubble.assistant .md th,.chat-bubble.assistant .md td{border:1px solid #e0e1e6;padding:6px 10px;text-align:left}
+.chat-bubble.assistant .md th{background:#f6f8fa;font-weight:600}
+.chat-bubble.assistant .md blockquote{border-left:3px solid #e0e1e6;padding-left:12px;margin:8px 0;color:#60646c}
+.chat-bubble.assistant .md hr{border:none;border-top:1px solid #e0e1e6;margin:12px 0}
+.chat-result-stack{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.chat-result-card{background:#f6f8fa;border:1px solid #e0e1e6;border-radius:12px;padding:12px 14px}
+.chat-result-card h4{font-size:12px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:#60646c;margin-bottom:8px}
+.chat-result-card ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px}
+.chat-result-card li{font-size:12px;line-height:1.55;color:#1c2024}
+.chat-result-card li span{color:#60646c}
+.chat-step-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:9999px;background:#fff;border:1px solid #e0e1e6;font-size:11px;font-weight:600;color:#60646c;margin:0 6px 6px 0}
+.chat-step-pill.success{color:#166534;border-color:#bbf7d0;background:#f0fdf4}
+.chat-step-pill.skipped{color:#9a6700;border-color:#fde68a;background:#fffbeb}
+.chat-step-pill.failed{color:#b42318;border-color:#fecaca;background:#fef2f2}
+.chat-step-wrap{display:flex;flex-wrap:wrap}
+.chat-typing-bar{font-size:11px;color:#b0b4ba;padding:6px 0 0;margin:0;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.stat-card{background:#fff;border:1px solid #e0e1e6;border-radius:12px;padding:20px}
+.stat-card .stat-label{font-size:13px;font-weight:500;color:#60646c;margin-bottom:4px}
+.stat-card .stat-value{font-size:28px;font-weight:700;color:#1c2024;letter-spacing:-0.5px}
+.card{background:#fff;border:1px solid #e0e1e6;border-radius:12px;padding:24px;margin-bottom:16px}
+.card h3{font-size:16px;font-weight:600;margin-bottom:16px;color:#1c2024}
+.page-header{margin-bottom:24px}
+.page-header h1{font-size:28px;font-weight:800;letter-spacing:-1px;color:#1c2024}
+.page-header p{font-size:14px;color:#60646c;margin-top:4px}
+.search-input{width:100%;padding:10px 14px;border:1px solid #e0e1e6;border-radius:10px;font-size:14px;outline:none;background:#fff;color:#1c2024;transition:border-color .15s}
+.search-input:focus{border-color:#0d74ce}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;font-weight:500;color:#60646c;margin-bottom:4px}
+.form-group input,.form-group textarea,.form-group select{width:100%;padding:9px 12px;border:1px solid #e0e1e6;border-radius:8px;font-size:13px;outline:none;background:#fff;color:#1c2024;transition:border-color .15s;font-family:'Inter',sans-serif}
+.form-group input:focus,.form-group textarea:focus,.form-group select:focus{border-color:#0d74ce}
+.form-group textarea{resize:vertical;min-height:60px}
+#pl-output{display:none}
+.btn-primary{cursor:pointer;padding:10px 24px;border-radius:9999px;border:none;background:#1c2024;color:#fff;font-size:13px;font-weight:600;transition:opacity .15s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary:hover{opacity:.85}
+.btn-secondary{cursor:pointer;padding:8px 16px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;color:#60646c;font-size:12px;font-weight:500;transition:background .15s}
+.btn-secondary:hover{background:#f0f0f3}
+.btn-group{display:flex;gap:8px;margin-top:16px}
+.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.config-section .card{margin-bottom:16px}
+input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
+.range-labels{display:flex;justify-content:space-between;font-size:11px;color:#b0b4ba;margin-top:2px}
+.mono{font-family:'JetBrains Mono',monospace}
+.empty-state{color:#b0b4ba;font-size:13px;text-align:center;padding:32px}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:500;margin-right:4px}
+.tag-black{background:#1c2024;color:#fff}
+.tag-cloud{background:#f0f0f3;color:#60646c}
+.tag-green{background:#dcfce7;color:#166534}
+.tag-red{background:#fce4e4;color:#b91c1c}
+.modal-shell{position:fixed;inset:0;background:rgba(20,24,28,.28);display:none;align-items:center;justify-content:center;z-index:40;padding:24px}
+.modal-shell.active{display:flex}
+.modal-card{width:min(520px,100%);background:#fff;border:1px solid #e0e1e6;border-radius:20px;box-shadow:0 24px 64px rgba(20,24,28,.14);padding:22px}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.modal-head h3{font-size:20px;font-weight:800;letter-spacing:-.03em;color:#1c2024}
+.modal-head p{font-size:13px;color:#60646c;margin-top:4px}
+.modal-close{cursor:pointer;border:none;background:transparent;font-size:20px;line-height:1;color:#60646c}
+.modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.modal-grid .form-group.full{grid-column:1/-1}
+.modal-status{font-size:12px;color:#60646c;min-height:18px;margin-top:8px}
+.path-picker{display:flex;gap:8px;align-items:center}
+.path-picker input{flex:1}
+@media (max-width: 900px){.modal-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app">
+
+<div id="sidebar">
+  <div class="logo-row">
+    <div class="logo">Lux<span>ar</span></div>
+    <div class="sidebar-actions">
+      <button class="sidebar-mini-btn" onclick="openNewProjectModal()" title="New project">+</button>
+      <button class="sidebar-mini-btn" onclick="openOpenProjectModal()" title="Open project">↗</button>
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="label" data-i18n="sidebar.projects">Projects</div>
+    <div id="sidebar-projects"><div class="empty-state" data-i18n="sidebar.loading">Loading...</div></div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-item active" data-page-link="chat" onclick="navigate('chat')"><span class="nav-icon">&#x1F4AC;</span><span data-i18n="nav.chat">Chat</span></div>
+    <div class="nav-item" data-page-link="dashboard" onclick="navigate('dashboard')"><span class="nav-icon">&#x1F4CA;</span><span data-i18n="nav.dashboard">Dashboard</span></div>
+    <div class="nav-item" data-page-link="drivers" onclick="navigate('drivers')"><span class="nav-icon">&#x1F50C;</span><span data-i18n="nav.drivers">Driver Library</span></div>
+    <div class="nav-item" data-page-link="skills" onclick="navigate('skills')"><span class="nav-icon">&#x1F9E0;</span><span data-i18n="nav.skills">Skill Library</span></div>
+    <div class="nav-item" data-page-link="model-config" onclick="navigate('model-config')"><span class="nav-icon">&#x2699;</span><span data-i18n="nav.modelConfig">Model Config</span></div>
+  </div>
+  <div id="sidebar-bottom">
+    <div class="api-status"><span class="led"></span><span data-i18n="nav.apiConnected">Connected</span></div>
+    <button id="lang-btn" onclick="toggleLang()">&#x4E2D;</button>
+  </div>
+</div>
+
+<div id="main">
+
+<div data-page="chat" id="chat-page" class="active">
+  <div id="chat-header" style="padding:8px 0 12px;border-bottom:1px solid #e0e1e6;flex-shrink:0">
+    <span style="font-size:12px;color:#60646c" data-i18n="chat.activeProject">Active Project:</span>
+    <span id="chat-project-name" style="font-weight:600;font-size:14px;color:#1c2024;margin-left:4px">-</span>
+  </div>
+  <div id="chat-messages">
+    <div class="chat-landing">
+      <h2 data-i18n="chat.welcomeTitle">Welcome to Luxar</h2>
+      <p data-i18n="chat.globalWelcome">Your embedded AI engineering assistant.</p>
+      <div class="landing-actions">
+        <button class="landing-btn landing-btn-new" onclick="openNewProjectModal()" data-i18n="landing.newProject">New Project</button>
+        <button class="landing-btn landing-btn-open" onclick="openOpenProjectModal()" data-i18n="landing.openProject">Open Project</button>
+      </div>
+      <p class="landing-slogan">Luxar，点亮每一盏灯。</p>
+    </div>
+  </div>
+  <div id="chat-input-area">
+      <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div id="chat-attachments" style="display:none;gap:4px;flex-wrap:wrap;margin-bottom:2px"></div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.inputPlaceholder" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" oninput="autoResize(this)" onkeydown="return handleChatKey(event)"></textarea>
+        <button type="button" class="chat-attach-btn" onclick="pickChatDocuments()" title="Attach files">📎</button>
+        <button id="chat-send-btn" onclick="sendMessage()" data-i18n="chat.sendBtn">Send</button>
+        <button id="chat-stop-btn" onclick="stopGeneration()" style="display:none" data-i18n="chat.stop">🛑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div data-page="drivers">
+  <div class="page-header">
+    <h1 data-i18n="drivers.title">Driver Library</h1>
+    <p data-i18n="drivers.subtitle">Browse, search, and manage the local driver library.</p>
+  </div>
+  <input class="search-input" id="driver-search" type="text" data-i18n-placeholder="drivers.searchPlaceholder" placeholder="Search drivers..." oninput="searchDrivers()" style="margin-bottom:16px" />
+  <div id="driver-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+</div>
+
+<div data-page="skills">
+  <div class="page-header">
+    <h1 data-i18n="skills.title">Skill Library</h1>
+    <p data-i18n="skills.subtitle">Protocol skills extracted from successful driver workflows.</p>
+  </div>
+  <div id="skill-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+</div>
+
+<div data-page="model-config">
+  <div class="page-header">
+    <h1 data-i18n="modelConfig.title">Model Configuration</h1>
+    <p data-i18n="modelConfig.subtitle">Configure LLM provider, model, and API settings.</p>
+  </div>
+  <div class="config-grid">
+    <div class="config-section">
+      <div class="card">
+        <h3 data-i18n="modelConfig.provider">Provider</h3>
+        <div class="form-group">
+          <label data-i18n="modelConfig.selectProvider">LLM Provider</label>
+          <select id="mc-provider" onchange="onProviderChange(this.value)">
+            <option value="deepseek">DeepSeek</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Anthropic Claude</option>
+            <option value="groq">Groq</option>
+            <option value="xai">xAI (Grok)</option>
+            <option value="together">Together AI</option>
+            <option value="fireworks">Fireworks AI</option>
+            <option value="cerebras">Cerebras</option>
+            <option value="moonshot">Moonshot AI (Kimi)</option>
+            <option value="zhipu">Zhipu AI (GLM)</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="deepinfra">Deep Infra</option>
+            <option value="minimax">MiniMax</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div class="form-group"><label data-i18n="modelConfig.modelName">Model Name</label><select id="mc-model" onchange="onModelChange(this.value)"></select><input id="mc-model-custom" value="" placeholder="Enter model ID" style="display:none;margin-top:4px" /></div>
+        <div class="form-group"><label data-i18n="modelConfig.apiKey">API Key</label><div style="display:flex;gap:6px;align-items:center"><input id="mc-api-key" type="password" value="" placeholder="sk-..." style="flex:1" /><span id="mc-key-status" style="font-size:11px;color:#60646c;white-space:nowrap"></span></div></div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="modelConfig.advanced">Advanced</h3>
+        <div class="form-group">
+          <label>Temperature (<span id="mc-temp-val">0.2</span>)</label>
+          <input id="mc-temperature" type="range" min="0" max="2" step="0.05" value="0.2" oninput="document.getElementById('mc-temp-val').textContent=this.value" />
+          <div class="range-labels"><span>0</span><span>1</span><span>2</span></div>
+        </div>
+        <div class="form-group"><label data-i18n="modelConfig.timeout">Timeout (sec)</label><input id="mc-timeout" type="number" value="60" /></div>
+      </div>
+    </div>
+    <div class="config-section">
+      <div class="card">
+        <h3 data-i18n="modelConfig.retry">Retry Configuration</h3>
+        <div class="form-group"><label data-i18n="modelConfig.retryAttempts">Retry Attempts</label><input id="mc-retry-attempts" type="number" value="3" min="0" max="10" /></div>
+        <div class="form-group"><label data-i18n="modelConfig.retryMinDelay">Min Delay (sec)</label><input id="mc-retry-min-delay" type="number" value="2" min="0" step="0.5" /></div>
+        <div class="form-group"><label data-i18n="modelConfig.retryMaxDelay">Max Delay (sec)</label><input id="mc-retry-max-delay" type="number" value="30" min="0" step="0.5" /></div>
+      </div>
+      <div class="btn-group">
+        <button class="btn-primary" onclick="saveModelConfig()" style="flex:1;justify-content:center"><span data-i18n="modelConfig.saveBtn">Save Config</span></button>
+        <button class="btn-secondary" onclick="resetModelConfig()"><span data-i18n="modelConfig.resetBtn">Reset</span></button>
+      </div>
+      <div id="mc-status" style="margin-top:8px;font-size:13px;color:#60646c"></div>
+    </div>
+  </div>
+</div>
+
+</div>
+</div>
+<!-- New Project Modal (Manual + AI tabs) -->
+<div id="new-project-modal" class="modal-shell" onclick="closeNewProjectModal(event)">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div><h3 data-i18n="landing.newProject">New Project</h3><p id="new-project-subtitle">Create a new STM32 project in the workspace.</p></div>
+      <button class="modal-close" onclick="closeNewProjectModal()">&times;</button>
+    </div>
+    <div class="tab-switch">
+      <button id="tab-manual" class="active" onclick="switchNewProjectTab('manual')" data-i18n="landing.manualTab">Manual Config</button>
+      <button id="tab-ai" onclick="switchNewProjectTab('ai')" data-i18n="landing.aiTab">AI Config</button>
+    </div>
+    <!-- Manual config form -->
+    <div id="new-project-manual" class="modal-grid">
+      <div class="form-group"><label>Project Name</label><input id="npm-name" /></div>
+      <div class="form-group"><label>MCU</label><input id="npm-mcu" placeholder="STM32F103C8T6" /></div>
+      <div class="form-group"><label>Platform</label><select id="npm-platform"><option value="stm32cubemx">stm32cubemx (CubeMX)</option><option value="stm32firmware">stm32firmware (bare)</option></select></div>
+      <div class="form-group"><label>Runtime</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
+      <div class="form-group"><label>FW Package</label><select id="npm-fw"><option value="STM32Cube_FW_F1">STM32Cube_FW_F1</option></select></div>
+    </div>
+    <!-- AI config form -->
+    <div id="new-project-ai" class="form-group" style="display:none">
+      <label data-i18n="landing.aiHint">Describe your project...</label>
+      <textarea id="npm-ai-desc" rows="3" placeholder="e.g. Blink an LED every 500ms and print Hello World on UART"></textarea>
+    </div>
+    <div class="modal-status" id="new-project-status"></div>
+    <div class="btn-group" style="justify-content:flex-end">
+      <button class="btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
+      <button class="btn-primary" id="new-project-submit" onclick="submitNewProject()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Open Project Modal -->
+<div id="open-project-modal" class="modal-shell" onclick="closeOpenProjectModal(event)">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div><h3 data-i18n="landing.openProject">Open Project</h3><p>Select an existing project folder to open.</p></div>
+      <button class="modal-close" onclick="closeOpenProjectModal()">&times;</button>
+    </div>
+    <div style="max-height:240px;overflow-y:auto" id="open-project-list"></div>
+    <div class="form-group" style="margin-top:12px">
+      <label>Or enter path</label>
+      <input id="open-project-path" placeholder="e.g. C:\Projects\MyBoard or project name" />
+    </div>
+    <div class="modal-status" id="open-project-status"></div>
+    <div class="btn-group" style="justify-content:flex-end">
+      <button class="btn-secondary" onclick="closeOpenProjectModal()">Cancel</button>
+      <button class="btn-primary" onclick="submitOpenProject()">Open</button>
+    </div>
+  </div>
+</div>
+<script>
+
+// ===== i18n =====
+const i18n = {zh:{},en:{}};
+const zh=i18n.zh, en=i18n.en;
+
+zh['nav.chat']='聊天';
+zh['nav.dashboard']='仪表盘';
+zh['nav.drivers']='驱动库';
+zh['nav.skills']='技能库';
+zh['nav.modelConfig']='模型配置';
+zh['nav.apiConnected']='已连接';
+zh['sidebar.projects']='项目';
+zh['sidebar.loading']='加载中...';
+zh['sidebar.noProjects']='暂无项目';
+zh['sidebar.createHint']='使用下方按钮创建或打开项目';
+zh['sidebar.delete']='删除项目';
+zh['sidebar.deleteConfirm']='确定要删除项目 "{name}" 吗？此操作不可撤销。';
+zh['sidebar.deleteFailed']='删除失败';
+zh['chat.activeProject']='当前项目：';
+zh['chat.welcomeTitle']='欢迎使用 Luxar';
+zh['chat.welcomeDesc']='从侧边栏选择一个项目，开始关于嵌入式开发、代码审查、驱动生成等对话。';
+zh['landing.newProject']='✨ 新建项目';
+zh['landing.openProject']='📂 打开项目';
+zh['landing.manualTab']='手动配置';
+zh['landing.aiTab']='AI 配置';
+zh['landing.aiHint']='描述你想要的 STM32 项目...';
+zh['chat.globalMode']='全局聊天';
+zh['chat.globalWelcome']='你的嵌入式 AI 工程助手。可以直接对话讨论技术问题，或选择/创建一个项目。';
+zh['chat.inputPlaceholder']='输入消息... /clear=清空上下文 (Enter=发送, Shift+Enter=换行)';
+zh['chat.sendBtn']='发送';
+zh['chat.selectProject']='请从侧边栏选择一个项目。';
+zh['chat.stop']='🛑 停止';
+zh['chat.toolRunning']='正在执行';
+zh['chat.streamError']='流式响应错误';
+zh['chat.typing']='正在输入...';
+zh['dashboard.subtitle']='面向 STM32 的嵌入式 AI 工程工具包。完整的本地闭环：审查、构建、烧录、监控、调试和协议技能演进。';
+zh['dashboard.statProjects']='项目数';
+zh['dashboard.statDrivers']='驱动数';
+zh['dashboard.statSkills']='技能数';
+zh['dashboard.statToolchains']='工具链数';
+zh['dashboard.configTitle']='配置';
+zh['dashboard.configProvider']='提供方';
+zh['dashboard.configModel']='模型';
+zh['dashboard.configPlatform']='平台';
+zh['dashboard.configRuntime']='运行时';
+zh['dashboard.configWorkspace']='工作空间';
+zh['dashboard.recentProjects']='项目';
+zh['dashboard.loadingProjects']='加载中...';
+zh['drivers.title']='驱动库';
+zh['drivers.subtitle']='浏览、搜索和管理本地驱动库。';
+zh['drivers.searchPlaceholder']='搜索驱动...';
+zh['drivers.loading']='加载中...';
+zh['drivers.none']='未找到驱动。';
+zh['drivers.failed']='加载失败';
+zh['drivers.reused']='已复用';
+zh['drivers.reviewed']='已审查';
+zh['drivers.issues']='个问题';
+zh['drivers.unnamed']='未命名';
+zh['skills.title']='技能库';
+zh['skills.subtitle']='从成功驱动工作流中提取的协议技能。';
+zh['skills.loading']='加载中...';
+zh['skills.none']='未找到协议技能。';
+zh['skills.failed']='加载失败';
+zh['skills.source']='来源';
+zh['skills.noSummary']='暂无摘要';
+zh['skills.unknownDevice']='未知设备';
+zh['chat.error']='错误：';
+zh['modelConfig.title']='模型配置';
+zh['modelConfig.subtitle']='配置 LLM 提供方、模型和 API 设置。';
+zh['modelConfig.provider']='提供方';
+zh['modelConfig.selectProvider']='LLM 提供方';
+zh['modelConfig.apiKey']='API 密钥';
+zh['modelConfig.modelName']='模型名称';
+zh['modelConfig.baseUrl']='基础 URL';
+zh['modelConfig.apiKeyEnv']='API 密钥环境变量';
+zh['modelConfig.advanced']='高级设置';
+zh['modelConfig.temperature']='温度';
+zh['modelConfig.maxTokens']='最大 Token 数';
+zh['modelConfig.timeout']='超时（秒）';
+zh['modelConfig.retry']='重试配置';
+zh['modelConfig.retryAttempts']='重试次数';
+zh['modelConfig.retryMinDelay']='最小延迟（秒）';
+zh['modelConfig.retryMaxDelay']='最大延迟（秒）';
+zh['modelConfig.saveBtn']='保存配置';
+zh['modelConfig.resetBtn']='重置';
+zh['modelConfig.saved']='配置已保存';
+zh['modelConfig.saveError']='保存失败';
+zh['modelConfig.loaded']='配置已加载';
+en['nav.chat']='Chat';
+en['nav.dashboard']='Dashboard';
+en['nav.drivers']='Driver Library';
+en['nav.skills']='Skill Library';
+en['nav.modelConfig']='Model Config';
+en['nav.apiConnected']='Connected';
+en['sidebar.projects']='Projects';
+en['sidebar.loading']='Loading...';
+en['sidebar.noProjects']='No projects';
+en['sidebar.createHint']='Use the buttons below to create or open a project';
+en['sidebar.delete']='Delete project';
+en['sidebar.deleteConfirm']='Delete project "{name}"? This cannot be undone.';
+en['sidebar.deleteFailed']='Delete failed';
+en['chat.activeProject']='Active Project:';
+en['chat.welcomeTitle']='Welcome to Luxar';
+en['chat.welcomeDesc']='Select a project from the sidebar and start a conversation about embedded development, code review, driver generation, and more.';
+en['landing.newProject']='New Project';
+en['landing.openProject']='Open Project';
+en['landing.manualTab']='Manual Config';
+en['landing.aiTab']='AI Config';
+en['landing.aiHint']='Describe your STM32 project...';
+en['chat.globalMode']='Global Chat';
+en['chat.globalWelcome']='Your embedded AI engineering assistant. Chat freely, or select/create a project.';
+en['chat.inputPlaceholder']='Type... /clear=reset context (Enter=send, Shift+Enter=newline)';
+en['chat.sendBtn']='Send';
+en['chat.selectProject']='Please select a project from the sidebar.';
+en['chat.stop']='🛑 Stop';
+en['chat.toolRunning']='Running';
+en['chat.streamError']='Stream error';
+en['chat.typing']='Typing...';
+en['dashboard.subtitle']='STM32-first embedded AI engineering toolkit. Full local loop: review, build, flash, monitor, debug, and protocol skill evolution.';
+en['dashboard.statProjects']='Projects';
+en['dashboard.statDrivers']='Drivers';
+en['dashboard.statSkills']='Skills';
+en['dashboard.statToolchains']='Toolchains';
+en['dashboard.configTitle']='Configuration';
+en['dashboard.configProvider']='Provider';
+en['dashboard.configModel']='Model';
+en['dashboard.configPlatform']='Platform';
+en['dashboard.configRuntime']='Runtime';
+en['dashboard.configWorkspace']='Workspace';
+en['dashboard.recentProjects']='Projects';
+en['dashboard.loadingProjects']='Loading...';
+en['drivers.title']='Driver Library';
+en['drivers.subtitle']='Browse, search, and manage the local driver library.';
+en['drivers.searchPlaceholder']='Search drivers...';
+en['drivers.loading']='Loading...';
+en['drivers.none']='No drivers found.';
+en['drivers.failed']='Failed';
+en['drivers.reused']='reused';
+en['drivers.reviewed']='reviewed';
+en['drivers.issues']='issues';
+en['drivers.unnamed']='Unnamed';
+en['skills.title']='Skill Library';
+en['skills.subtitle']='Protocol skills extracted from successful driver workflows.';
+en['skills.loading']='Loading...';
+en['skills.none']='No protocol skills found.';
+en['skills.failed']='Failed';
+en['skills.source']='Source';
+en['skills.noSummary']='No summary';
+en['skills.unknownDevice']='Unknown Device';
+en['chat.error']='ERROR: ';
+en['modelConfig.title']='Model Configuration';
+en['modelConfig.subtitle']='Configure LLM provider, model, and API settings.';
+en['modelConfig.provider']='Provider';
+en['modelConfig.selectProvider']='LLM Provider';
+en['modelConfig.apiKey']='API Key';
+en['modelConfig.modelName']='Model Name';
+en['modelConfig.baseUrl']='Base URL';
+en['modelConfig.apiKeyEnv']='API Key Env Var';
+en['modelConfig.advanced']='Advanced';
+en['modelConfig.temperature']='Temperature';
+en['modelConfig.maxTokens']='Max Tokens';
+en['modelConfig.timeout']='Timeout (sec)';
+en['modelConfig.retry']='Retry Configuration';
+en['modelConfig.retryAttempts']='Retry Attempts';
+en['modelConfig.retryMinDelay']='Min Delay (sec)';
+en['modelConfig.retryMaxDelay']='Max Delay (sec)';
+en['modelConfig.saveBtn']='Save Config';
+en['modelConfig.resetBtn']='Reset';
+en['modelConfig.saved']='Config saved';
+en['modelConfig.saveError']='Save failed';
+en['modelConfig.loaded']='Config loaded';
+
+let currentLang = localStorage.getItem('luxar-lang') || 'zh';
+let selectedProject = null;
+let driverSearchTimeout = null;
+let projectModalMode = 'create';
+let newProjectTab = 'manual';
+
+function t(key) { return i18n[currentLang]?.[key] || i18n['en']?.[key] || key; }
+
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(function(el) { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.getElementById('lang-btn').textContent = currentLang === 'zh' ? 'EN' : '中';
+  document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('luxar-lang', currentLang);
+  applyI18n();
+}
+
+function navigate(page) {
+  document.querySelectorAll('[data-page]').forEach(function(el) { el.classList.remove('active'); });
+  var target = document.querySelector('[data-page="' + page + '"]');
+  if (target) target.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
+  var navItem = document.querySelector('[data-page-link="' + page + '"]');
+  if (navItem) navItem.classList.add('active');
+  if (page === 'dashboard') loadDashboard();
+  else if (page === 'drivers') loadDrivers();
+  else if (page === 'skills') loadSkills();
+  else if (page === 'model-config') loadModelConfig();
+}
+
+async function apiGet(path) {
+  var res = await fetch(path);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function escapeHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function loadSidebarProjects() {
+  var container = document.getElementById('sidebar-projects');
+  try {
+    var data = await apiGet('/api/projects');
+    var projs = data.projects || [];
+    var html = '<div class="nav-item sidebar-global-chat active" onclick="selectProject(\'\')"><span class="nav-icon">&#x1F4AC;</span><span>' + t('chat.globalMode') + '</span></div>';
+    if (projs.length) {
+      html += '<div class="sidebar-section-label" style="padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px">' + t('sidebar.projects') + '</div>';
+      html += projs.map(function(p) {
+        var name = p.name.replace(/'/g, "\\'");
+        return '<div class="sidebar-project" onclick="selectProject(\'' + name + '\')">' +
+          '<span class="dot"></span><span class="proj-name">' + escapeHtml(p.name) + '</span>' +
+          '<span class="proj-del" onclick="event.stopPropagation();deleteProject(\'' + name + '\')" title="' + t('sidebar.delete') + '">&#x2715;</span>' +
+          '</div>';
+      }).join('');
+    } else {
+      html += '<div class="empty-state"><p>' + t('sidebar.noProjects') + '</p><p style="font-size:10px;color:#888;margin-top:4px">' + t('sidebar.createHint') + '</p></div>';
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = '<div class="empty-state">' + t('sidebar.noProjects') + '</div>';
+  }
+}
+
+function openNewProjectModal() {
+  document.getElementById('new-project-modal').classList.add('active');
+  switchNewProjectTab(newProjectTab);
+}
+
+function closeNewProjectModal(event) {
+  if (event && event.target && event.target.id !== 'new-project-modal') return;
+  document.getElementById('new-project-modal').classList.remove('active');
+}
+
+function switchNewProjectTab(tab) {
+  newProjectTab = tab;
+  document.getElementById('tab-manual').classList.toggle('active', tab === 'manual');
+  document.getElementById('tab-ai').classList.toggle('active', tab === 'ai');
+  document.getElementById('new-project-manual').style.display = tab === 'manual' ? 'grid' : 'none';
+  document.getElementById('new-project-ai').style.display = tab === 'ai' ? 'block' : 'none';
+}
+
+async function submitNewProject() {
+  var status = document.getElementById('new-project-status');
+  status.textContent = 'Working...';
+
+  if (newProjectTab === 'ai') {
+    var desc = document.getElementById('npm-ai-desc').value.trim();
+    if (!desc) { status.textContent = 'Please enter a project description.'; return; }
+    document.getElementById('new-project-modal').classList.remove('active');
+    document.getElementById('chat-input').value = 'Create a new STM32 project: ' + desc;
+    document.getElementById('chat-input').style.height = 'auto';
+    sendMessage();
+    return;
+  }
+
+  var payload = {
+    name: document.getElementById('npm-name').value.trim(),
+    mcu: document.getElementById('npm-mcu').value.trim(),
+    platform: document.getElementById('npm-platform').value.trim() || 'stm32cubemx',
+    runtime: document.getElementById('npm-runtime').value.trim() || 'baremetal',
+    project_mode: document.getElementById('npm-mode').value,
+    firmware_package: document.getElementById('npm-fw').value.trim()
+  };
+  if (!payload.name) { status.textContent = 'Project name is required.'; return; }
+  try {
+    var res = await fetch('/api/projects', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    await loadSidebarProjects();
+    closeNewProjectModal();
+    if (data.project && data.project.name) selectProject(data.project.name);
+  } catch(e) { status.textContent = e.message; }
+}
+
+function openOpenProjectModal() {
+  document.getElementById('open-project-modal').classList.add('active');
+  loadOpenProjectList();
+}
+
+function closeOpenProjectModal(event) {
+  if (event && event.target && event.target.id !== 'open-project-modal') return;
+  document.getElementById('open-project-modal').classList.remove('active');
+}
+
+async function loadOpenProjectList() {
+  var list = document.getElementById('open-project-list');
+  list.innerHTML = 'Loading...';
+  try {
+    var data = await apiGet('/api/projects');
+    var projs = data.projects || [];
+    if (!projs.length) { list.innerHTML = '<div class="empty-state">No projects found</div>'; return; }
+    list.innerHTML = projs.map(function(p) {
+      return '<div class="driver-item" onclick="selectProjectFromList(\'' + p.name.replace(/'/g, "\\'") + '\')" style="cursor:pointer;padding:10px 12px"><span class="item-title">' + escapeHtml(p.name) + '</span><span class="item-sub">' + (p.mcu || '-') + ' \u00b7 ' + (p.platform || '-') + '</span></div>';
+    }).join('');
+  } catch(e) { list.innerHTML = 'Failed to load'; }
+}
+
+function selectProjectFromList(name) {
+  document.getElementById('open-project-modal').classList.remove('active');
+  selectProject(name);
+}
+
+async function submitOpenProject() {
+  var path = document.getElementById('open-project-path').value.trim();
+  var status = document.getElementById('open-project-status');
+  if (!path) { status.textContent = 'Enter a project path or name.'; return; }
+  status.textContent = 'Working...';
+  try {
+    var res = await fetch('/api/projects/import', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ source_path: path }) });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    await loadSidebarProjects();
+    closeOpenProjectModal();
+    if (data.project && data.project.name) selectProject(data.project.name);
+  } catch(e) { status.textContent = e.message; }
+}
+
+async function deleteProject(name) {
+  if (!confirm(t('sidebar.deleteConfirm').replace('{name}', name))) return;
+  try {
+    var res = await fetch('/api/projects/' + encodeURIComponent(name), { method: 'DELETE' });
+    var data = await res.json();
+    if (!res.ok) { alert(data.detail || t('sidebar.deleteFailed')); return; }
+    if (selectedProject === name) selectProject('');
+    await loadSidebarProjects();
+    loadDashboard();
+  } catch(e) { alert(t('sidebar.deleteFailed') + ': ' + e.message); }
+}
+
+function selectProject(name) {
+  selectedProject = name || null;
+  document.querySelectorAll('.sidebar-project, .sidebar-global-chat').forEach(function(el) { el.classList.remove('active'); });
+  if (name) {
+    var items = document.querySelectorAll('.sidebar-project');
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].textContent.trim() === name) { items[i].classList.add('active'); break; }
+    }
+    document.getElementById('chat-project-name').textContent = '📁 ' + name;
+  } else {
+    document.querySelector('.sidebar-global-chat').classList.add('active');
+    document.getElementById('chat-project-name').innerHTML = '<span style="color:#0d74ce">💬 ' + t('chat.globalMode') + '</span>';
+  }
+  navigate('chat');
+  if (name) loadConversation(name);
+  else loadChatWelcome();
+}
+
+function loadChatWelcome() {
+  var container = document.getElementById('chat-messages');
+  container.innerHTML = '<div class="chat-landing"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.globalWelcome') + '</p><div class="landing-actions"><button class="landing-btn landing-btn-new" onclick="openNewProjectModal()">' + t('landing.newProject') + '</button><button class="landing-btn landing-btn-open" onclick="openOpenProjectModal()">' + t('landing.openProject') + '</button></div><p class="landing-slogan">Luxar,点亮每一盏灯。</p></div>';
+}
+
+async function clearConversation() {
+  var project = selectedProject || '__global__';
+  try {
+    await fetch('/api/conversations/' + encodeURIComponent(project) + '/reset', { method: 'POST' });
+  } catch(e) {}
+  var container = document.getElementById('chat-messages');
+  if (!selectedProject) {
+    loadChatWelcome();
+  } else {
+    container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
+  }
+}
+
+async function loadConversation(project) {
+  var container = document.getElementById('chat-messages');
+  container.innerHTML = '<div class="empty-state">' + t('sidebar.loading') + '</div>';
+  try {
+    var data = await apiGet('/api/conversations/' + encodeURIComponent(project));
+    var msgs = data.messages || [];
+    container.innerHTML = '';
+    if (!msgs.length) {
+      container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
+    } else {
+      msgs.forEach(function(m) { appendChatBubble(m.role, m.content); });
+    }
+    container.scrollTop = container.scrollHeight;
+  } catch(e) {
+    container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
+  }
+}
+
+function appendChatBubble(role, content, isHtml) {
+  var container = document.getElementById('chat-messages');
+  var welcome = container.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+  var div = document.createElement('div');
+  div.className = 'chat-bubble ' + role;
+  if (role === 'assistant' && content && !isHtml) {
+    var mdDiv = document.createElement('div');
+    mdDiv.className = 'md';
+    mdDiv.innerHTML = marked.parse(content);
+    mdDiv.querySelectorAll('pre code').forEach(function(block) {
+      try { hljs.highlightElement(block); } catch(e) {}
+    });
+    div.appendChild(mdDiv);
+  } else {
+    div.textContent = content;
+  }
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function stopGeneration() {
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+}
+
+var attachedDocs = [];
+
+async function pickChatDocuments() {
+  try {
+    var data = await apiGet('/api/pick-files');
+    var paths = data.paths || [];
+    if (!paths.length) return;
+    for (var i = 0; i < paths.length; i++) {
+      if (attachedDocs.indexOf(paths[i]) === -1) {
+        attachedDocs.push(paths[i]);
+      }
+    }
+    renderAttachments();
+  } catch (e) {
+    alert('Failed to pick files: ' + e.message);
+  }
+}
+
+function renderAttachments() {
+  var container = document.getElementById('chat-attachments');
+  if (!attachedDocs.length) { container.style.display = 'none'; return; }
+  container.style.display = 'flex';
+  container.innerHTML = attachedDocs.map(function(d, i) {
+    var label = d.split(/[/\\\\]/).pop() || d;
+    return '<span class="attach-tag" title="' + escapeHtml(d) + '">📄 ' + escapeHtml(label) + ' <span onclick="removeAttachment(' + i + ')" style="cursor:pointer;margin-left:4px;font-weight:700">&times;</span></span>';
+  }).join('');
+}
+
+function removeAttachment(i) {
+  attachedDocs.splice(i, 1);
+  renderAttachments();
+}
+
+function handleChatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+    return false;
+  }
+  if (e.key === 'Enter' && e.shiftKey) {
+    setTimeout(function() { autoResize(e.target); }, 0);
+  }
+  return true;
+}
+
+async function sendMessage() {
+  var input = document.getElementById('chat-input');
+  var text = input.value.trim();
+  if (!text) return;
+
+  // Handle /clear command
+  if (text === '/clear') {
+    await clearConversation();
+    input.value = '';
+    input.style.height = 'auto';
+    return;
+  }
+  var docs = attachedDocs.slice();
+  attachedDocs = [];
+  renderAttachments();
+  input.value = '';
+  input.style.height = 'auto';
+  appendChatBubble('user', text);
+
+  var sendBtn = document.getElementById('chat-send-btn');
+  var stopBtn = document.getElementById('chat-stop-btn');
+  sendBtn.disabled = true;
+  stopBtn.style.display = 'inline-block';
+
+  // Create assistant bubble for streaming
+  var container = document.getElementById('chat-messages');
+  var welcome = container.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+  var bubbleDiv = document.createElement('div');
+  bubbleDiv.className = 'chat-bubble assistant';
+  var mdDiv = document.createElement('div');
+  mdDiv.className = 'md';
+  bubbleDiv.appendChild(mdDiv);
+  var resultDiv = document.createElement('div');
+  bubbleDiv.appendChild(resultDiv);
+  var typingDiv = document.createElement('div');
+  typingDiv.className = 'chat-typing-bar';
+  typingDiv.textContent = '●●● ' + t('chat.typing');
+  bubbleDiv.appendChild(typingDiv);
+  container.appendChild(bubbleDiv);
+  var streamContent = '';
+
+  abortController = new AbortController();
+  try {
+    var project = selectedProject || '__global__';
+    var res = await fetch('/api/conversations/' + encodeURIComponent(project), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
+      body: JSON.stringify({
+        message: text,
+        stream: true,
+        docs: docs
+      }),
+      signal: abortController.signal
+    });
+    if (!res.ok) {
+      var errText = await res.text();
+      mdDiv.innerHTML = '<p>' + t('chat.error') + ' ' + res.status + ': ' + errText + '</p>';
+      return;
+    }
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+    var currentEvent = '';
+    while (true) {
+      var result = await reader.read();
+      if (result.done) {
+        // Process remaining buffer
+        if (buffer.startsWith('data: ')) {
+          var dataStr = buffer.slice(6).trim();
+          if (dataStr !== '[DONE]') {
+            try {
+              var chunk = JSON.parse(dataStr);
+              var token = chunk.token || chunk.content || '';
+              if (token) {
+                streamContent += token;
+                mdDiv.innerHTML = marked.parse(streamContent);
+                mdDiv.querySelectorAll('pre code').forEach(function(block) {
+                  try { hljs.highlightElement(block); } catch(e) {}
+                });
+                container.scrollTop = container.scrollHeight;
+              }
+            } catch(e) {}
+          }
+        }
+        break;
+      }
+      buffer += decoder.decode(result.value, {stream: true});
+      while (buffer.indexOf('\n') !== -1) {
+        var idx = buffer.indexOf('\n');
+        var line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) { currentEvent = ''; continue; }
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          var dataStr = line.slice(6).trim();
+          if (currentEvent === 'token') {
+            try {
+              var chunk = JSON.parse(dataStr);
+              var token = chunk.token || chunk.content || '';
+              if (token) {
+                streamContent += token;
+                mdDiv.innerHTML = marked.parse(streamContent);
+                mdDiv.querySelectorAll('pre code').forEach(function(block) {
+                  try { hljs.highlightElement(block); } catch(e) {}
+                });
+                container.scrollTop = container.scrollHeight;
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'result') {
+            try {
+              var taskResult = JSON.parse(dataStr);
+              resultDiv.innerHTML = renderTaskResultCards(taskResult);
+              container.scrollTop = container.scrollHeight;
+            } catch(e) {}
+          } else if (currentEvent === 'tool_call') {
+            try {
+              var chunk = JSON.parse(dataStr);
+              if (chunk.tool_call) {
+                streamContent += '\n\n_' + t('chat.toolRunning') + ': ' + chunk.tool_call + '..._\n\n';
+                mdDiv.innerHTML = marked.parse(streamContent);
+                container.scrollTop = container.scrollHeight;
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'error') {
+            try {
+              var chunk = JSON.parse(dataStr);
+              streamContent += '\n\n_' + t('chat.error') + ': ' + chunk.error + '_\n\n';
+              mdDiv.innerHTML = marked.parse(streamContent);
+              container.scrollTop = container.scrollHeight;
+            } catch(e) {}
+          }
+          // 'done' event has data: [DONE], nothing to render
+        }
+      }
+    }
+  } catch(e) {
+    typingDiv.style.display = 'none';
+    if (e.name === 'AbortError') {
+      if (streamContent) {
+        streamContent += '\n\n_(' + t('chat.stop') + ')_';
+        mdDiv.innerHTML = marked.parse(streamContent);
+      }
+    } else {
+      mdDiv.innerHTML = '<p>' + t('chat.error') + ' ' + e.message + '</p>';
+    }
+  }
+  sendBtn.disabled = false;
+  stopBtn.style.display = 'none';
+  typingDiv.style.display = 'none';
+  abortController = null;
+  loadSidebarProjects();
+}
+
+async function loadDashboard() {
+  try {
+    var results = await Promise.all([apiGet('/api/config'), apiGet('/api/projects'), apiGet('/api/skills'), apiGet('/api/toolchains')]);
+    var config = results[0], pdata = results[1], sdata = results[2], tcdata = results[3];
+    var projList = pdata.projects || [];
+    var skillList = sdata.skills || [];
+    var tc = Object.values(tcdata).filter(function(v) { return v && v !== ''; });
+    document.getElementById('stat-projects').textContent = projList.length;
+    document.getElementById('stat-skills').textContent = skillList.length;
+    document.getElementById('stat-toolchains').textContent = tc.length;
+    document.getElementById('cfg-provider').textContent = (config.llm && config.llm.provider) || '-';
+    document.getElementById('cfg-model').textContent = (config.llm && config.llm.model) || '-';
+    document.getElementById('cfg-platform').textContent = (config.platform && config.platform.default_platform) || '-';
+    document.getElementById('cfg-runtime').textContent = (config.platform && config.platform.default_runtime) || '-';
+    document.getElementById('cfg-workspace').textContent = (config.agent && config.agent.workspace) || '-';
+    var dashList = document.getElementById('dash-project-list');
+    if (!projList.length) { dashList.innerHTML = '<div class="empty-state">' + t('sidebar.noProjects') + '</div>'; }
+    else {
+      dashList.innerHTML = projList.map(function(p) {
+        var name = p.name.replace(/'/g, "\\'");
+        return '<div class="driver-item" onclick="selectProject(\'' + name + '\')"><div class="item-title">' + escapeHtml(p.name) + '</div><div class="item-sub">' + (p.mcu || '-') + ' \u00b7 ' + (p.platform || '-') + ' \u00b7 ' + (p.runtime || '-') + '</div></div>';
+      }).join('');
+    }
+    try { var d = await apiGet('/api/drivers?keyword='); document.getElementById('stat-drivers').textContent = (d.drivers || []).length; } catch(e) {}
+  } catch(e) {
+    document.getElementById('dash-project-list').innerHTML = '<div class="empty-state">' + t('drivers.failed') + '</div>';
+  }
+}
+
+function loadDrivers() { searchDrivers(); }
+
+function searchDrivers() {
+  clearTimeout(driverSearchTimeout);
+  driverSearchTimeout = setTimeout(async function() {
+    var q = document.getElementById('driver-search').value;
+    var list = document.getElementById('driver-list');
+    list.innerHTML = '<div class="empty-state">' + t('drivers.loading') + '</div>';
+    try {
+      var data = await apiGet('/api/drivers?keyword=' + encodeURIComponent(q) + '&limit=50');
+      var drivers = data.drivers || [];
+      if (!drivers.length) { list.innerHTML = '<div class="empty-state">' + t('drivers.none') + '</div>'; return; }
+      list.innerHTML = drivers.map(function(d) {
+        var name = d.name || (d.path ? d.path.split(/[\\/]/).pop() : '') || t('drivers.unnamed');
+        var tags = '';
+        if (d.reuse_count > 0) tags += '<span class="tag tag-cloud">' + t('drivers.reused') + ' ' + d.reuse_count + 'x</span> ';
+        if (d.review_passed) tags += '<span class="tag tag-green">' + t('drivers.reviewed') + '</span>';
+        else if (d.review_issue_count) tags += '<span class="tag tag-red">' + d.review_issue_count + ' ' + t('drivers.issues') + '</span>';
+        return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+          '<span class="tag tag-black">' + escapeHtml(d.interface || '?') + '</span>' +
+          '<span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(name) + '</span>' +
+          '</div>' +
+          '<div style="font-size:13px;color:#60646c">' + escapeHtml(d.chip || '') + (d.vendor ? ' \u00b7 ' + escapeHtml(d.vendor) : '') + '</div>' +
+          '<div style="font-size:11px;color:#b0b4ba;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(d.path || '') + '">' + escapeHtml(d.source_doc ? d.source_doc.slice(0,80) + '...' : d.path || '') + '</div>' +
+          '<div style="margin-top:8px">' + tags + '</div>' +
+          '</div>';
+      }).join('');
+    } catch(e) {
+      list.innerHTML = '<div class="empty-state">' + t('drivers.failed') + ': ' + e.message + '</div>';
+    }
+  }, 300);
+}
+
+async function loadSkills() {
+  var list = document.getElementById('skill-list');
+  list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.loading') + '</div>';
+  try {
+    var data = await apiGet('/api/skills');
+    var skills = data.skills || [];
+    if (!skills.length) { list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.none') + '</div>'; return; }
+    list.innerHTML = skills.map(function(s) {
+      var srcHtml = s.source_project ? '<div style="font-size:11px;color:#b0b4ba;margin-top:8px">' + t('skills.source') + ': ' + escapeHtml(s.source_project) + '</div>' : '';
+      return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span class="tag tag-black">' + escapeHtml(s.protocol || '?') + '</span><span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(s.device || t('skills.unknownDevice')) + '</span></div><div style="font-size:13px;color:#60646c">' + (s.summary || t('skills.noSummary')) + '</div>' + srcHtml + '</div>';
+    }).join('');
+  } catch(e) {
+    list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.failed') + ': ' + e.message + '</div>';
+  }
+}
+
+var savedKeys = {};
+
+function loadKeyForProvider(provider) {
+  var envName = (providerDefaults[provider] || {}).key || '';
+  var envKey = ''; // Can't read env vars from browser, tracked by status display
+  var storedKey = savedKeys[provider] || '';
+  document.getElementById('mc-api-key').value = storedKey;
+  var statusEl = document.getElementById('mc-key-status');
+  if (envName) {
+    statusEl.textContent = 'Env: ' + envName + (storedKey ? ' (+ stored)' : '');
+  } else if (storedKey) {
+    statusEl.textContent = 'Stored';
+  } else {
+    statusEl.textContent = 'Not set';
+  }
+}
+
+var providerDefaults = {
+  deepseek:   {url: 'https://api.deepseek.com/chat/completions',      key: 'DEEPSEEK_API_KEY', models: [{id:'deepseek-v4-flash',name:'DeepSeek V4 Flash',ctx:393216},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro',ctx:393216}]},
+  openai:     {url: 'https://api.openai.com/v1/chat/completions',     key: 'OPENAI_API_KEY',    models: [{id:'gpt-5.5',name:'GPT-5.5',ctx:131072},{id:'gpt-5.4',name:'GPT-5.4',ctx:131072},{id:'gpt-5.4-mini',name:'GPT-5.4 Mini',ctx:131072},{id:'gpt-5.4-nano',name:'GPT-5.4 Nano',ctx:131072}]},
+  claude:     {url: 'https://api.anthropic.com/v1/messages',          key: 'ANTHROPIC_API_KEY', models: [{id:'claude-opus-4-7',name:'Claude Opus 4.7',ctx:131072},{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6',ctx:65536},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5',ctx:65536}]},
+  groq:       {url: 'https://api.groq.com/openai/v1/chat/completions',key: 'GROQ_API_KEY',      models: [{id:'llama-3.1-8b-instant',name:'Llama 3.1 8B',ctx:131072},{id:'llama-3.3-70b-versatile',name:'Llama 3.3 70B',ctx:32768},{id:'openai/gpt-oss-120b',name:'GPT-OSS 120B',ctx:65536},{id:'openai/gpt-oss-20b',name:'GPT-OSS 20B',ctx:65536}]},
+  xai:        {url: 'https://api.xai.com/v1/chat/completions',        key: 'XAI_API_KEY',       models: [{id:'grok-4.20',name:'Grok 4.20',ctx:131072},{id:'grok-3',name:'Grok 3',ctx:131072}]},
+  together:   {url: 'https://api.together.xyz/v1/chat/completions',   key: 'TOGETHER_API_KEY',  models: [{id:'deepseek-ai/DeepSeek-V3',name:'DeepSeek V3',ctx:131072},{id:'Qwen/Qwen3-Coder-480B-A35B-Instruct',name:'Qwen3 Coder 480B',ctx:131072},{id:'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',name:'Llama 4 Maverick',ctx:131072}]},
+  fireworks:  {url: 'https://api.fireworks.ai/inference/v1/chat/completions',key: 'FIREWORKS_API_KEY',models: [{id:'accounts/fireworks/models/qwen2p5-coder-32b-instruct',name:'Qwen 2.5 Coder 32B',ctx:131072},{id:'accounts/fireworks/models/deepseek-v3',name:'DeepSeek V3',ctx:131072}]},
+  cerebras:   {url: 'https://api.cerebras.ai/v1/chat/completions',    key: 'CEREBRAS_API_KEY',  models: [{id:'llama3.3-70b',name:'Llama 3.3 70B',ctx:128000},{id:'llama3.1-8b',name:'Llama 3.1 8B',ctx:128000}]},
+  moonshot:   {url: 'https://api.moonshot.cn/v1/chat/completions',    key: 'MOONSHOT_API_KEY',  models: [{id:'kimi-k2.6',name:'Kimi K2.6',ctx:262144},{id:'kimi-k2.5',name:'Kimi K2.5',ctx:262144}]},
+  zhipu:      {url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', key: 'ZHIPU_API_KEY', models: [{id:'glm-5.1',name:'GLM-5.1 (Flagship)',ctx:131072},{id:'glm-5',name:'GLM-5',ctx:131072},{id:'glm-4.7',name:'GLM-4.7',ctx:131072},{id:'glm-4.7-flash',name:'GLM-4.7 Flash',ctx:131072}]},
+  openrouter: {url: 'https://openrouter.ai/api/v1/chat/completions',  key: 'OPENROUTER_API_KEY',models: [{id:'deepseek/deepseek-chat',name:'DeepSeek V3 Chat',ctx:65536},{id:'openai/gpt-4o',name:'GPT-4o',ctx:128000},{id:'anthropic/claude-sonnet-4',name:'Claude Sonnet 4',ctx:200000}]},
+  deepinfra:  {url: 'https://api.deepinfra.com/v1/openai/chat/completions',key:'DEEPINFRA_API_KEY',models:[{id:'deepseek-ai/DeepSeek-V3',name:'DeepSeek V3',ctx:131072}]},
+  minimax:    {url: 'https://api.minimax.io/v1/chat/completions',     key: 'MINIMAX_API_KEY',   models: [{id:'MiniMax-M2.1',name:'MiniMax M2.1',ctx:262144},{id:'MiniMax-M2.7',name:'MiniMax M2.7',ctx:262144}]},
+  ollama:     {url: 'http://localhost:11434/v1/chat/completions',      key: '',                 models: [{id:'qwen2.5-coder:7b',name:'Qwen 2.5 Coder 7B',ctx:32768},{id:'llama3.1:8b',name:'Llama 3.1 8B',ctx:128000},{id:'deepseek-r1:8b',name:'DeepSeek R1 8B',ctx:131072}]},
+  custom:     {url: '',                                               key: '',                 models: []},
+};
+
+function populateModelSelect(provider) {
+  var def = providerDefaults[provider] || {models:[]};
+  var sel = document.getElementById('mc-model');
+  sel.innerHTML = '';
+  (def.models || []).forEach(function(m) {
+    var opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.name + ' (' + formatContext(m.ctx) + ')';
+    sel.appendChild(opt);
+  });
+  var customOpt = document.createElement('option');
+  customOpt.value = 'custom';
+  customOpt.textContent = 'Custom...';
+  sel.appendChild(customOpt);
+}
+
+function formatContext(ctx) {
+  if (ctx >= 1000000) return (ctx/1000000).toFixed(1) + 'M';
+  if (ctx >= 1000) return (ctx/1024).toFixed(0) + 'K';
+  return ctx + '';
+}
+
+function onProviderChange(provider) {
+  populateModelSelect(provider);
+  loadKeyForProvider(provider);
+  onModelChange();
+}
+
+function onModelChange() {
+  var modelSel = document.getElementById('mc-model');
+  var customInput = document.getElementById('mc-model-custom');
+  if (modelSel.value === 'custom') {
+    customInput.style.display = 'block';
+    customInput.focus();
+  } else {
+    customInput.style.display = 'none';
+  }
+}
+
+function getModelValue() {
+  var sel = document.getElementById('mc-model');
+  if (sel.value === 'custom') {
+    return document.getElementById('mc-model-custom').value.trim();
+  }
+  return sel.value;
+}
+
+async function loadModelConfig() {
+  try {
+    var config = await apiGet('/api/config');
+    var llm = config.llm || {};
+    document.getElementById('mc-provider').value = llm.provider || 'deepseek';
+    var def = providerDefaults[llm.provider] || {};
+    populateModelSelect(llm.provider || 'deepseek');
+    var currentModel = llm.model || '';
+    var modelSel = document.getElementById('mc-model');
+    var foundInPreset = (def.models || []).some(function(m) { return m.id === currentModel; });
+    if (currentModel && !foundInPreset) {
+      modelSel.value = 'custom';
+      document.getElementById('mc-model-custom').value = currentModel;
+      document.getElementById('mc-model-custom').style.display = 'block';
+    } else {
+      modelSel.value = currentModel || ((def.models || [])[0] || {}).id || '';
+    }
+    document.getElementById('mc-temperature').value = llm.temperature != null ? llm.temperature : 0.2;
+    document.getElementById('mc-temp-val').textContent = document.getElementById('mc-temperature').value;
+    document.getElementById('mc-timeout').value = llm.timeout_sec || 60;
+    document.getElementById('mc-retry-attempts').value = llm.retry_attempts || 3;
+    document.getElementById('mc-retry-min-delay').value = llm.retry_min_delay || 2;
+    document.getElementById('mc-retry-max-delay').value = llm.retry_max_delay || 30;
+    // Store api_keys for per-provider switching
+    savedKeys = config.api_keys || {};
+    loadKeyForProvider(llm.provider || 'deepseek');
+    document.getElementById('mc-status').textContent = t('modelConfig.loaded');
+  } catch(e) {
+    document.getElementById('mc-status').textContent = t('modelConfig.saveError') + ': ' + e.message;
+  }
+}
+
+async function saveModelConfig() {
+  var provider = document.getElementById('mc-provider').value;
+  var model = getModelValue();
+  var def = providerDefaults[provider] || {};
+  var mo = (def.models || []).find(function(m) { return m.id === model; });
+  // Save current key to the provider
+  var apiKey = document.getElementById('mc-api-key').value.trim();
+  if (apiKey) {
+    savedKeys[provider] = apiKey;
+  } else {
+    delete savedKeys[provider];
+  }
+  var body = {
+    llm: {
+      provider: provider,
+      model: model,
+      base_url: def.url || '',
+      api_key_env: def.key || '',
+      temperature: parseFloat(document.getElementById('mc-temperature').value),
+      max_tokens: mo ? mo.ctx : 4096,
+      timeout_sec: parseInt(document.getElementById('mc-timeout').value),
+      retry_attempts: parseInt(document.getElementById('mc-retry-attempts').value),
+      retry_min_delay: parseFloat(document.getElementById('mc-retry-min-delay').value),
+      retry_max_delay: parseFloat(document.getElementById('mc-retry-max-delay').value)
+    },
+    api_keys: savedKeys
+  };
+  var statusEl = document.getElementById('mc-status');
+  statusEl.textContent = t('sidebar.loading');
+  try {
+    var res = await fetch('/api/config', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    statusEl.textContent = t('modelConfig.saved');
+  } catch(e) {
+    statusEl.textContent = t('modelConfig.saveError') + ': ' + e.message;
+  }
+}
+
+async function resetModelConfig() {
+  document.getElementById('mc-status').textContent = t('sidebar.loading');
+  await loadModelConfig();
+}
+
+// Init
+applyI18n();
+loadSidebarProjects();
+loadDashboard();
+</script>
+</body>
+</html>
+

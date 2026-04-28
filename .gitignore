@@ -1,0 +1,12 @@
+.luxar/
+src/.luxar/
+.local/
+backups/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+*.db
+*.db-shm
+*.db-wal
+*.log
