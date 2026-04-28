@@ -62,7 +62,7 @@ class ServerAppTests(unittest.TestCase):
                     document_summary="SPI sensor with CS and INT."
                 )
                 with TestClient(create_app()) as client:
-                    response = client.post("/api/analyze-docs", json={"docs": ["docs/bmi270.pdf"], "query": "wiring"})
+                    response = client.post("/api/analyze-docs", json={"docs": ["workspace/docs/bmi270.pdf"], "query": "wiring"})
 
         self.assertEqual(200, response.status_code)
         payload = response.json()

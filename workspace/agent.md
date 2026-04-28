@@ -4,10 +4,10 @@
 
 ```
 <project-root>/
-├── config/luxar.yaml               # Central configuration
-├── soul.md                         # Agent identity & red lines
-├── agent.md                        # This manual
 ├── workspace/
+│   ├── agent.md                    # This manual
+│   ├── soul.md                     # Agent identity & red lines
+│   ├── docs/                       # Reference docs and sample datasheets
 │   ├── projects/<name>/            # Individual embedded projects
 │   │   ├── App/                    # Agent-managed code (safe to modify)
 │   │   ├── Core/                   # CubeMX generated (DO NOT TOUCH)
@@ -17,12 +17,12 @@
 │   │   ├── CMakeLists.txt          # Agent-managed build file
 │   │   ├── logs/                   # Agent activity logs
 │   │   └── .agent_backups/         # Auto-generated snapshots
-│   └── driver_library/             # Global driver repository (SQLite-backed)
+│   ├── driver_library/             # Global driver repository (SQLite-backed)
 │       └── knowledge_base/         # Document chunk store (SQLite + dense vectors)
-├── skill_library/protocols/        # Protocol skills (SKILL.md + metadata.json)
-├── vendor/
+│   ├── skill_library/protocols/    # Protocol skills (SKILL.md + metadata.json)
 │   ├── firmware_library/           # Vendor firmware packages
 │   └── toolchains/                 # Local toolchain installations
+├── config/luxar.yaml               # Central configuration
 └── .luxar/                         # Runtime state, memory, local DBs
 ```
 

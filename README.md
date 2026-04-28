@@ -10,7 +10,7 @@ Recommended usage:
 ```powershell
 luxar --project DirectF1C "Blink LED and print over UART"
 luxar --project DirectF1C --plan-only "Read BMI270 over SPI and show the wiring plan"
-luxar run --project DirectF1C --doc docs\bmi270.pdf --task "Generate the project and explain the required pins"
+luxar run --project DirectF1C --doc workspace\docs\bmi270.pdf --task "Generate the project and explain the required pins"
 ```
 
 Expert commands are still available when you want them, including:

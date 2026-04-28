@@ -135,7 +135,7 @@ This entry routes natural-language requests through a shared `TaskRouter`, a sha
 
 ### Stage 8 Foundation: Skill Evolution
 - `SkillManager` exists.
-- `update-skill` can write and update protocol skills under `skill_library/protocols/`.
+- `update-skill` can write and update protocol skills under `workspace/skill_library/protocols/`.
 - `workflow driver` can automatically update a protocol skill after a successful run when evolution is enabled.
 - Protocol skills are reused as generation context for later drivers.
 
@@ -178,7 +178,7 @@ luxar search-driver --keyword bmi270
 luxar assemble --project DirectF1C --drivers bmi270
 luxar workflow debug --project DirectF1C --port COM3
 luxar workflow driver --chip BMI270 --interface SPI --doc-summary "summary"
-luxar parse-doc --doc docs\\bmi270.txt --query "interrupt status"
+luxar parse-doc --doc workspace\\docs\\bmi270.txt --query "interrupt status"
 luxar update-skill --protocol spi --device BMI270 --summary "validated bring-up" --source-project DirectF1C
 luxar config workspace
 luxar forge --project DirectF1C --prompt "Blink LED once per second and print Hello Agent on UART"

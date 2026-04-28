@@ -12,8 +12,8 @@ class AgentSection(BaseModel):
     version: str = "0.1.0"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
-    skill_library: str = "./skill_library"
-    firmware_library: str = "./vendor/firmware_library"
+    skill_library: str = "./workspace/skill_library"
+    firmware_library: str = "./workspace/firmware_library"
 
 
 class LLMSection(BaseModel):
@@ -54,7 +54,7 @@ class BuildSection(BaseModel):
 
 
 class ToolchainsSection(BaseModel):
-    root: str = "./vendor/toolchains"
+    root: str = "./workspace/toolchains"
     cmake: str = ""
     openocd: str = ""
     arm_gcc: str = ""

@@ -220,9 +220,9 @@ class LLMClient:
 
     @classmethod
     def _read_text_file(cls, path: Path) -> str | None:
-        if cls._soul_cache is not None and "soul" in str(path):
+        if cls._soul_cache is not None and path.name == "soul.md":
             return cls._soul_cache
-        if cls._manual_cache is not None and "manual" in str(path):
+        if cls._manual_cache is not None and path.name == "agent.md":
             return cls._manual_cache
         if not path.is_file():
             return None
@@ -230,9 +230,9 @@ class LLMClient:
             content = path.read_text(encoding="utf-8").strip()
         except Exception:
             return None
-        if "soul" in str(path):
+        if path.name == "soul.md":
             cls._soul_cache = content
-        if "manual" in str(path):
+        if path.name == "agent.md":
             cls._manual_cache = content
         return content
 
@@ -242,11 +242,11 @@ class LLMClient:
 
     @classmethod
     def load_soul(cls) -> str | None:
-        return cls._read_text_file(cls._find_project_root() / "soul.md")
+        return cls._read_text_file(cls._find_project_root() / "workspace" / "soul.md")
 
     @classmethod
     def load_agent_manual(cls) -> str | None:
-        return cls._read_text_file(cls._find_project_root() / "agent.md")
+        return cls._read_text_file(cls._find_project_root() / "workspace" / "agent.md")
 
     @classmethod
     def build_system_prompt(cls, task_prompt: str = "") -> str:

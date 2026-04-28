@@ -1,7 +1,7 @@
 {
   "name": "spi_protocol_skill",
   "protocol": "spi",
-  "path": "C:\\Users\\Gugugu\\Documents\\Codex\\2026-04-24-review-spec-md-kimi-code-codex\\skill_library\\protocols\\spi\\SKILL.md",
+  "path": "workspace/skill_library/protocols/spi/SKILL.md",
   "platforms": [
     "stm32cubemx"
   ],

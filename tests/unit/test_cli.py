@@ -434,14 +434,14 @@ class CliCommandTests(unittest.TestCase):
                 [
                     "run",
                     "--project", "DirectF1C",
-                    "--doc", "docs/bmi270.pdf",
+                    "--doc", "workspace/docs/bmi270.pdf",
                     "--dry-run",
                     "--task", "Wire the BMI270 and generate the project",
                 ],
             )
         self.assertEqual(res.exit_code, 0)
         _, kwargs = mock_run.call_args
-        self.assertEqual(["docs/bmi270.pdf"], kwargs["docs"])
+        self.assertEqual(["workspace/docs/bmi270.pdf"], kwargs["docs"])
         self.assertTrue(kwargs["dry_run"])
 
     @patch("luxar.cli.ConfigManager")
@@ -567,14 +567,14 @@ class CliCommandTests(unittest.TestCase):
                         "forge",
                         "--project", "test-proj",
                         "--prompt", "Read BMI270 over SPI",
-                        "--doc", "docs/bmi270.pdf",
-                        "--doc", "docs/board_notes.md",
+                        "--doc", "workspace/docs/bmi270.pdf",
+                        "--doc", "workspace/docs/board_notes.md",
                         "--doc-query", "chip id register",
                     ],
                 )
         self.assertEqual(res.exit_code, 0)
         _, kwargs = mock_run.call_args
-        self.assertEqual(["docs/bmi270.pdf", "docs/board_notes.md"], kwargs["docs"])
+        self.assertEqual(["workspace/docs/bmi270.pdf", "workspace/docs/board_notes.md"], kwargs["docs"])
         self.assertEqual("chip id register", kwargs["doc_query"])
 
     @patch("luxar.cli.ConfigManager")
