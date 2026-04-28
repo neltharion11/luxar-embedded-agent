@@ -45,13 +45,6 @@ class ProjectManager:
         for rel_dir in ("App", "App/Inc", "App/Src", "logs"):
             (project_dir / rel_dir).mkdir(parents=True, exist_ok=True)
 
-        ioc_file = project_dir / f"{name}.ioc"
-        if not ioc_file.exists():
-            ioc_file.write_text(
-                f"# Placeholder CubeMX project file for {name}\n",
-                encoding="utf-8",
-            )
-
         clang_tidy = project_dir / ".clang-tidy"
         if not clang_tidy.exists():
             clang_tidy.write_text(DEFAULT_CLANG_TIDY, encoding="utf-8")
@@ -63,7 +56,7 @@ class ProjectManager:
             runtime=runtime,
             project_mode=project_mode,
             mcu=mcu,
-            ioc_file=str(ioc_file.resolve()),
+            ioc_file="",
             firmware_package=firmware_package,
         )
         self._write_project_metadata(project_dir, config)

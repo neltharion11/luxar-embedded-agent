@@ -187,6 +187,9 @@ class LLMClient:
         self.model = config.llm.model
         self.temperature = config.llm.temperature
         self.max_tokens = config.llm.max_tokens
+        self.thinking_enabled = bool(getattr(config.llm, "thinking_enabled", False))
+        self.thinking_effort = str(getattr(config.llm, "thinking_effort", "medium") or "medium")
+        self.thinking_budget_tokens = int(getattr(config.llm, "thinking_budget_tokens", 2048) or 2048)
         self.timeout_sec = config.llm.timeout_sec
         self.base_url = config.llm.base_url.strip()
         self.retry_attempts = config.llm.retry_attempts
@@ -357,9 +360,11 @@ class LLMClient:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": msgs,
-            "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if self._supports_temperature(provider):
+            payload["temperature"] = self.temperature
+        payload.update(self._openai_compatible_thinking_payload(provider))
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -390,8 +395,14 @@ class LLMClient:
                     arguments=args,
                 ))
 
-        return LLMResponse(provider=provider, model=self.model, content=content, raw=raw, tool_calls=tool_calls,
-                           reasoning_content=choice.get("reasoning_content", ""))
+        return LLMResponse(
+            provider=provider,
+            model=self.model,
+            content=content,
+            raw=raw,
+            tool_calls=tool_calls,
+            reasoning_content=choice.get("reasoning_content", "") or choice.get("reasoning", ""),
+        )
 
     def _stream_chat_completions(
         self,
@@ -411,10 +422,12 @@ class LLMClient:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": msgs,
-            "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "stream": True,
         }
+        if self._supports_temperature(provider):
+            payload["temperature"] = self.temperature
+        payload.update(self._openai_compatible_thinking_payload(provider))
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -457,7 +470,7 @@ class LLMClient:
                         continue
                     delta = choices[0].get("delta", {})
                     content = delta.get("content", "")
-                    reasoning = delta.get("reasoning_content", "")
+                    reasoning = delta.get("reasoning_content", "") or delta.get("reasoning", "")
                     if content:
                         yield {"type": "token", "content": content}
                     if reasoning:
@@ -491,9 +504,11 @@ class LLMClient:
         payload = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if self._supports_temperature("claude"):
+            payload["temperature"] = self.temperature
+        payload.update(self._anthropic_thinking_payload())
         if system_prompt:
             payload["system"] = system_prompt
         raw = self._post_json(
@@ -513,6 +528,44 @@ class LLMClient:
         if not content:
             raise LLMClientError("claude response returned no text content")
         return LLMResponse(provider="claude", model=self.model, content=content, raw=raw)
+
+    def _supports_temperature(self, provider: str) -> bool:
+        if provider == "deepseek" and self.thinking_enabled:
+            return False
+        if provider == "claude" and self.thinking_enabled:
+            return False
+        return True
+
+    def _openai_compatible_thinking_payload(self, provider: str) -> dict[str, Any]:
+        if provider == "deepseek":
+            effort = self.thinking_effort.lower()
+            if effort in {"xhigh", "max"}:
+                effort = "max"
+            else:
+                effort = "high"
+            return {
+                "thinking": {
+                    "type": "enabled" if self.thinking_enabled else "disabled",
+                    "reasoning_effort": effort,
+                }
+            }
+        if provider == "openai":
+            if self.thinking_enabled:
+                return {"reasoning_effort": self.thinking_effort.lower()}
+            return {"reasoning_effort": "none"}
+        if provider == "together":
+            return {"reasoning": {"enabled": self.thinking_enabled}}
+        return {}
+
+    def _anthropic_thinking_payload(self) -> dict[str, Any]:
+        if not self.thinking_enabled:
+            return {}
+        return {
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": max(1024, self.thinking_budget_tokens),
+            }
+        }
 
     def _read_api_key(self, default_env_name: str) -> str:
         env_name = self.config.llm.api_key_env.strip() or default_env_name

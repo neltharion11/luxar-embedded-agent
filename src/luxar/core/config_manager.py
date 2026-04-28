@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from ruamel.yaml import YAML
@@ -21,6 +22,9 @@ class LLMSection(BaseModel):
     model: str = "deepseek-chat"
     temperature: float = 0.2
     max_tokens: int = 4096
+    thinking_enabled: bool = False
+    thinking_effort: str = "medium"
+    thinking_budget_tokens: int = 2048
     timeout_sec: int = 60
     base_url: str = ""
     api_key_env: str = ""
@@ -106,12 +110,39 @@ class AgentConfig(BaseModel):
     api_keys: dict[str, str] = Field(default_factory=dict)
 
 
+def _discover_project_root() -> Path | None:
+    current = Path(__file__).resolve()
+    for candidate in current.parents:
+        if (candidate / "pyproject.toml").exists() and (candidate / "src" / "luxar").exists():
+            return candidate
+    return None
+
+
 class ConfigManager:
     def __init__(self, config_path: str | Path | None = None):
+        self._project_root_override: Path | None = None
         if config_path is not None:
-            self.config_path = Path(config_path)
+            self.config_path = Path(config_path).expanduser()
+            root_override = os.getenv("LUXAR_ROOT", "").strip()
+            if root_override:
+                self._project_root_override = Path(root_override).expanduser().resolve()
         else:
-            self.config_path = Path("config/luxar.yaml")
+            env_config = os.getenv("LUXAR_CONFIG", "").strip()
+            env_root = os.getenv("LUXAR_ROOT", "").strip()
+            if env_config:
+                self.config_path = Path(env_config).expanduser()
+                if env_root:
+                    self._project_root_override = Path(env_root).expanduser().resolve()
+            else:
+                root = Path(env_root).expanduser().resolve() if env_root else _discover_project_root()
+                if root is None:
+                    raise RuntimeError(
+                        "Unable to determine the Luxar project root. "
+                        "Run Luxar from a source checkout, or set LUXAR_ROOT to your project root "
+                        "or LUXAR_CONFIG to your config/luxar.yaml path."
+                    )
+                self._project_root_override = root
+                self.config_path = root / "config" / "luxar.yaml"
 
     def load(self) -> AgentConfig:
         if not self.config_path.exists():
@@ -132,6 +163,8 @@ class ConfigManager:
         return config
 
     def project_root(self) -> Path:
+        if self._project_root_override is not None:
+            return self._project_root_override
         return self.config_path.resolve().parent.parent
 
     def resolve_path(self, configured_path: str | Path) -> Path:
