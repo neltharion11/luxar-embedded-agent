@@ -1,8 +1,0 @@
-# ninja log v7
-1	40	7990014244535996	C:/Users/Gugugu/Documents/Codex/2026-04-24-review-spec-md-kimi-code-codex/projects/LedBlink/build/CMakeFiles/cmake.verify_globs	5f95ff07bf91aa0a
-41	139	7990013081196664	CMakeFiles/stm32_firmware_app.dir/Core/Src/startup_stm32.s.obj	40c4aa0dbcbda65
-51	160	7990013081286669	CMakeFiles/stm32_firmware_app.dir/Core/Src/system_stm32xx.c.obj	e7f36446b80f6ce6
-61	179	7990013081398255	CMakeFiles/stm32_firmware_app.dir/Core/Src/main.c.obj	e9ffa8c1417d57f2
-42	147	7990014244948921	CMakeFiles/stm32_firmware_app.dir/App/Src/app_main.c.obj	593748417d5f2f38
-148	250	7990014246000851	stm32_firmware_app	ec0f55e0f5606f41
-1	39	7990022033459221	C:/Users/Gugugu/Documents/Codex/2026-04-24-review-spec-md-kimi-code-codex/projects/LedBlink/build/CMakeFiles/cmake.verify_globs	5f95ff07bf91aa0a
