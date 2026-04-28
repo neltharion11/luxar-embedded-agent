@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import time
 from pathlib import Path
 
 import rich_click as click
@@ -36,6 +39,81 @@ def _echo_json(data) -> None:
         click.echo(json.dumps(data, ensure_ascii=False, indent=2))
     except UnicodeEncodeError:
         click.echo(json.dumps(data, ensure_ascii=True, indent=2))
+
+
+def _service_state_path(manager: ConfigManager) -> Path:
+    state_dir = manager.project_root() / ".luxar"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "dashboard-service.json"
+
+
+def _load_service_state(manager: ConfigManager) -> dict[str, object] | None:
+    state_path = _service_state_path(manager)
+    if not state_path.exists():
+        return None
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_service_state(manager: ConfigManager, state: dict[str, object]) -> None:
+    state_path = _service_state_path(manager)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _clear_service_state(manager: ConfigManager) -> None:
+    state_path = _service_state_path(manager)
+    if state_path.exists():
+        state_path.unlink()
+
+
+def _is_process_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _running_service_state(manager: ConfigManager) -> dict[str, object] | None:
+    state = _load_service_state(manager)
+    if not state:
+        return None
+    pid = int(state.get("pid", 0) or 0)
+    if _is_process_running(pid):
+        return state
+    _clear_service_state(manager)
+    return None
+
+
+def _stop_service_process(manager: ConfigManager, timeout_sec: float = 5.0) -> dict[str, object]:
+    state = _load_service_state(manager)
+    if not state:
+        return {"stopped": False, "reason": "not_running"}
+
+    pid = int(state.get("pid", 0) or 0)
+    host = str(state.get("host", "127.0.0.1"))
+    port = int(state.get("port", 8000) or 8000)
+
+    if not _is_process_running(pid):
+        _clear_service_state(manager)
+        return {"stopped": False, "reason": "stale_state", "pid": pid, "host": host, "port": port}
+
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if not _is_process_running(pid):
+            _clear_service_state(manager)
+            return {"stopped": True, "pid": pid, "host": host, "port": port}
+        time.sleep(0.1)
+
+    raise click.ClickException(
+        f"Timed out while stopping Luxar dashboard process {pid}. "
+        "Please terminate it manually and try again."
+    )
 
 
 class LuxarGroup(click.Group):
@@ -726,9 +804,78 @@ def serve(host: str, port: int, reload: bool) -> None:
     import uvicorn
     from luxar.server.app import create_app
 
+    manager = ConfigManager()
+    existing = _running_service_state(manager)
+    if existing:
+        raise click.ClickException(
+            f"Luxar dashboard is already running at http://{existing.get('host', host)}:"
+            f"{existing.get('port', port)} (pid {existing.get('pid')}). "
+            "Run `luxar stop` first if you want to replace it."
+        )
+
     app = create_app()
+    _write_service_state(
+        manager,
+        {
+            "pid": os.getpid(),
+            "host": host,
+            "port": port,
+            "reload": reload,
+        },
+    )
     click.echo(f"Luxar dashboard starting at http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port, reload=reload)
+    try:
+        uvicorn.run(app, host=host, port=port, reload=reload)
+    finally:
+        state = _load_service_state(manager)
+        if state and int(state.get("pid", 0) or 0) == os.getpid():
+            _clear_service_state(manager)
+
+
+@main.command("stop")
+def stop() -> None:
+    """Stop the Luxar web dashboard."""
+    manager = ConfigManager()
+    result = _stop_service_process(manager)
+    if result["stopped"]:
+        click.echo(
+            f"Luxar dashboard stopped on http://{result['host']}:{result['port']} "
+            f"(pid {result['pid']})."
+        )
+        return
+    if result["reason"] == "stale_state":
+        click.echo(
+            f"Removed stale Luxar dashboard state for pid {result['pid']} "
+            f"on http://{result['host']}:{result['port']}."
+        )
+        return
+    click.echo("Luxar dashboard is not running.")
+
+
+@main.command("restart")
+@click.option("--host", default=None, type=str, help="Override the dashboard host")
+@click.option("--port", default=None, type=int, help="Override the dashboard port")
+@click.option("--reload/--no-reload", default=None, help="Override auto-reload behavior")
+def restart(host: str | None, port: int | None, reload: bool | None) -> None:
+    """Restart the Luxar web dashboard."""
+    manager = ConfigManager()
+    previous = _load_service_state(manager) or {}
+    stop_result = _stop_service_process(manager)
+    if stop_result["stopped"]:
+        click.echo(
+            f"Stopped Luxar dashboard on http://{stop_result['host']}:{stop_result['port']} "
+            f"(pid {stop_result['pid']})."
+        )
+    elif stop_result["reason"] == "stale_state":
+        click.echo("Removed stale Luxar dashboard state before restart.")
+    else:
+        click.echo("Luxar dashboard was not running. Starting a new instance.")
+
+    resolved_host = host or str(previous.get("host", "127.0.0.1"))
+    resolved_port = port or int(previous.get("port", 8000) or 8000)
+    resolved_reload = reload if reload is not None else bool(previous.get("reload", False))
+    ctx = click.get_current_context()
+    ctx.invoke(serve, host=resolved_host, port=resolved_port, reload=resolved_reload)
 
 
 if __name__ == "__main__":

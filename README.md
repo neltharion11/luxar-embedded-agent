@@ -21,6 +21,28 @@ Expert commands are still available when you want them, including:
 - `luxar workflow debug`
 - `luxar parse-doc`
 
+## Workspace Paths
+
+Luxar stores projects, toolchains, skills, and local working data under the repository `workspace/` directory.
+
+- When you run Luxar from a source checkout, it automatically anchors paths to that checkout root.
+- If you clone the repo to `D:\Dev\LUXAR`, Luxar uses `D:\Dev\LUXAR\workspace\...`.
+- If you clone the repo to `E:\Projects\Tools\LUXAR`, Luxar uses `E:\Projects\Tools\LUXAR\workspace\...`.
+
+For non-source or packaged installs, set one of these environment variables so Luxar knows where to read and write data:
+
+```powershell
+$env:LUXAR_ROOT="D:\Tools\LUXAR"
+```
+
+or
+
+```powershell
+$env:LUXAR_CONFIG="D:\Tools\LUXAR\config\luxar.yaml"
+```
+
+`LUXAR_ROOT` points to the project root. `LUXAR_CONFIG` points to the config file directly.
+
 ## Current Highlights
 
 - Single-entry task routing through a shared `TaskRouter`

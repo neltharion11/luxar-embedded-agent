@@ -218,6 +218,101 @@ class ServerAppTests(unittest.TestCase):
         self.assertEqual("assistant", messages[-1]["role"])
         self.assertEqual("internal-thought", messages[-1]["reasoning_content"])
 
+    def test_import_conversation_endpoint_copies_messages_to_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, \
+                 patch("luxar.server.app._run_agent_loop") as run_loop_mock:
+                cm = cm_cls.return_value
+                cm.ensure_default_config.return_value = self._cfg_stub()
+                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
+                cm.workspace_root.return_value = Path(tmpdir) / "projects"
+                cm.project_root.return_value = Path(tmpdir)
+                run_loop_mock.return_value = {"content": "已记录项目需求。", "reasoning_content": ""}
+                with TestClient(create_app()) as client:
+                    post_response = client.post(
+                        "/api/conversations/__global__",
+                        json={"message": "项目名：EnvMonitor", "stream": False},
+                    )
+                    import_response = client.post(
+                        "/api/conversations/EnvMonitor/import",
+                        json={"source_project": "__global__", "replace": True},
+                    )
+                    get_response = client.get("/api/conversations/EnvMonitor")
+
+        self.assertEqual(200, post_response.status_code)
+        self.assertEqual(200, import_response.status_code)
+        self.assertEqual(2, import_response.json()["imported_messages"])
+        messages = get_response.json()["messages"]
+        self.assertEqual("user", messages[0]["role"])
+        self.assertEqual("项目名：EnvMonitor", messages[0]["content"])
+        self.assertEqual("assistant", messages[1]["role"])
+
+    def test_streaming_conversation_emits_done_event_without_tool_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, \
+                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock:
+                cm = cm_cls.return_value
+                cm.ensure_default_config.return_value = self._cfg_stub()
+                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
+                cm.workspace_root.return_value = Path(tmpdir) / "projects"
+                cm.project_root.return_value = Path(tmpdir)
+                complete_stream_mock.return_value = iter([
+                    {"type": "token", "content": "hello"},
+                ])
+                with TestClient(create_app()) as client:
+                    response = client.post(
+                        "/api/conversations/StreamPlain",
+                        json={"message": "你好", "stream": True},
+                        headers={"Accept": "text/event-stream"},
+                    )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn("event: token", response.text)
+        self.assertIn("event: done", response.text)
+
+    def test_streaming_conversation_emits_tool_running_before_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, \
+                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
+                 patch("luxar.server.app._execute_tool", return_value='{"ok": true}') as exec_tool_mock:
+                cm = cm_cls.return_value
+                cm.ensure_default_config.return_value = self._cfg_stub()
+                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
+                cm.workspace_root.return_value = Path(tmpdir) / "projects"
+                cm.project_root.return_value = Path(tmpdir)
+
+                rounds = iter([
+                    [
+                        {
+                            "type": "tool_call",
+                            "id": "call-1",
+                            "name": "run_task",
+                            "arguments": '{"task":"blink"}',
+                        }
+                    ],
+                    [
+                        {"type": "token", "content": "done"},
+                    ],
+                ])
+
+                def _stream_side_effect(*args, **kwargs):
+                    yield from next(rounds)
+
+                complete_stream_mock.side_effect = _stream_side_effect
+                with TestClient(create_app()) as client:
+                    response = client.post(
+                        "/api/conversations/StreamTool",
+                        json={"message": "帮我跑任务", "stream": True},
+                        headers={"Accept": "text/event-stream"},
+                    )
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(exec_tool_mock.called)
+        self.assertIn("event: tool_call", response.text)
+        self.assertIn("event: tool_running", response.text)
+        self.assertIn("event: tool_result", response.text)
+        self.assertIn("event: done", response.text)
+
     def test_reasoning_handoff_repair_drops_plain_assistant_turns(self) -> None:
         repaired = _repair_messages_for_reasoning_handoff([
             {"role": "system", "content": "sys"},

@@ -1,60 +1,25 @@
-agent:
-  name: Luxar
-  version: 0.1.0
-  workspace: ./workspace/projects
-  driver_library: ./workspace/driver_library
-  skill_library: ./workspace/skill_library
-  firmware_library: ./workspace/firmware_library
-llm:
-  provider: deepseek
-  model: deepseek-chat
-  temperature: 0.3
-  max_tokens: 8192
-  timeout_sec: 120
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  retry_attempts: 5
-  retry_min_delay: 1
-  retry_max_delay: 60
+agent: {driver_library: ./workspace/driver_library, firmware_library: 
+    ./workspace/firmware_library, name: Luxar, skill_library: 
+    ./workspace/skill_library, version: 0.1.0, workspace: ./workspace/projects}
+api_keys: {}
+build: {cmake_generator: Ninja, jobs: 4, toolchain_prefix: arm-none-eabi-}
+evolution: {auto_update_protocol_skill: true, enabled: true, min_review_passes: 
+    1, require_project_success: true}
+flash: {default_probe: stlink, openocd_interface: interface/stlink.cfg, 
+    openocd_target: target/stm32f1x.cfg}
+git: {agent_branch_prefix: agent/, auto_commit: true}
+llm: {api_key_env: DEEPSEEK_API_KEY, base_url: 
+    https://api.deepseek.com/chat/completions, max_tokens: 393216, model: 
+    deepseek-v4-flash, provider: deepseek, retry_attempts: 5, retry_max_delay: 
+    60, retry_min_delay: 1, temperature: 1.0, thinking_budget_tokens: 2048, 
+    thinking_effort: max, thinking_enabled: true, timeout_sec: 120}
+monitor: {default_baudrate: 115200, default_timeout: 10}
+platform: {default_platform: stm32cubemx, default_runtime: baremetal}
 review:
   enabled: true
-  layers:
-    static_analysis: true
-    custom_rules: true
-    semantic_review: true
-  max_fix_iterations: 3
   fail_on_warning: false
-platform:
-  default_platform: stm32cubemx
-  default_runtime: baremetal
-build:
-  toolchain_prefix: arm-none-eabi-
-  cmake_generator: Ninja
-  jobs: 4
-toolchains:
-  root: ./workspace/toolchains
-  cmake: ''
-  openocd: ''
-  arm_gcc: ''
-  ninja: ''
-  programmer_cli: ''
-stm32:
-  project_mode: cubemx
-  firmware_package: ''
-  use_cubemx: true
-flash:
-  default_probe: stlink
-  openocd_interface: interface/stlink.cfg
-  openocd_target: target/stm32f1x.cfg
-monitor:
-  default_baudrate: 115200
-  default_timeout: 10
-git:
-  auto_commit: true
-  agent_branch_prefix: agent/
-evolution:
-  enabled: true
-  auto_update_protocol_skill: true
-  require_project_success: true
-  min_review_passes: 1
-
+  layers: {custom_rules: true, semantic_review: true, static_analysis: true}
+  max_fix_iterations: 3
+stm32: {firmware_package: '', project_mode: cubemx, use_cubemx: true}
+toolchains: {arm_gcc: '', cmake: '', ninja: '', openocd: '', programmer_cli: '', 
+    root: ./workspace/toolchains}

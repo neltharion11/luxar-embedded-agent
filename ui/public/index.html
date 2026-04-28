@@ -33,9 +33,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .sidebar-project .proj-del{display:none;margin-left:auto;cursor:pointer;font-size:14px;color:#b0b4ba;padding:0 4px;border-radius:4px;flex-shrink:0}
 .sidebar-project:hover .proj-del{display:block}
 .sidebar-project .proj-del:hover{color:#e54d42;background:#fce4e4}
-.sidebar-global-chat{cursor:pointer;padding:8px;border-radius:8px;font-size:13px;font-weight:500;color:#0d74ce;transition:all .15s;display:flex;align-items:center;gap:8px;margin-bottom:4px}
-.sidebar-global-chat:hover{background:#f0f0f3}
-.sidebar-global-chat.active{background:#0d74ce;color:#fff}
 .sidebar-section-label{padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px}
 #sidebar-projects{flex:1;overflow-y:auto;min-height:0}
 #sidebar-projects::-webkit-scrollbar{width:4px}
@@ -134,7 +131,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .chat-step-pill.skipped{color:#9a6700;border-color:#fde68a;background:#fffbeb}
 .chat-step-pill.failed{color:#b42318;border-color:#fecaca;background:#fef2f2}
 .chat-step-wrap{display:flex;flex-wrap:wrap}
-.chat-typing-bar{font-size:11px;color:#b0b4ba;padding:6px 0 0;margin:0;animation:pulse 1.5s ease-in-out infinite}
+.chat-typing-bar{font-size:11px;color:#7a808a;padding:8px 0 0;margin:0;display:flex;align-items:center;gap:8px;min-height:20px}
+.chat-typing-bar::before{content:'';width:7px;height:7px;border-radius:999px;background:#98a2b3;box-shadow:0 0 0 0 rgba(152,162,179,.45);animation:pulseDot 1.5s ease-in-out infinite}
+.chat-typing-bar.stalled{color:#b42318}
+.chat-typing-bar.stalled::before{background:#f97316;box-shadow:0 0 0 0 rgba(249,115,22,.45);animation:pulseDotWarn 1.2s ease-in-out infinite}
+@keyframes pulseDot{0%,100%{transform:scale(.9);box-shadow:0 0 0 0 rgba(152,162,179,.12)}50%{transform:scale(1.15);box-shadow:0 0 0 6px rgba(152,162,179,0)}}
+@keyframes pulseDotWarn{0%,100%{transform:scale(.95);box-shadow:0 0 0 0 rgba(249,115,22,.18)}50%{transform:scale(1.2);box-shadow:0 0 0 8px rgba(249,115,22,0)}}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
 .stat-card{background:#fff;border:1px solid #e0e1e6;border-radius:12px;padding:20px}
 .stat-card .stat-label{font-size:13px;font-weight:500;color:#60646c;margin-bottom:4px}
@@ -217,6 +219,7 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
   <div id="chat-header" style="padding:8px 0 12px;border-bottom:1px solid #e0e1e6;flex-shrink:0">
     <span style="font-size:12px;color:#60646c" data-i18n="chat.activeProject">Active Project:</span>
     <span id="chat-project-name" style="font-weight:600;font-size:14px;color:#1c2024;margin-left:4px">-</span>
+    <span id="chat-project-meta" style="font-size:12px;color:#60646c;margin-left:10px"></span>
   </div>
   <div id="chat-messages">
     <div class="chat-landing">
@@ -300,6 +303,25 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
         </div>
         <div class="form-group"><label data-i18n="modelConfig.timeout">Timeout (sec)</label><input id="mc-timeout" type="number" value="60" /></div>
       </div>
+      <div class="card">
+        <h3 data-i18n="modelConfig.thinkingTitle">Thinking Mode</h3>
+        <div class="form-group">
+          <label data-i18n="modelConfig.thinkingEnabled">Enable thinking</label>
+          <select id="mc-thinking-enabled" onchange="updateThinkingUi()">
+            <option value="false" data-i18n="modelConfig.thinkingOff">Off</option>
+            <option value="true" data-i18n="modelConfig.thinkingOn">On</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="modelConfig.thinkingEffort">Thinking effort</label>
+          <select id="mc-thinking-effort"></select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="modelConfig.thinkingBudget">Thinking budget tokens</label>
+          <input id="mc-thinking-budget" type="number" value="2048" min="1024" step="256" />
+        </div>
+        <div id="mc-thinking-note" style="font-size:12px;color:#60646c;line-height:1.5"></div>
+      </div>
     </div>
     <div class="config-section">
       <div class="card">
@@ -340,8 +362,11 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
     </div>
     <!-- AI config form -->
     <div id="new-project-ai" class="form-group" style="display:none">
-      <label data-i18n="landing.aiHint">Describe your project...</label>
-      <textarea id="npm-ai-desc" rows="3" placeholder="e.g. Blink an LED every 500ms and print Hello World on UART"></textarea>
+      <div class="chat-result-card" style="margin-top:6px">
+        <ul>
+          <li data-i18n="landing.aiHint">Luxar will open a guided chat and send you the project creation template.</li>
+        </ul>
+      </div>
     </div>
     <div class="modal-status" id="new-project-status"></div>
     <div class="btn-group" style="justify-content:flex-end">
@@ -385,7 +410,7 @@ zh['nav.apiConnected']='已连接';
 zh['sidebar.projects']='项目';
 zh['sidebar.loading']='加载中...';
 zh['sidebar.noProjects']='暂无项目';
-zh['sidebar.createHint']='使用下方按钮创建或打开项目';
+zh['sidebar.createHint']='使用上方按钮创建项目或打开已有项目';
 zh['sidebar.delete']='删除项目';
 zh['sidebar.deleteConfirm']='确定要删除项目 "{name}" 吗？此操作不可撤销。';
 zh['sidebar.deleteFailed']='删除失败';
@@ -396,9 +421,11 @@ zh['landing.newProject']='✨ 新建项目';
 zh['landing.openProject']='📂 打开项目';
 zh['landing.manualTab']='手动配置';
 zh['landing.aiTab']='AI 配置';
-zh['landing.aiHint']='描述你想要的 STM32 项目...';
-zh['chat.globalMode']='全局聊天';
-zh['chat.globalWelcome']='你的嵌入式 AI 工程助手。可以直接对话讨论技术问题，或选择/创建一个项目。';
+zh['landing.aiHint']='进入聊天引导后，Luxar 会发送新建项目所需信息模板。';
+zh['landing.aiJump']='进入聊天引导';
+zh['chat.globalWelcome']='从这里开始创建或打开项目。创建项目时，Luxar 会在聊天里一步步引导你补全项目所需信息。';
+zh['chat.startPage']='启动页';
+zh['chat.newProjectTemplate']='我们来一起创建一个新项目。请尽量按下面模板回复，我会根据这些信息帮你初始化工程，并在创建完成后自动切换到新项目对话窗口。\n\n项目创建信息模板：\n- 项目名：\n- MCU：\n- 平台：`stm32cubemx` 或 `stm32firmware`\n- 运行时：`baremetal` 或 `freertos`\n- 固件包：例如 `STM32Cube_FW_F1`\n- 目标功能：\n- 外设/通信：\n- 参考文档：如果有，请说明你会附加哪些资料\n\n示例：\n- 项目名：EnvMonitor\n- MCU：STM32F103C8T6\n- 平台：stm32cubemx\n- 运行时：baremetal\n- 固件包：STM32Cube_FW_F1\n- 目标功能：每 1 秒采集 AHT20 并通过 UART 打印温湿度\n- 外设/通信：I2C1, USART1, LED\n- 参考文档：AHT20 数据手册';
 zh['chat.inputPlaceholder']='输入消息... /clear=清空上下文 (Enter=发送, Shift+Enter=换行)';
 zh['chat.sendBtn']='发送';
 zh['chat.selectProject']='请从侧边栏选择一个项目。';
@@ -406,6 +433,14 @@ zh['chat.stop']='🛑 停止';
 zh['chat.toolRunning']='正在执行';
 zh['chat.streamError']='流式响应错误';
 zh['chat.typing']='正在输入...';
+zh['chat.thinking']='思考中...';
+zh['chat.streaming']='正在输出...';
+zh['chat.stalled']='长时间无响应，可能卡住';
+zh['chat.recovering']='已自动恢复并重试';
+zh['chat.lastResponseAgo']='最近响应于 {seconds} 秒前';
+zh['chat.noEventSince']='{seconds} 秒未收到新事件';
+zh['chat.toolRunningWithName']='正在调用工具：{tool}';
+zh['chat.toolRunningGeneric']='正在调用工具...';
 zh['dashboard.subtitle']='面向 STM32 的嵌入式 AI 工程工具包。完整的本地闭环：审查、构建、烧录、监控、调试和协议技能演进。';
 zh['dashboard.statProjects']='项目数';
 zh['dashboard.statDrivers']='驱动数';
@@ -450,6 +485,18 @@ zh['modelConfig.advanced']='高级设置';
 zh['modelConfig.temperature']='温度';
 zh['modelConfig.maxTokens']='最大 Token 数';
 zh['modelConfig.timeout']='超时（秒）';
+zh['modelConfig.thinkingTitle']='思考模式';
+zh['modelConfig.thinkingEnabled']='启用思考';
+zh['modelConfig.thinkingOn']='开启';
+zh['modelConfig.thinkingOff']='关闭';
+zh['modelConfig.thinkingEffort']='思考强度';
+zh['modelConfig.thinkingBudget']='思考预算 Token';
+zh['modelConfig.thinkingUnsupported']='当前提供方在 Luxar 里暂不支持手动配置 thinking。';
+zh['modelConfig.thinkingAutomatic']='当前提供方的推理能力由模型自动控制，Luxar 里不提供手动调节。';
+zh['modelConfig.thinkingDeepSeek']='DeepSeek 使用 `thinking.type` 和 `thinking.reasoning_effort`。开启思考时，温度参数不会生效。';
+zh['modelConfig.thinkingOpenAI']='OpenAI Chat Completions 使用 `reasoning_effort`。关闭时会发送 `none`。';
+zh['modelConfig.thinkingClaude']='Claude 使用原生 `thinking.budget_tokens`。扩展思考开启时，温度参数不再手动设置。';
+zh['modelConfig.thinkingTogether']='Together AI 使用 `reasoning.enabled`。是否真正生效取决于所选模型是否支持 reasoning。';
 zh['modelConfig.retry']='重试配置';
 zh['modelConfig.retryAttempts']='重试次数';
 zh['modelConfig.retryMinDelay']='最小延迟（秒）';
@@ -468,7 +515,7 @@ en['nav.apiConnected']='Connected';
 en['sidebar.projects']='Projects';
 en['sidebar.loading']='Loading...';
 en['sidebar.noProjects']='No projects';
-en['sidebar.createHint']='Use the buttons below to create or open a project';
+en['sidebar.createHint']='Use the buttons above to create or open a project';
 en['sidebar.delete']='Delete project';
 en['sidebar.deleteConfirm']='Delete project "{name}"? This cannot be undone.';
 en['sidebar.deleteFailed']='Delete failed';
@@ -479,9 +526,11 @@ en['landing.newProject']='New Project';
 en['landing.openProject']='Open Project';
 en['landing.manualTab']='Manual Config';
 en['landing.aiTab']='AI Config';
-en['landing.aiHint']='Describe your STM32 project...';
-en['chat.globalMode']='Global Chat';
-en['chat.globalWelcome']='Your embedded AI engineering assistant. Chat freely, or select/create a project.';
+en['landing.aiHint']='Luxar will open a guided chat and send you the project creation template.';
+en['landing.aiJump']='Open guided chat';
+en['chat.globalWelcome']='Start here to create or open a project. When you choose AI setup, Luxar will guide project creation step by step in chat.';
+en['chat.startPage']='Start Page';
+en['chat.newProjectTemplate']='Let us create a new project together. Please reply using this template as much as possible. I will initialize the project from your answers and automatically switch you into the new project conversation when creation is complete.\n\nProject creation template:\n- Project name:\n- MCU:\n- Platform: `stm32cubemx` or `stm32firmware`\n- Runtime: `baremetal` or `freertos`\n- Firmware package: for example `STM32Cube_FW_F1`\n- Target behavior:\n- Peripherals / buses:\n- Reference docs: mention any files you plan to attach\n\nExample:\n- Project name: EnvMonitor\n- MCU: STM32F103C8T6\n- Platform: stm32cubemx\n- Runtime: baremetal\n- Firmware package: STM32Cube_FW_F1\n- Target behavior: sample AHT20 every second and print temperature and humidity over UART\n- Peripherals / buses: I2C1, USART1, LED\n- Reference docs: AHT20 datasheet';
 en['chat.inputPlaceholder']='Type... /clear=reset context (Enter=send, Shift+Enter=newline)';
 en['chat.sendBtn']='Send';
 en['chat.selectProject']='Please select a project from the sidebar.';
@@ -489,6 +538,14 @@ en['chat.stop']='🛑 Stop';
 en['chat.toolRunning']='Running';
 en['chat.streamError']='Stream error';
 en['chat.typing']='Typing...';
+en['chat.thinking']='Thinking...';
+en['chat.streaming']='Streaming...';
+en['chat.stalled']='No recent response, the run may be stuck';
+en['chat.recovering']='Recovered automatically and retrying';
+en['chat.lastResponseAgo']='Last response {seconds}s ago';
+en['chat.noEventSince']='No new events for {seconds}s';
+en['chat.toolRunningWithName']='Running tool: {tool}';
+en['chat.toolRunningGeneric']='Running tool...';
 en['dashboard.subtitle']='STM32-first embedded AI engineering toolkit. Full local loop: review, build, flash, monitor, debug, and protocol skill evolution.';
 en['dashboard.statProjects']='Projects';
 en['dashboard.statDrivers']='Drivers';
@@ -533,6 +590,18 @@ en['modelConfig.advanced']='Advanced';
 en['modelConfig.temperature']='Temperature';
 en['modelConfig.maxTokens']='Max Tokens';
 en['modelConfig.timeout']='Timeout (sec)';
+en['modelConfig.thinkingTitle']='Thinking Mode';
+en['modelConfig.thinkingEnabled']='Enable thinking';
+en['modelConfig.thinkingOn']='On';
+en['modelConfig.thinkingOff']='Off';
+en['modelConfig.thinkingEffort']='Thinking effort';
+en['modelConfig.thinkingBudget']='Thinking budget tokens';
+en['modelConfig.thinkingUnsupported']='Manual thinking configuration is not supported for this provider in Luxar right now.';
+en['modelConfig.thinkingAutomatic']='This provider handles reasoning automatically for supported models, so Luxar does not expose manual tuning here.';
+en['modelConfig.thinkingDeepSeek']='DeepSeek uses `thinking.type` and `thinking.reasoning_effort`. Temperature is not effective while thinking is enabled.';
+en['modelConfig.thinkingOpenAI']='OpenAI Chat Completions uses `reasoning_effort`. Luxar sends `none` when thinking is turned off.';
+en['modelConfig.thinkingClaude']='Claude uses native `thinking.budget_tokens`. When extended thinking is enabled, Luxar stops setting temperature explicitly.';
+en['modelConfig.thinkingTogether']='Together AI uses `reasoning.enabled`. Whether it takes effect depends on the selected model supporting reasoning.';
 en['modelConfig.retry']='Retry Configuration';
 en['modelConfig.retryAttempts']='Retry Attempts';
 en['modelConfig.retryMinDelay']='Min Delay (sec)';
@@ -548,14 +617,105 @@ let selectedProject = null;
 let driverSearchTimeout = null;
 let projectModalMode = 'create';
 let newProjectTab = 'manual';
+let pendingProjectSelection = null;
+let projectMetaByName = {};
+let CHAT_STALL_THRESHOLD_MS = 45000;
 
 function t(key) { return i18n[currentLang]?.[key] || i18n['en']?.[key] || key; }
+
+function formatI18n(key, vars) {
+  var text = t(key);
+  if (!vars) return text;
+  Object.keys(vars).forEach(function(name) {
+    text = text.replace(new RegExp('\\{' + name + '\\}', 'g'), String(vars[name]));
+  });
+  return text;
+}
+
+function secondsSince(ts) {
+  return Math.max(0, Math.floor((Date.now() - ts) / 1000));
+}
+
+function createChatStatusController(el) {
+  var state = 'thinking';
+  var toolName = '';
+  var lastEventAt = Date.now();
+  var timer = null;
+
+  function isActiveState(name) {
+    return name === 'thinking' || name === 'tool_running' || name === 'streaming';
+  }
+
+  function effectiveState() {
+    if (isActiveState(state) && (Date.now() - lastEventAt) >= CHAT_STALL_THRESHOLD_MS) return 'stalled';
+    return state;
+  }
+
+  function mainText(name) {
+    if (name === 'tool_running') {
+      return toolName ? formatI18n('chat.toolRunningWithName', {tool: toolName}) : t('chat.toolRunningGeneric');
+    }
+    if (name === 'streaming') return t('chat.streaming');
+    if (name === 'stalled') return t('chat.stalled');
+    return t('chat.thinking');
+  }
+
+  function detailText(name, elapsedSec) {
+    if (name === 'stalled') return formatI18n('chat.noEventSince', {seconds: elapsedSec});
+    return formatI18n('chat.lastResponseAgo', {seconds: elapsedSec});
+  }
+
+  function render() {
+    var shownState = effectiveState();
+    var elapsedSec = secondsSince(lastEventAt);
+    el.className = 'chat-typing-bar' + (shownState === 'stalled' ? ' stalled' : '');
+    el.textContent = mainText(shownState) + ' · ' + detailText(shownState, elapsedSec);
+  }
+
+  function start() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(render, 1000);
+    render();
+  }
+
+  function markEvent() {
+    lastEventAt = Date.now();
+    render();
+  }
+
+  function setState(nextState, opts) {
+    state = nextState;
+    if (opts && Object.prototype.hasOwnProperty.call(opts, 'toolName')) {
+      toolName = opts.toolName || '';
+    }
+    render();
+  }
+
+  function finish(finalState) {
+    state = finalState;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    el.style.display = 'none';
+  }
+
+  start();
+  return {
+    markEvent: markEvent,
+    setState: setState,
+    finish: finish
+  };
+}
 
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(function(el) { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) { el.placeholder = t(el.dataset.i18nPlaceholder); });
   document.getElementById('lang-btn').textContent = currentLang === 'zh' ? 'EN' : '中';
   document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+  updateNewProjectSubmitLabel();
+  updateChatHeader();
+  if (document.getElementById('mc-provider')) updateThinkingUi();
 }
 
 function toggleLang() {
@@ -594,17 +754,58 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function renderTaskResultCards(taskResult) {
+  if (!taskResult || typeof taskResult !== 'object') return '';
+  var cards = [];
+  if (taskResult.project && taskResult.project.name) {
+    cards.push(
+      '<div class="chat-result-card"><h4>Project</h4><ul>' +
+      '<li><span>Name:</span> ' + escapeHtml(taskResult.project.name || '') + '</li>' +
+      '<li><span>MCU:</span> ' + escapeHtml(taskResult.project.mcu || '-') + '</li>' +
+      '<li><span>Platform:</span> ' + escapeHtml(taskResult.project.platform || '-') + '</li>' +
+      '</ul></div>'
+    );
+  }
+  if (taskResult.workflow && taskResult.workflow.summary) {
+    cards.push(
+      '<div class="chat-result-card"><h4>Workflow</h4><ul><li>' +
+      escapeHtml(taskResult.workflow.summary) +
+      '</li></ul></div>'
+    );
+  } else if (taskResult.message) {
+    cards.push(
+      '<div class="chat-result-card"><h4>Result</h4><ul><li>' +
+      escapeHtml(String(taskResult.message)) +
+      '</li></ul></div>'
+    );
+  }
+  return cards.length ? '<div class="chat-result-stack">' + cards.join('') + '</div>' : '';
+}
+
+function extractProjectNameFromToolResult(toolName, resultText) {
+  if (!toolName || !resultText || toolName !== 'init_project') return null;
+  try {
+    var parsed = typeof resultText === 'string' ? JSON.parse(resultText) : resultText;
+    return parsed && parsed.name ? parsed.name : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function loadSidebarProjects() {
   var container = document.getElementById('sidebar-projects');
   try {
     var data = await apiGet('/api/projects');
     var projs = data.projects || [];
-    var html = '<div class="nav-item sidebar-global-chat active" onclick="selectProject(\'\')"><span class="nav-icon">&#x1F4AC;</span><span>' + t('chat.globalMode') + '</span></div>';
+    projectMetaByName = {};
+    projs.forEach(function(p) { if (p && p.name) projectMetaByName[p.name] = p; });
+    var html = '';
     if (projs.length) {
       html += '<div class="sidebar-section-label" style="padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px">' + t('sidebar.projects') + '</div>';
       html += projs.map(function(p) {
         var name = p.name.replace(/'/g, "\\'");
-        return '<div class="sidebar-project" onclick="selectProject(\'' + name + '\')">' +
+        var activeClass = selectedProject === p.name ? ' active' : '';
+        return '<div class="sidebar-project' + activeClass + '" onclick="selectProject(\'' + name + '\')">' +
           '<span class="dot"></span><span class="proj-name">' + escapeHtml(p.name) + '</span>' +
           '<span class="proj-del" onclick="event.stopPropagation();deleteProject(\'' + name + '\')" title="' + t('sidebar.delete') + '">&#x2715;</span>' +
           '</div>';
@@ -621,6 +822,7 @@ async function loadSidebarProjects() {
 function openNewProjectModal() {
   document.getElementById('new-project-modal').classList.add('active');
   switchNewProjectTab(newProjectTab);
+  document.getElementById('new-project-status').textContent = '';
 }
 
 function closeNewProjectModal(event) {
@@ -634,6 +836,39 @@ function switchNewProjectTab(tab) {
   document.getElementById('tab-ai').classList.toggle('active', tab === 'ai');
   document.getElementById('new-project-manual').style.display = tab === 'manual' ? 'grid' : 'none';
   document.getElementById('new-project-ai').style.display = tab === 'ai' ? 'block' : 'none';
+  updateNewProjectSubmitLabel();
+}
+
+function updateNewProjectSubmitLabel() {
+  var submitBtn = document.getElementById('new-project-submit');
+  if (!submitBtn) return;
+  submitBtn.textContent = newProjectTab === 'ai' ? t('landing.aiJump') : (currentLang === 'zh' ? '创建项目' : 'Create');
+}
+
+function updateChatHeader() {
+  var header = document.getElementById('chat-header');
+  var nameEl = document.getElementById('chat-project-name');
+  var metaEl = document.getElementById('chat-project-meta');
+  if (!header || !nameEl || !metaEl) return;
+  if (selectedProject) {
+    header.style.display = '';
+    nameEl.textContent = '📁 ' + selectedProject;
+    metaEl.textContent = formatProjectMeta(projectMetaByName[selectedProject]);
+  } else {
+    header.style.display = 'none';
+    nameEl.textContent = t('chat.startPage');
+    metaEl.textContent = '';
+  }
+}
+
+function formatProjectMeta(project) {
+  if (!project) return '';
+  var parts = [];
+  if (project.mcu) parts.push(project.mcu);
+  if (project.platform) parts.push(project.platform);
+  if (project.runtime) parts.push(project.runtime);
+  if (project.firmware_package) parts.push(project.firmware_package);
+  return parts.join(' · ');
 }
 
 async function submitNewProject() {
@@ -641,21 +876,20 @@ async function submitNewProject() {
   status.textContent = 'Working...';
 
   if (newProjectTab === 'ai') {
-    var desc = document.getElementById('npm-ai-desc').value.trim();
-    if (!desc) { status.textContent = 'Please enter a project description.'; return; }
+    status.textContent = '';
     document.getElementById('new-project-modal').classList.remove('active');
-    document.getElementById('chat-input').value = 'Create a new STM32 project: ' + desc;
-    document.getElementById('chat-input').style.height = 'auto';
-    sendMessage();
+    selectProject('');
+    seedNewProjectChat();
     return;
   }
 
+  var platform = document.getElementById('npm-platform').value.trim() || 'stm32cubemx';
   var payload = {
     name: document.getElementById('npm-name').value.trim(),
     mcu: document.getElementById('npm-mcu').value.trim(),
-    platform: document.getElementById('npm-platform').value.trim() || 'stm32cubemx',
+    platform: platform,
     runtime: document.getElementById('npm-runtime').value.trim() || 'baremetal',
-    project_mode: document.getElementById('npm-mode').value,
+    project_mode: platform === 'stm32firmware' ? 'firmware' : 'cubemx',
     firmware_package: document.getElementById('npm-fw').value.trim()
   };
   if (!payload.name) { status.textContent = 'Project name is required.'; return; }
@@ -687,7 +921,7 @@ async function loadOpenProjectList() {
     var projs = data.projects || [];
     if (!projs.length) { list.innerHTML = '<div class="empty-state">No projects found</div>'; return; }
     list.innerHTML = projs.map(function(p) {
-      return '<div class="driver-item" onclick="selectProjectFromList(\'' + p.name.replace(/'/g, "\\'") + '\')" style="cursor:pointer;padding:10px 12px"><span class="item-title">' + escapeHtml(p.name) + '</span><span class="item-sub">' + (p.mcu || '-') + ' \u00b7 ' + (p.platform || '-') + '</span></div>';
+      return '<div class="driver-item" onclick="selectProjectFromList(\'' + p.name.replace(/'/g, "\\'") + '\')" style="cursor:pointer;padding:10px 12px"><span class="item-title">' + escapeHtml(p.name) + '</span></div>';
     }).join('');
   } catch(e) { list.innerHTML = 'Failed to load'; }
 }
@@ -726,17 +960,15 @@ async function deleteProject(name) {
 
 function selectProject(name) {
   selectedProject = name || null;
-  document.querySelectorAll('.sidebar-project, .sidebar-global-chat').forEach(function(el) { el.classList.remove('active'); });
+  document.querySelectorAll('.sidebar-project').forEach(function(el) { el.classList.remove('active'); });
   if (name) {
     var items = document.querySelectorAll('.sidebar-project');
     for (var i = 0; i < items.length; i++) {
-      if (items[i].textContent.trim() === name) { items[i].classList.add('active'); break; }
+      var label = items[i].querySelector('.proj-name');
+      if (label && label.textContent.trim() === name) { items[i].classList.add('active'); break; }
     }
-    document.getElementById('chat-project-name').textContent = '📁 ' + name;
-  } else {
-    document.querySelector('.sidebar-global-chat').classList.add('active');
-    document.getElementById('chat-project-name').innerHTML = '<span style="color:#0d74ce">💬 ' + t('chat.globalMode') + '</span>';
   }
+  updateChatHeader();
   navigate('chat');
   if (name) loadConversation(name);
   else loadChatWelcome();
@@ -745,6 +977,28 @@ function selectProject(name) {
 function loadChatWelcome() {
   var container = document.getElementById('chat-messages');
   container.innerHTML = '<div class="chat-landing"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.globalWelcome') + '</p><div class="landing-actions"><button class="landing-btn landing-btn-new" onclick="openNewProjectModal()">' + t('landing.newProject') + '</button><button class="landing-btn landing-btn-open" onclick="openOpenProjectModal()">' + t('landing.openProject') + '</button></div><p class="landing-slogan">Luxar,点亮每一盏灯。</p></div>';
+}
+
+function seedNewProjectChat() {
+  var container = document.getElementById('chat-messages');
+  container.innerHTML = '';
+  appendChatBubble('assistant', t('chat.newProjectTemplate'));
+  var input = document.getElementById('chat-input');
+  input.value = '';
+  input.focus();
+  autoResize(input);
+}
+
+async function importConversationToProject(sourceProject, targetProject) {
+  if (!sourceProject || !targetProject) return;
+  await fetch('/api/conversations/' + encodeURIComponent(targetProject) + '/import', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      source_project: sourceProject,
+      replace: true
+    })
+  });
 }
 
 async function clearConversation() {
@@ -770,7 +1024,12 @@ async function loadConversation(project) {
     if (!msgs.length) {
       container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
     } else {
-      msgs.forEach(function(m) { appendChatBubble(m.role, m.content); });
+      msgs.forEach(function(m) {
+        if (shouldRenderChatMessage(m)) appendChatBubble(m.role, m.content);
+      });
+      if (!container.children.length) {
+        container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
+      }
     }
     container.scrollTop = container.scrollHeight;
   } catch(e) {
@@ -778,10 +1037,20 @@ async function loadConversation(project) {
   }
 }
 
+function shouldRenderChatMessage(message) {
+  if (!message || !message.role) return false;
+  if (message.role === 'tool') return false;
+  if (message.role === 'assistant' && (!message.content || !String(message.content).trim())) return false;
+  if (message.role === 'user' && (!message.content || !String(message.content).trim())) return false;
+  return true;
+}
+
 function appendChatBubble(role, content, isHtml) {
   var container = document.getElementById('chat-messages');
   var welcome = container.querySelector('.chat-welcome');
   if (welcome) welcome.remove();
+  var landing = container.querySelector('.chat-landing');
+  if (landing) landing.remove();
   var div = document.createElement('div');
   div.className = 'chat-bubble ' + role;
   if (role === 'assistant' && content && !isHtml) {
@@ -889,10 +1158,11 @@ async function sendMessage() {
   bubbleDiv.appendChild(resultDiv);
   var typingDiv = document.createElement('div');
   typingDiv.className = 'chat-typing-bar';
-  typingDiv.textContent = '●●● ' + t('chat.typing');
   bubbleDiv.appendChild(typingDiv);
   container.appendChild(bubbleDiv);
   var streamContent = '';
+  var statusController = createChatStatusController(typingDiv);
+  statusController.setState('thinking');
 
   abortController = new AbortController();
   try {
@@ -910,6 +1180,7 @@ async function sendMessage() {
     if (!res.ok) {
       var errText = await res.text();
       mdDiv.innerHTML = '<p>' + t('chat.error') + ' ' + res.status + ': ' + errText + '</p>';
+      statusController.finish('error');
       return;
     }
     var reader = res.body.getReader();
@@ -927,6 +1198,8 @@ async function sendMessage() {
               var chunk = JSON.parse(dataStr);
               var token = chunk.token || chunk.content || '';
               if (token) {
+                statusController.markEvent();
+                statusController.setState('streaming');
                 streamContent += token;
                 mdDiv.innerHTML = marked.parse(streamContent);
                 mdDiv.querySelectorAll('pre code').forEach(function(block) {
@@ -949,11 +1222,13 @@ async function sendMessage() {
           currentEvent = line.slice(7).trim();
         } else if (line.startsWith('data: ')) {
           var dataStr = line.slice(6).trim();
+          statusController.markEvent();
           if (currentEvent === 'token') {
             try {
               var chunk = JSON.parse(dataStr);
               var token = chunk.token || chunk.content || '';
               if (token) {
+                statusController.setState('streaming');
                 streamContent += token;
                 mdDiv.innerHTML = marked.parse(streamContent);
                 mdDiv.querySelectorAll('pre code').forEach(function(block) {
@@ -968,11 +1243,32 @@ async function sendMessage() {
               resultDiv.innerHTML = renderTaskResultCards(taskResult);
               container.scrollTop = container.scrollHeight;
             } catch(e) {}
+          } else if (currentEvent === 'tool_result') {
+            try {
+              var toolChunk = JSON.parse(dataStr);
+              var createdProjectName = extractProjectNameFromToolResult(toolChunk.tool, toolChunk.result);
+              if (createdProjectName) pendingProjectSelection = createdProjectName;
+            } catch(e) {}
           } else if (currentEvent === 'tool_call') {
             try {
               var chunk = JSON.parse(dataStr);
+              statusController.setState('tool_running', {toolName: chunk.tool_call || ''});
               if (chunk.tool_call) {
                 streamContent += '\n\n_' + t('chat.toolRunning') + ': ' + chunk.tool_call + '..._\n\n';
+                mdDiv.innerHTML = marked.parse(streamContent);
+                container.scrollTop = container.scrollHeight;
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'tool_running') {
+            try {
+              var runningChunk = JSON.parse(dataStr);
+              statusController.setState('tool_running', {toolName: runningChunk.tool || ''});
+            } catch(e) {}
+          } else if (currentEvent === 'warning') {
+            try {
+              var warningChunk = JSON.parse(dataStr);
+              if (warningChunk.warning) {
+                streamContent += '\n\n_' + t('chat.recovering') + ': ' + warningChunk.warning + '_\n\n';
                 mdDiv.innerHTML = marked.parse(streamContent);
                 container.scrollTop = container.scrollHeight;
               }
@@ -984,25 +1280,36 @@ async function sendMessage() {
               mdDiv.innerHTML = marked.parse(streamContent);
               container.scrollTop = container.scrollHeight;
             } catch(e) {}
+            statusController.finish('error');
+          } else if (currentEvent === 'done') {
+            statusController.finish('done');
+            if (pendingProjectSelection) {
+              var projectToOpen = pendingProjectSelection;
+              pendingProjectSelection = null;
+              await importConversationToProject('__global__', projectToOpen);
+              await loadSidebarProjects();
+              selectProject(projectToOpen);
+            }
           }
           // 'done' event has data: [DONE], nothing to render
         }
       }
     }
   } catch(e) {
-    typingDiv.style.display = 'none';
     if (e.name === 'AbortError') {
+      statusController.finish('stopped');
       if (streamContent) {
         streamContent += '\n\n_(' + t('chat.stop') + ')_';
         mdDiv.innerHTML = marked.parse(streamContent);
       }
     } else {
+      statusController.finish('error');
       mdDiv.innerHTML = '<p>' + t('chat.error') + ' ' + e.message + '</p>';
     }
   }
   sendBtn.disabled = false;
   stopBtn.style.display = 'none';
-  typingDiv.style.display = 'none';
+  statusController.finish('done');
   abortController = null;
   loadSidebarProjects();
 }
@@ -1027,7 +1334,7 @@ async function loadDashboard() {
     else {
       dashList.innerHTML = projList.map(function(p) {
         var name = p.name.replace(/'/g, "\\'");
-        return '<div class="driver-item" onclick="selectProject(\'' + name + '\')"><div class="item-title">' + escapeHtml(p.name) + '</div><div class="item-sub">' + (p.mcu || '-') + ' \u00b7 ' + (p.platform || '-') + ' \u00b7 ' + (p.runtime || '-') + '</div></div>';
+        return '<div class="driver-item" onclick="selectProject(\'' + name + '\')"><div class="item-title">' + escapeHtml(p.name) + '</div></div>';
       }).join('');
     }
     try { var d = await apiGet('/api/drivers?keyword='); document.getElementById('stat-drivers').textContent = (d.drivers || []).length; } catch(e) {}
@@ -1103,21 +1410,21 @@ function loadKeyForProvider(provider) {
 }
 
 var providerDefaults = {
-  deepseek:   {url: 'https://api.deepseek.com/chat/completions',      key: 'DEEPSEEK_API_KEY', models: [{id:'deepseek-v4-flash',name:'DeepSeek V4 Flash',ctx:393216},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro',ctx:393216}]},
-  openai:     {url: 'https://api.openai.com/v1/chat/completions',     key: 'OPENAI_API_KEY',    models: [{id:'gpt-5.5',name:'GPT-5.5',ctx:131072},{id:'gpt-5.4',name:'GPT-5.4',ctx:131072},{id:'gpt-5.4-mini',name:'GPT-5.4 Mini',ctx:131072},{id:'gpt-5.4-nano',name:'GPT-5.4 Nano',ctx:131072}]},
-  claude:     {url: 'https://api.anthropic.com/v1/messages',          key: 'ANTHROPIC_API_KEY', models: [{id:'claude-opus-4-7',name:'Claude Opus 4.7',ctx:131072},{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6',ctx:65536},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5',ctx:65536}]},
-  groq:       {url: 'https://api.groq.com/openai/v1/chat/completions',key: 'GROQ_API_KEY',      models: [{id:'llama-3.1-8b-instant',name:'Llama 3.1 8B',ctx:131072},{id:'llama-3.3-70b-versatile',name:'Llama 3.3 70B',ctx:32768},{id:'openai/gpt-oss-120b',name:'GPT-OSS 120B',ctx:65536},{id:'openai/gpt-oss-20b',name:'GPT-OSS 20B',ctx:65536}]},
-  xai:        {url: 'https://api.xai.com/v1/chat/completions',        key: 'XAI_API_KEY',       models: [{id:'grok-4.20',name:'Grok 4.20',ctx:131072},{id:'grok-3',name:'Grok 3',ctx:131072}]},
-  together:   {url: 'https://api.together.xyz/v1/chat/completions',   key: 'TOGETHER_API_KEY',  models: [{id:'deepseek-ai/DeepSeek-V3',name:'DeepSeek V3',ctx:131072},{id:'Qwen/Qwen3-Coder-480B-A35B-Instruct',name:'Qwen3 Coder 480B',ctx:131072},{id:'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',name:'Llama 4 Maverick',ctx:131072}]},
-  fireworks:  {url: 'https://api.fireworks.ai/inference/v1/chat/completions',key: 'FIREWORKS_API_KEY',models: [{id:'accounts/fireworks/models/qwen2p5-coder-32b-instruct',name:'Qwen 2.5 Coder 32B',ctx:131072},{id:'accounts/fireworks/models/deepseek-v3',name:'DeepSeek V3',ctx:131072}]},
-  cerebras:   {url: 'https://api.cerebras.ai/v1/chat/completions',    key: 'CEREBRAS_API_KEY',  models: [{id:'llama3.3-70b',name:'Llama 3.3 70B',ctx:128000},{id:'llama3.1-8b',name:'Llama 3.1 8B',ctx:128000}]},
-  moonshot:   {url: 'https://api.moonshot.cn/v1/chat/completions',    key: 'MOONSHOT_API_KEY',  models: [{id:'kimi-k2.6',name:'Kimi K2.6',ctx:262144},{id:'kimi-k2.5',name:'Kimi K2.5',ctx:262144}]},
-  zhipu:      {url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', key: 'ZHIPU_API_KEY', models: [{id:'glm-5.1',name:'GLM-5.1 (Flagship)',ctx:131072},{id:'glm-5',name:'GLM-5',ctx:131072},{id:'glm-4.7',name:'GLM-4.7',ctx:131072},{id:'glm-4.7-flash',name:'GLM-4.7 Flash',ctx:131072}]},
-  openrouter: {url: 'https://openrouter.ai/api/v1/chat/completions',  key: 'OPENROUTER_API_KEY',models: [{id:'deepseek/deepseek-chat',name:'DeepSeek V3 Chat',ctx:65536},{id:'openai/gpt-4o',name:'GPT-4o',ctx:128000},{id:'anthropic/claude-sonnet-4',name:'Claude Sonnet 4',ctx:200000}]},
-  deepinfra:  {url: 'https://api.deepinfra.com/v1/openai/chat/completions',key:'DEEPINFRA_API_KEY',models:[{id:'deepseek-ai/DeepSeek-V3',name:'DeepSeek V3',ctx:131072}]},
-  minimax:    {url: 'https://api.minimax.io/v1/chat/completions',     key: 'MINIMAX_API_KEY',   models: [{id:'MiniMax-M2.1',name:'MiniMax M2.1',ctx:262144},{id:'MiniMax-M2.7',name:'MiniMax M2.7',ctx:262144}]},
-  ollama:     {url: 'http://localhost:11434/v1/chat/completions',      key: '',                 models: [{id:'qwen2.5-coder:7b',name:'Qwen 2.5 Coder 7B',ctx:32768},{id:'llama3.1:8b',name:'Llama 3.1 8B',ctx:128000},{id:'deepseek-r1:8b',name:'DeepSeek R1 8B',ctx:131072}]},
-  custom:     {url: '',                                               key: '',                 models: []},
+  deepseek:   {url: 'https://api.deepseek.com/chat/completions',      key: 'DEEPSEEK_API_KEY', thinking: {supported:true, effortOptions:['high','max'], note:'modelConfig.thinkingDeepSeek'}, models: [{id:'deepseek-v4-flash',name:'DeepSeek V4 Flash',ctx:393216},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro',ctx:393216}]},
+  openai:     {url: 'https://api.openai.com/v1/chat/completions',     key: 'OPENAI_API_KEY', thinking: {supported:true, effortOptions:['minimal','low','medium','high','xhigh'], note:'modelConfig.thinkingOpenAI'}, models: [{id:'gpt-5.5',name:'GPT-5.5',ctx:131072},{id:'gpt-5.4',name:'GPT-5.4',ctx:131072},{id:'gpt-5.4-mini',name:'GPT-5.4 Mini',ctx:131072},{id:'gpt-5.4-nano',name:'GPT-5.4 Nano',ctx:131072}]},
+  claude:     {url: 'https://api.anthropic.com/v1/messages',          key: 'ANTHROPIC_API_KEY', thinking: {supported:true, budget:true, minBudget:1024, note:'modelConfig.thinkingClaude'}, models: [{id:'claude-opus-4-7',name:'Claude Opus 4.7',ctx:131072},{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6',ctx:65536},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5',ctx:65536}]},
+  groq:       {url: 'https://api.groq.com/openai/v1/chat/completions',key: 'GROQ_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'llama-3.1-8b-instant',name:'Llama 3.1 8B',ctx:131072},{id:'llama-3.3-70b-versatile',name:'Llama 3.3 70B',ctx:32768},{id:'openai/gpt-oss-120b',name:'GPT-OSS 120B',ctx:65536},{id:'openai/gpt-oss-20b',name:'GPT-OSS 20B',ctx:65536}]},
+  xai:        {url: 'https://api.xai.com/v1/chat/completions',        key: 'XAI_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingAutomatic'}, models: [{id:'grok-4.20',name:'Grok 4.20',ctx:131072},{id:'grok-3',name:'Grok 3',ctx:131072}]},
+  together:   {url: 'https://api.together.xyz/v1/chat/completions',   key: 'TOGETHER_API_KEY', thinking: {supported:true, note:'modelConfig.thinkingTogether'}, models: [{id:'deepseek-ai/DeepSeek-V3',name:'DeepSeek V3',ctx:131072},{id:'Qwen/Qwen3-Coder-480B-A35B-Instruct',name:'Qwen3 Coder 480B',ctx:131072},{id:'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',name:'Llama 4 Maverick',ctx:131072}]},
+  fireworks:  {url: 'https://api.fireworks.ai/inference/v1/chat/completions',key: 'FIREWORKS_API_KEY',thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'accounts/fireworks/models/qwen2p5-coder-32b-instruct',name:'Qwen 2.5 Coder 32B',ctx:131072},{id:'accounts/fireworks/models/deepseek-v3',name:'DeepSeek V3',ctx:131072}]},
+  cerebras:   {url: 'https://api.cerebras.ai/v1/chat/completions',    key: 'CEREBRAS_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'llama3.3-70b',name:'Llama 3.3 70B',ctx:128000},{id:'llama3.1-8b',name:'Llama 3.1 8B',ctx:128000}]},
+  moonshot:   {url: 'https://api.moonshot.cn/v1/chat/completions',    key: 'MOONSHOT_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'kimi-k2.6',name:'Kimi K2.6',ctx:262144},{id:'kimi-k2.5',name:'Kimi K2.5',ctx:262144}]},
+  zhipu:      {url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', key: 'ZHIPU_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'glm-5.1',name:'GLM-5.1 (Flagship)',ctx:131072},{id:'glm-5',name:'GLM-5',ctx:131072},{id:'glm-4.7',name:'GLM-4.7',ctx:131072},{id:'glm-4.7-flash',name:'GLM-4.7 Flash',ctx:131072}]},
+  openrouter: {url: 'https://openrouter.ai/api/v1/chat/completions',  key: 'OPENROUTER_API_KEY',thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'deepseek/deepseek-chat',name:'DeepSeek V3 Chat',ctx:65536},{id:'openai/gpt-4o',name:'GPT-4o',ctx:128000},{id:'anthropic/claude-sonnet-4',name:'Claude Sonnet 4',ctx:200000}]},
+  deepinfra:  {url: 'https://api.deepinfra.com/v1/openai/chat/completions',key:'DEEPINFRA_API_KEY',thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models:[{id:'deepseek-ai/DeepSeek-V3',name:'DeepSeek V3',ctx:131072}]},
+  minimax:    {url: 'https://api.minimax.io/v1/chat/completions',     key: 'MINIMAX_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'MiniMax-M2.1',name:'MiniMax M2.1',ctx:262144},{id:'MiniMax-M2.7',name:'MiniMax M2.7',ctx:262144}]},
+  ollama:     {url: 'http://localhost:11434/v1/chat/completions',      key: '', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'qwen2.5-coder:7b',name:'Qwen 2.5 Coder 7B',ctx:32768},{id:'llama3.1:8b',name:'Llama 3.1 8B',ctx:128000},{id:'deepseek-r1:8b',name:'DeepSeek R1 8B',ctx:131072}]},
+  custom:     {url: '',                                               key: '', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: []},
 };
 
 function populateModelSelect(provider) {
@@ -1145,6 +1452,7 @@ function formatContext(ctx) {
 function onProviderChange(provider) {
   populateModelSelect(provider);
   loadKeyForProvider(provider);
+  updateThinkingUi();
   onModelChange();
 }
 
@@ -1157,6 +1465,61 @@ function onModelChange() {
   } else {
     customInput.style.display = 'none';
   }
+}
+
+function populateThinkingEffortOptions(options) {
+  var sel = document.getElementById('mc-thinking-effort');
+  sel.innerHTML = '';
+  (options || []).forEach(function(value) {
+    var opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    sel.appendChild(opt);
+  });
+  if (!sel.options.length) {
+    var empty = document.createElement('option');
+    empty.value = 'medium';
+    empty.textContent = 'medium';
+    sel.appendChild(empty);
+  }
+}
+
+function updateThinkingUi(savedThinking) {
+  var provider = document.getElementById('mc-provider').value;
+  var def = providerDefaults[provider] || {};
+  var thinking = def.thinking || {supported:false};
+  var enabledSel = document.getElementById('mc-thinking-enabled');
+  var effortSel = document.getElementById('mc-thinking-effort');
+  var budgetInput = document.getElementById('mc-thinking-budget');
+  var noteEl = document.getElementById('mc-thinking-note');
+  var tempInput = document.getElementById('mc-temperature');
+  var effortOptions = thinking.effortOptions || ['medium'];
+  var thinkingEnabled = savedThinking && savedThinking.enabled != null
+    ? !!savedThinking.enabled
+    : enabledSel.value === 'true';
+
+  populateThinkingEffortOptions(effortOptions);
+
+  if (savedThinking && savedThinking.effort) {
+    effortSel.value = savedThinking.effort;
+  } else if (effortOptions.indexOf(effortSel.value) === -1) {
+    effortSel.value = effortOptions[0];
+  }
+
+  if (savedThinking && savedThinking.budget_tokens != null) {
+    budgetInput.value = savedThinking.budget_tokens;
+  } else if (!budgetInput.value) {
+    budgetInput.value = thinking.minBudget || 2048;
+  }
+
+  enabledSel.value = thinkingEnabled ? 'true' : 'false';
+  enabledSel.disabled = !thinking.supported;
+  effortSel.disabled = !thinking.supported || !thinking.effortOptions || !thinkingEnabled;
+  budgetInput.disabled = !thinking.supported || !thinking.budget || !thinkingEnabled;
+  if (thinking.minBudget) budgetInput.min = String(thinking.minBudget);
+  noteEl.textContent = thinking.note ? t(thinking.note) : t('modelConfig.thinkingUnsupported');
+
+  tempInput.disabled = (provider === 'deepseek' || provider === 'claude') && thinkingEnabled && thinking.supported;
 }
 
 function getModelValue() {
@@ -1190,6 +1553,11 @@ async function loadModelConfig() {
     document.getElementById('mc-retry-attempts').value = llm.retry_attempts || 3;
     document.getElementById('mc-retry-min-delay').value = llm.retry_min_delay || 2;
     document.getElementById('mc-retry-max-delay').value = llm.retry_max_delay || 30;
+    updateThinkingUi({
+      enabled: !!llm.thinking_enabled,
+      effort: llm.thinking_effort || 'medium',
+      budget_tokens: llm.thinking_budget_tokens || 2048
+    });
     // Store api_keys for per-provider switching
     savedKeys = config.api_keys || {};
     loadKeyForProvider(llm.provider || 'deepseek');
@@ -1203,6 +1571,7 @@ async function saveModelConfig() {
   var provider = document.getElementById('mc-provider').value;
   var model = getModelValue();
   var def = providerDefaults[provider] || {};
+  var thinkingDef = def.thinking || {supported:false};
   var mo = (def.models || []).find(function(m) { return m.id === model; });
   // Save current key to the provider
   var apiKey = document.getElementById('mc-api-key').value.trim();
@@ -1219,6 +1588,9 @@ async function saveModelConfig() {
       api_key_env: def.key || '',
       temperature: parseFloat(document.getElementById('mc-temperature').value),
       max_tokens: mo ? mo.ctx : 4096,
+      thinking_enabled: thinkingDef.supported ? document.getElementById('mc-thinking-enabled').value === 'true' : false,
+      thinking_effort: document.getElementById('mc-thinking-effort').value || 'medium',
+      thinking_budget_tokens: parseInt(document.getElementById('mc-thinking-budget').value || '2048'),
       timeout_sec: parseInt(document.getElementById('mc-timeout').value),
       retry_attempts: parseInt(document.getElementById('mc-retry-attempts').value),
       retry_min_delay: parseFloat(document.getElementById('mc-retry-min-delay').value),

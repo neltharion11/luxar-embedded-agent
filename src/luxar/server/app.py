@@ -102,13 +102,13 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "init_project",
-            "description": "Create a new empty STM32 project. Use 'stm32cubemx' for CubeMX projects (with .ioc file), or 'stm32firmware' for bare firmware skeleton without CubeMX.",
+            "description": "Create a new empty STM32 project. Use 'stm32cubemx' for CubeMX-oriented projects, or 'stm32firmware' for bare firmware skeletons. Project creation does not generate a .ioc file.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Project name, e.g. BlinkTest"},
                     "mcu": {"type": "string", "description": "MCU model, e.g. STM32F103C8T6 (default)"},
-                    "platform": {"type": "string", "description": "Project type: stm32cubemx (with .ioc + Core/) or stm32firmware (bare skeleton)"},
+                    "platform": {"type": "string", "description": "Project type: stm32cubemx (CubeMX-oriented) or stm32firmware (bare skeleton)"},
                     "runtime": {"type": "string", "description": "baremetal or freertos (default: baremetal)"},
                 },
                 "required": ["name"],
@@ -1049,6 +1049,27 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if _conv_store:
             _conv_store.delete(project)
         return {"status": "ok", "project": project}
+
+    @app.post("/api/conversations/{project}/import")
+    def import_conversation(project: str, body: dict):
+        source_project = (body.get("source_project", "") or "").strip()
+        replace = bool(body.get("replace", True))
+        if not source_project:
+            raise HTTPException(status_code=400, detail="'source_project' is required.")
+
+        source_conv = list(_get_conv(source_project))
+        target_conv = [] if replace else list(_get_conv(project))
+        copied = [dict(message) for message in source_conv]
+        merged = copied if replace else target_conv + copied
+        _conv_cache[project] = merged
+        _save_conv(project)
+        return {
+            "status": "ok",
+            "project": project,
+            "source_project": source_project,
+            "imported_messages": len(copied),
+            "total_messages": len(merged),
+        }
 
     @app.get("/api/projects")
     def list_projects():

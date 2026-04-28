@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -615,6 +616,114 @@ class CliCommandTests(unittest.TestCase):
                 )
         self.assertEqual(res.exit_code, 0)
         self.assertIn("debug", res.output)
+
+    @patch("luxar.cli.ConfigManager")
+    @patch("luxar.cli._write_service_state")
+    @patch("luxar.cli._running_service_state", return_value=None)
+    @patch("luxar.cli.os.getpid", return_value=4321)
+    @patch("luxar.cli._load_service_state", return_value={"pid": 4321})
+    @patch("luxar.cli._clear_service_state")
+    @patch("luxar.server.app.create_app", return_value=object())
+    @patch("uvicorn.run")
+    def test_serve_records_service_state(
+        self,
+        mock_uvicorn_run,
+        mock_create_app,
+        mock_clear_state,
+        mock_load_state,
+        mock_getpid,
+        mock_running_state,
+        mock_write_state,
+        mock_cfg_cls,
+    ):
+        inst = MagicMock()
+        inst.project_root.return_value = Path("/fake/root")
+        mock_cfg_cls.return_value = inst
+
+        res = self.runner.invoke(main, ["serve", "--host", "0.0.0.0", "--port", "9000", "--reload"])
+
+        self.assertEqual(res.exit_code, 0)
+        mock_write_state.assert_called_once_with(
+            inst,
+            {"pid": 4321, "host": "0.0.0.0", "port": 9000, "reload": True},
+        )
+        mock_uvicorn_run.assert_called_once()
+        mock_clear_state.assert_called_once_with(inst)
+
+    @patch("luxar.cli.ConfigManager")
+    @patch("luxar.cli._running_service_state", return_value={"pid": 1234, "host": "127.0.0.1", "port": 8000})
+    def test_serve_rejects_when_service_already_running(self, mock_running_state, mock_cfg_cls):
+        inst = MagicMock()
+        mock_cfg_cls.return_value = inst
+
+        res = self.runner.invoke(main, ["serve"])
+
+        self.assertNotEqual(res.exit_code, 0)
+        self.assertIn("already running", res.output)
+
+    @patch("luxar.cli.ConfigManager")
+    @patch("luxar.cli._stop_service_process", return_value={"stopped": True, "pid": 1234, "host": "127.0.0.1", "port": 8000})
+    def test_stop_stops_running_service(self, mock_stop_service, mock_cfg_cls):
+        inst = MagicMock()
+        mock_cfg_cls.return_value = inst
+
+        res = self.runner.invoke(main, ["stop"])
+
+        self.assertEqual(res.exit_code, 0)
+        self.assertIn("stopped", res.output)
+
+    @patch("luxar.cli.ConfigManager")
+    @patch("luxar.cli._stop_service_process", return_value={"stopped": False, "reason": "not_running"})
+    def test_stop_reports_when_service_not_running(self, mock_stop_service, mock_cfg_cls):
+        inst = MagicMock()
+        mock_cfg_cls.return_value = inst
+
+        res = self.runner.invoke(main, ["stop"])
+
+        self.assertEqual(res.exit_code, 0)
+        self.assertIn("not running", res.output)
+
+    @patch("luxar.cli.ConfigManager")
+    @patch("luxar.cli._stop_service_process", return_value={"stopped": False, "reason": "stale_state", "pid": 2222, "host": "127.0.0.1", "port": 8000})
+    @patch("luxar.cli._load_service_state", return_value={"host": "0.0.0.0", "port": 9001, "reload": True})
+    @patch("luxar.cli.click.get_current_context")
+    def test_restart_uses_previous_service_settings(
+        self,
+        mock_get_current_context,
+        mock_load_state,
+        mock_stop_service,
+        mock_cfg_cls,
+    ):
+        inst = MagicMock()
+        mock_cfg_cls.return_value = inst
+        ctx = MagicMock()
+        mock_get_current_context.return_value = ctx
+
+        res = self.runner.invoke(main, ["restart"])
+
+        self.assertEqual(res.exit_code, 0)
+        ctx.invoke.assert_called_once_with(main.commands["serve"], host="0.0.0.0", port=9001, reload=True)
+
+    @patch("luxar.cli.ConfigManager")
+    @patch("luxar.cli._stop_service_process", return_value={"stopped": False, "reason": "not_running"})
+    @patch("luxar.cli._load_service_state", return_value=None)
+    @patch("luxar.cli.click.get_current_context")
+    def test_restart_allows_option_overrides(
+        self,
+        mock_get_current_context,
+        mock_load_state,
+        mock_stop_service,
+        mock_cfg_cls,
+    ):
+        inst = MagicMock()
+        mock_cfg_cls.return_value = inst
+        ctx = MagicMock()
+        mock_get_current_context.return_value = ctx
+
+        res = self.runner.invoke(main, ["restart", "--host", "0.0.0.0", "--port", "8010", "--reload"])
+
+        self.assertEqual(res.exit_code, 0)
+        ctx.invoke.assert_called_once_with(main.commands["serve"], host="0.0.0.0", port=8010, reload=True)
 
 
 class CliMissingOptionTests(unittest.TestCase):
