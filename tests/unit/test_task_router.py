@@ -13,7 +13,7 @@ from luxar.tools.run_task import run_task
 
 class TaskRouterTests(unittest.TestCase):
     def test_explain_request_routes_to_explain(self) -> None:
-        plan = TaskRouter().route(task="Explain the BMI270 SPI frame format.", docs=["docs/bmi270.pdf"])
+        plan = TaskRouter().route(task="Explain the BMI270 SPI frame format.", docs=["workspace/docs/bmi270.pdf"])
         self.assertEqual("explain", plan.intent.intent_type)
 
     def test_generate_project_routes_to_forge(self) -> None:
@@ -25,7 +25,7 @@ class TaskRouterTests(unittest.TestCase):
         self.assertEqual("debug_project", plan.intent.intent_type)
 
     def test_docs_push_task_toward_analysis(self) -> None:
-        plan = TaskRouter().route(task="Help me wire this device.", docs=["docs/bmi270.pdf"])
+        plan = TaskRouter().route(task="Help me wire this device.", docs=["workspace/docs/bmi270.pdf"])
         self.assertIn(plan.intent.intent_type, {"forge_project", "explain"})
         self.assertTrue(plan.steps[0] in {"parse_docs", "analyze_docs"})
 

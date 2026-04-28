@@ -537,7 +537,7 @@ workflow.add_edge("update_skill", END)
 - Linux 用户态驱动封装与设备节点访问模式
 
 产物：
-- `skill_library/protocols/<protocol>/<skill_name>/SKILL.md`
+- `workspace/skill_library/protocols/<protocol>/<skill_name>/SKILL.md`
 - 可选参考模板、检查清单、示例适配代码
 - skill 元数据索引（来源项目、验证次数、适用平台、适用 runtime）
 
@@ -701,7 +701,7 @@ agent:
   version: "0.2.0"
   workspace: "./workspace/projects"
   driver_library: "./workspace/driver_library"
-  skill_library: "./skill_library"
+  skill_library: "./workspace/skill_library"
 
 llm:
   provider: "deepseek"  # deepseek / openai / claude
@@ -758,7 +758,7 @@ class AgentSection(BaseModel):
     version: str = "0.2.0"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
-    skill_library: str = "./skill_library"
+    skill_library: str = "./workspace/skill_library"
 
 class LLMSection(BaseModel):
     provider: str = "deepseek"

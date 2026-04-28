@@ -18,8 +18,8 @@ class ConfigManagerTests(unittest.TestCase):
                 "agent:\n"
                 "  workspace: ./workspace/projects\n"
                 "  driver_library: ./workspace/driver_library\n"
-                "  skill_library: ./skill_library\n"
-                "  firmware_library: ./vendor/firmware_library\n",
+                "  skill_library: ./workspace/skill_library\n"
+                "  firmware_library: ./workspace/firmware_library\n",
                 encoding="utf-8",
             )
 
@@ -27,8 +27,8 @@ class ConfigManagerTests(unittest.TestCase):
 
             self.assertEqual((root / "workspace" / "projects").resolve(), manager.workspace_root())
             self.assertEqual((root / "workspace" / "driver_library").resolve(), manager.driver_library_root())
-            self.assertEqual((root / "skill_library").resolve(), manager.skill_library_root())
-            self.assertEqual((root / "vendor" / "firmware_library").resolve(), manager.firmware_library_root())
+            self.assertEqual((root / "workspace" / "skill_library").resolve(), manager.skill_library_root())
+            self.assertEqual((root / "workspace" / "firmware_library").resolve(), manager.firmware_library_root())
 
 
 if __name__ == "__main__":

@@ -114,7 +114,7 @@ Luxar/
 │  └─ fixtures/
 ├─ projects/
 ├─ driver_library/
-└─ skill_library/
+└─ workspace/skill_library/
    └─ protocols/
 ```
 
