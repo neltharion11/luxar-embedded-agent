@@ -1,0 +1,51 @@
+{
+  "name": "programmer",
+  "version": "2.22.0+st.1",
+  "platform": "x86_64-windows",
+  "licenses": ["SLA0048 Rev5/October 2025 + Third Party Content"],
+  "license_files": ["LICENSE","LICENSE.THIRDPARTY"],
+  "author": ["STMicroelectronics"],
+  "dependencies": [],
+  "variables": {
+    "PATH": {
+      "prepend": ["${CUBE_BUNDLE_ROOT}/bin"]
+    },
+    "CUBE_PROGRAMMER_PATH": "${CUBE_BUNDLE_ROOT}/bin"
+  },
+  "export": ["PATH","CUBE_PROGRAMMER_PATH"],
+  "commands": [
+    {
+      "name": "programmer",
+      "exec": "${CUBE_BUNDLE_ROOT}/bin/STM32_Programmer_CLI.exe"
+    }
+  ],
+  "properties": {
+    "target": [
+      "STM32C0[13579].*",
+      "STM32F0[34579].*",
+      "STM32F10[012357].*",
+      "STM32F2[01].*",
+      "STM32F3[0123579].*",
+      "STM32F4[0123467].*",
+      "STM32F7[234567].*",
+      "STM32G0[345678BC].*",
+      "STM32G4[134789A].*",
+      "STM32H5[02367EF].*",
+      "STM32H7[2345ABRS].*",
+      "STM32L0[12345678].*",
+      "STM32L1[056].*",
+      "STM32L4[123456789APQRS].*",
+      "STM32L5[56].*",
+      "STM32N6[45].*",
+      "STM32U0[378].*",
+      "STM32U3[78BC].*",
+      "STM32U5[34789AFG].*",
+      "STM32WB0[5679].*",
+      "STM32WB[135].*",
+      "STM32WBA[25678].*",
+      "STM32WL[35E].*",
+      "STM32C5[34569A].*",
+      "STM32V8[67].*"
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+C:/Users/Gugugu/Documents/Codex/2026-04-24-review-spec-md-kimi-code-codex/projects/LedBlink/build/CMakeFiles/stm32_firmware_app.dir
+C:/Users/Gugugu/Documents/Codex/2026-04-24-review-spec-md-kimi-code-codex/projects/LedBlink/build/CMakeFiles/edit_cache.dir
+C:/Users/Gugugu/Documents/Codex/2026-04-24-review-spec-md-kimi-code-codex/projects/LedBlink/build/CMakeFiles/rebuild_cache.dir
