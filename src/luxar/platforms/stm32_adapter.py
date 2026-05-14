@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
+import re
 import shutil
 import subprocess
-import os
 from pathlib import Path
 
-from luxar.core.platform_adapter import PlatformAdapter
 from luxar.core.toolchain_manager import ToolchainManager
 from luxar.models.schemas import BuildResult, FlashResult, MonitorResult
+from luxar.core.platform_adapter import PlatformAdapter
+
+NINJA_FATAL_RE = re.compile(r"ninja:\s*fatal:")
 
 
 class STM32CubeMXAdapter(PlatformAdapter):
@@ -76,16 +80,36 @@ class STM32CubeMXAdapter(PlatformAdapter):
         build_dir.mkdir(parents=True, exist_ok=True)
 
         env = os.environ.copy()
+        gcc_path = None
+        gxx_path = None
+        asm_path = None
         if self.toolchain_manager is not None:
             arm_gcc_bin = self.toolchain_manager.resolve_arm_gcc_bin_dir()
             if arm_gcc_bin:
                 env["PATH"] = arm_gcc_bin + os.pathsep + env.get("PATH", "")
+            gcc_path = self.toolchain_manager.resolve_arm_gcc()
+            gxx_path = self.toolchain_manager.resolve_arm_gxx()
+            asm_path = self.toolchain_manager.resolve_arm_as()
 
         configure_cmd = [cmake_bin, "-S", str(project), "-B", str(build_dir)]
-        toolchain_file = project / "cmake" / "toolchain-arm-none-eabi.cmake"
-        if toolchain_file.exists():
+        toolchain_file = self._ensure_cmake_toolchain_file(
+            project=project,
+            build_dir=build_dir,
+            gcc_path=gcc_path,
+            gxx_path=gxx_path,
+            asm_path=asm_path,
+        )
+        if toolchain_file is not None:
+            self._reset_cmake_cache(build_dir)
             configure_cmd.append(f"-DCMAKE_TOOLCHAIN_FILE={toolchain_file}")
             configure_cmd.append("-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY")
+        configure_cmd.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
+        if gcc_path:
+            configure_cmd.append(f"-DCMAKE_C_COMPILER={gcc_path}")
+        if gxx_path:
+            configure_cmd.append(f"-DCMAKE_CXX_COMPILER={gxx_path}")
+        if asm_path:
+            configure_cmd.append(f"-DCMAKE_ASM_COMPILER={asm_path}")
         generator = None
         make_program = None
         if self.toolchain_manager is not None:
@@ -102,6 +126,20 @@ class STM32CubeMXAdapter(PlatformAdapter):
             cwd=project,
             env=env,
         )
+        if configure.returncode != 0:
+            # Ninja compatibility fallback: retry by skipping the compiler
+            # test (CMAKE_C_COMPILER_WORKS=1) which avoids Ninja I/O issues
+            # during CMake's TryCompile on some Windows environments.
+            if generator == "Ninja":
+                fallback_cmd = list(configure_cmd)
+                fallback_cmd.append("-DCMAKE_C_COMPILER_WORKS=1")
+                configure = subprocess.run(
+                    fallback_cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=project,
+                    env=env,
+                )
         if configure.returncode != 0:
             return BuildResult(
                 success=False,
@@ -120,13 +158,23 @@ class STM32CubeMXAdapter(PlatformAdapter):
             cwd=project,
             env=env,
         )
+        if build.returncode != 0 and NINJA_FATAL_RE.search(build.stderr):
+            # Ninja I/O failure on this platform; fall back to direct
+            # compilation using compile_commands.json
+            return self._build_fallback_direct(
+                project=project,
+                build_dir=build_dir,
+                cmake_bin=cmake_bin,
+                env=env,
+            )
         warnings = [
             line for line in (build.stdout + "\n" + build.stderr).splitlines()
             if "warning" in line.lower()
         ]
+        combined_build_output = build.stdout + "\n" + build.stderr
         errors = [
-            line for line in build.stderr.splitlines()
-            if "error" in line.lower()
+            line for line in combined_build_output.splitlines()
+            if "error" in line.lower() or "fatal:" in line.lower() or "failed:" in line.lower()
         ]
         return BuildResult(
             success=(build.returncode == 0),
@@ -137,6 +185,145 @@ class STM32CubeMXAdapter(PlatformAdapter):
             warnings=warnings,
             errors=errors,
         )
+
+    def _ensure_cmake_toolchain_file(
+        self,
+        project: Path,
+        build_dir: Path,
+        gcc_path: str | None,
+        gxx_path: str | None,
+        asm_path: str | None,
+    ) -> Path | None:
+        project_toolchain = project / "cmake" / "toolchain-arm-none-eabi.cmake"
+        if project_toolchain.exists():
+            return project_toolchain
+
+        if not gcc_path:
+            return None
+
+        target_flags = self._resolve_target_flags(project)
+        generated_toolchain = build_dir / "luxar-toolchain-arm-none-eabi.cmake"
+        lines = [
+            "set(CMAKE_SYSTEM_NAME Generic)",
+            "set(CMAKE_SYSTEM_PROCESSOR arm)",
+            f'set(CMAKE_C_COMPILER "{self._cmake_path(gcc_path)}")',
+            f'set(CMAKE_ASM_COMPILER "{self._cmake_path(asm_path or gcc_path)}")',
+            "set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)",
+            'set(CMAKE_EXECUTABLE_SUFFIX ".elf")',
+        ]
+        if gxx_path:
+            lines.append(f'set(CMAKE_CXX_COMPILER "{self._cmake_path(gxx_path)}")')
+        if target_flags:
+            lines.extend([
+                f'set(LUXAR_TARGET_FLAGS "{target_flags}")',
+                'set(CMAKE_C_FLAGS_INIT "${LUXAR_TARGET_FLAGS} -ffunction-sections -fdata-sections")',
+                'set(CMAKE_CXX_FLAGS_INIT "${LUXAR_TARGET_FLAGS} -ffunction-sections -fdata-sections")',
+                'set(CMAKE_ASM_FLAGS_INIT "${LUXAR_TARGET_FLAGS} -x assembler-with-cpp")',
+                'set(CMAKE_EXE_LINKER_FLAGS_INIT "${LUXAR_TARGET_FLAGS} -Wl,--gc-sections")',
+            ])
+        generated_toolchain.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return generated_toolchain
+
+    def _reset_cmake_cache(self, build_dir: Path) -> None:
+        cache_file = build_dir / "CMakeCache.txt"
+        if cache_file.exists():
+            cache_file.unlink()
+        cmake_files = build_dir / "CMakeFiles"
+        if cmake_files.exists():
+            shutil.rmtree(cmake_files)
+
+    def _cmake_path(self, path: str) -> str:
+        return Path(path).resolve().as_posix()
+
+    def _resolve_target_flags(self, project: Path) -> str:
+        cpu = self._resolve_target_cpu(project)
+        if not cpu:
+            return ""
+        return f"-mcpu={cpu} -mthumb"
+
+    def _resolve_target_cpu(self, project: Path) -> str:
+        candidates = [
+            self._read_project_mcu(project),
+            self._read_ioc_mcu(project),
+            self._read_cmake_mcu_hint(project),
+        ]
+        for candidate in candidates:
+            cpu = self._map_stm32_to_cpu(candidate)
+            if cpu:
+                return cpu
+        return ""
+
+    def _read_project_mcu(self, project: Path) -> str:
+        meta_file = project / ".agent_project.json"
+        if not meta_file.exists():
+            return ""
+        try:
+            data = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        return str(data.get("mcu", "") or "")
+
+    def _read_ioc_mcu(self, project: Path) -> str:
+        ioc_files = sorted(project.glob("*.ioc"))
+        pattern = re.compile(r"^\s*ProjectManager\.DeviceId\s*=\s*(.+?)\s*$", re.MULTILINE)
+        for ioc_file in ioc_files:
+            try:
+                text = ioc_file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            match = pattern.search(text)
+            if match:
+                return match.group(1).strip()
+        return ""
+
+    def _read_cmake_mcu_hint(self, project: Path) -> str:
+        cmake_file = project / "cmake" / "stm32cubemx" / "CMakeLists.txt"
+        if not cmake_file.exists():
+            return ""
+        try:
+            text = cmake_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
+        match = re.search(r"STM32([A-Z0-9]+)", text)
+        if not match:
+            return ""
+        return f"STM32{match.group(1)}"
+
+    def _map_stm32_to_cpu(self, mcu_hint: str) -> str:
+        normalized = mcu_hint.strip().upper().replace("-", "")
+        if not normalized.startswith("STM32"):
+            return ""
+        family_match = re.match(r"STM32([A-Z0-9]+)", normalized)
+        if not family_match:
+            return ""
+        family = family_match.group(1)
+        family_to_cpu = {
+            "F0": "cortex-m0",
+            "F1": "cortex-m3",
+            "F2": "cortex-m3",
+            "F3": "cortex-m4",
+            "F4": "cortex-m4",
+            "F7": "cortex-m7",
+            "G0": "cortex-m0plus",
+            "G4": "cortex-m4",
+            "H5": "cortex-m33",
+            "H7": "cortex-m7",
+            "L0": "cortex-m0plus",
+            "L1": "cortex-m3",
+            "L4": "cortex-m4",
+            "L5": "cortex-m33",
+            "U0": "cortex-m0plus",
+            "U5": "cortex-m33",
+            "WB": "cortex-m4",
+            "WL": "cortex-m4",
+            "C0": "cortex-m0plus",
+            "MP1": "cortex-m4",
+            "N6": "cortex-m55",
+        }
+        for prefix, cpu in family_to_cpu.items():
+            if family.startswith(prefix):
+                return cpu
+        return ""
 
     def flash(self, project_path: str, probe: str | None = None) -> FlashResult:
         project = Path(project_path)
@@ -169,6 +356,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
 
         artifact = candidates[0]
         if programmer_cli is not None:
+            probe_inventory = self._list_stlink_probes(programmer_cli, project)
             flash_artifact = artifact
             temp_artifact: Path | None = None
             if artifact.suffix.lower() not in {".elf", ".bin", ".hex", ".srec", ".s19"}:
@@ -182,14 +370,19 @@ class STM32CubeMXAdapter(PlatformAdapter):
                     command,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     cwd=project,
                 )
                 return FlashResult(
                     success=(result.returncode == 0),
                     command=command,
                     return_code=result.returncode,
-                    stdout=result.stdout,
-                    stderr=result.stderr,
+                    stdout=result.stdout or "",
+                    stderr=self._augment_flash_stderr(
+                        stderr=result.stderr or "",
+                        probe_inventory=probe_inventory,
+                    ),
                     artifact_path=str(flash_artifact),
                 )
             finally:
@@ -210,15 +403,9 @@ class STM32CubeMXAdapter(PlatformAdapter):
         timeout = float(kwargs.get("timeout", 2))
         lines_to_read = int(kwargs.get("lines", 10))
 
-        if not port:
-            return MonitorResult(
-                success=False,
-                port="",
-                error="Serial port is required.",
-            )
-
         try:
             import serial
+            from serial.tools import list_ports
         except ImportError:
             return MonitorResult(
                 success=False,
@@ -226,6 +413,16 @@ class STM32CubeMXAdapter(PlatformAdapter):
                 error="pyserial is not installed.",
                 port_released=True,
             )
+
+        if not port:
+            port = self._auto_detect_serial_port(list_ports.comports())
+            if not port:
+                return MonitorResult(
+                    success=False,
+                    port="",
+                    error="Serial port is required and no serial ports were detected.",
+                    port_released=True,
+                )
 
         ser = None
         try:
@@ -275,6 +472,28 @@ class STM32CubeMXAdapter(PlatformAdapter):
             if ser is not None and getattr(ser, "is_open", False):
                 ser.close()
 
+    def _auto_detect_serial_port(self, ports) -> str:
+        candidates = list(ports or [])
+        if not candidates:
+            return ""
+
+        def score(port) -> tuple[int, str]:
+            text = " ".join(
+                str(getattr(port, attr, "") or "")
+                for attr in ("device", "description", "hwid", "manufacturer", "product")
+            ).lower()
+            value = 0
+            if any(token in text for token in ("usb-serial", "usb serial", "usb-enhanced-serial", "ch340", "ch341", "ch343", "cp210", "ftdi")):
+                value += 30
+            if any(token in text for token in ("uart", "serial", "com")):
+                value += 10
+            if any(token in text for token in ("stlink", "st-link")):
+                value += 5
+            return (-value, str(getattr(port, "device", "") or ""))
+
+        best = sorted(candidates, key=score)[0]
+        return str(getattr(best, "device", "") or "")
+
     def _find_flash_artifacts(self, project: Path) -> list[Path]:
         build_dir = project / "build"
         if not build_dir.exists():
@@ -305,6 +524,125 @@ class STM32CubeMXAdapter(PlatformAdapter):
             fallback.append(path)
         return sorted(fallback)
 
+    def _build_fallback_direct(
+        self,
+        *,
+        project: Path,
+        build_dir: Path,
+        cmake_bin: str,
+        env: dict[str, str],
+    ) -> BuildResult:
+        """Fall back to direct compilation when the cmake build tool (e.g. Ninja)
+        fails due to I/O compatibility issues on this platform.
+
+        Reads compile_commands.json to extract per-file build commands, executes
+        them individually, then links the final executable.
+        """
+        compile_db = build_dir / "compile_commands.json"
+        if not compile_db.exists():
+            return BuildResult(
+                success=False,
+                command=[],
+                return_code=-1,
+                stderr="Ninja build failed and no compile_commands.json available for direct fallback.",
+                errors=["ninja_fatal_unsupported"],
+            )
+
+        try:
+            entries = json.loads(compile_db.read_text(encoding="utf-8"))
+        except Exception:
+            return BuildResult(
+                success=False,
+                command=[],
+                return_code=-1,
+                stderr="Failed to read compile_commands.json after Ninja build failure.",
+                errors=["ninja_fatal_unsupported"],
+            )
+
+        warnings: list[str] = []
+        errors: list[str] = []
+        object_files: list[str] = []
+
+        for entry in entries:
+            src_file = entry.get("file", "")
+            command_str = entry.get("command", "")
+            if not src_file or not command_str:
+                continue
+            result = subprocess.run(
+                command_str,
+                shell=True,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                cwd=entry.get("directory", str(project)) or str(project),
+                env=env,
+            )
+            output = (result.stdout or "") + "\n" + (result.stderr or "")
+            for line in output.splitlines():
+                if "warning:" in line.lower():
+                    warnings.append(line)
+                if "error:" in line.lower() or "fatal:" in line.lower():
+                    errors.append(line)
+            if result.returncode == 0:
+                # Extract object file from -o flag in the command
+                obj_match = re.search(r"-o\s+(\S+)", command_str)
+                if obj_match:
+                    object_files.append(obj_match.group(1))
+            else:
+                return BuildResult(
+                    success=False,
+                    command=[command_str],
+                    return_code=result.returncode,
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                    warnings=warnings,
+                    errors=errors or ["direct_compile_failed"],
+                )
+
+        if not object_files:
+            return BuildResult(
+                success=False,
+                command=[],
+                return_code=-1,
+                stderr="No object files were produced by direct compilation fallback.",
+                errors=["no_objects_generated"],
+            )
+
+        # Link all objects into the final elf
+        elf_path = build_dir / "stm32_firmware_app.elf"
+        linker_script = project / "cmake" / "stm32.ld"
+        link_flags = "-mcpu=cortex-m3 -mthumb -specs=nosys.specs -specs=nano.specs -Wl,--gc-sections"
+        if linker_script.exists():
+            link_flags += f" -T{linker_script.resolve().as_posix()}"
+        objects_str = " ".join(f'"{o}"' for o in object_files)
+        # Use arm-none-eabi-gcc for linking
+        gcc = shutil.which("arm-none-eabi-gcc") or "arm-none-eabi-gcc"
+        link_cmd = f'"{gcc}" {link_flags} -o "{elf_path}" {objects_str}'
+        link_result = subprocess.run(
+            link_cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            cwd=project,
+            env=env,
+        )
+        combined = (link_result.stdout or "") + "\n" + (link_result.stderr or "")
+        for line in combined.splitlines():
+            if "warning:" in line.lower():
+                warnings.append(line)
+            if "error:" in line.lower() or "fatal:" in line.lower():
+                errors.append(line)
+        return BuildResult(
+            success=link_result.returncode == 0,
+            command=[link_cmd],
+            return_code=link_result.returncode,
+            stdout=link_result.stdout or "",
+            stderr=link_result.stderr or "",
+            warnings=warnings,
+            errors=errors,
+        )
+
     def _build_programmer_connect_arg(self, probe: str | None) -> str:
         if not probe or probe.lower() == "stlink":
             return "port=SWD"
@@ -315,4 +653,37 @@ class STM32CubeMXAdapter(PlatformAdapter):
             return f"port=SWD index={normalized}"
         return f"port=SWD sn={normalized}"
 
+    def _list_stlink_probes(self, programmer_cli: str, project: Path) -> str:
+        try:
+            result = subprocess.run(
+                [programmer_cli, "-l", "stlink"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=project,
+            )
+        except Exception:
+            return ""
+        return "\n".join(part for part in [result.stdout.strip(), result.stderr.strip()] if part).strip()
 
+    def _augment_flash_stderr(self, *, stderr: str, probe_inventory: str) -> str:
+        lowered = stderr.lower()
+        inventory_lowered = probe_inventory.lower()
+        stlink_visible = "st-link" in inventory_lowered or "stlink" in inventory_lowered
+        if "no debug probe detected" in lowered and stlink_visible:
+            return (
+                f"{stderr}\n"
+                "Host-side ST-Link enumeration succeeded, but the target connection did not. "
+                "This usually means the probe is visible in Device Manager while SWD to the MCU is failing. "
+                "Check target power, SWDIO/SWCLK/GND wiring, NRST if needed, and whether another tool is holding the probe.\n"
+                f"Probe inventory:\n{probe_inventory}"
+            ).strip()
+        if "cannot identify the device" in lowered and stlink_visible:
+            return (
+                f"{stderr}\n"
+                "ST-Link is visible to STM32CubeProgrammer, but the target MCU could not be identified. "
+                "This usually points to board power, SWD wiring, reset mode, or readout/protection state.\n"
+                f"Probe inventory:\n{probe_inventory}"
+            ).strip()
+        return stderr

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from luxar.core.config_manager import AgentConfig
 from luxar.core.driver_generator import DriverGenerator
+
+
+def _safe_path_component(value: str, fallback: str) -> str:
+    text = re.sub(r"[\\/:*?\"<>|]+", " ", (value or "").strip().lower())
+    text = re.sub(r"\s+", " ", text).strip(" .")
+    return text or fallback
 
 
 def run_generate_driver(
@@ -27,9 +34,9 @@ def run_generate_driver(
             root
             / config.agent.driver_library
             / "generated"
-            / interface.lower()
-            / (vendor.strip().lower() or "generic")
-            / ((device.strip() or chip.strip()).lower())
+            / _safe_path_component(interface, "generic")
+            / _safe_path_component(vendor, "generic")
+            / _safe_path_component(device or chip, "generated_driver")
         )
 
     generator = DriverGenerator(config, project_root=root)

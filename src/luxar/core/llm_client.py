@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -41,6 +42,8 @@ class ToolCall:
 
 
 def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, http.client.IncompleteRead):
+        return True
     if isinstance(exc, LLMClientError):
         msg = str(exc)
         if msg.startswith("LLM request failed with HTTP 429"):
@@ -448,6 +451,8 @@ class LLMClient:
             raise LLMClientError(f"LLM stream request failed with HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise LLMClientError(f"LLM stream request failed: {exc.reason}") from exc
+        except http.client.IncompleteRead as exc:
+            raise LLMClientError(f"LLM stream request failed: incomplete read ({exc.partial} bytes received)") from exc
 
         buffer = b""
         for chunk_bytes in iter(lambda: response.read(4096), b""):
@@ -581,6 +586,20 @@ class LLMClient:
             f"Missing API key. Set the `{env_name or default_env_name}` environment variable or configure an API key for provider '{self.provider}' in Model Config."
         )
 
+    def has_valid_api_key(self) -> bool:
+        """Check whether a non-empty API key is available without raising."""
+        try:
+            ptype, _endpoint, api_key = self._resolve_provider()
+            if ptype == "openai_compatible":
+                return bool(api_key.strip())
+            if ptype == "claude":
+                return bool(api_key.strip())
+            return False
+        except LLMClientError:
+            return False
+        except Exception:
+            return False
+
     def _make_retry_decorator(self) -> Callable:
         def _before_sleep(retry_state):
             attempt = retry_state.attempt_number
@@ -621,6 +640,8 @@ class LLMClient:
                 raise LLMClientError(f"LLM request failed with HTTP {exc.code}: {body}") from exc
             except urllib.error.URLError as exc:
                 raise LLMClientError(f"LLM request failed: {exc.reason}") from exc
+            except http.client.IncompleteRead as exc:
+                raise LLMClientError(f"LLM request failed: incomplete read ({exc.partial} bytes received)") from exc
 
             try:
                 return json.loads(body)

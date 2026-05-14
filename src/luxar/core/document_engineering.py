@@ -28,6 +28,23 @@ class DocumentEngineeringAnalyzer:
         store: bool = True,
         limit: int = 8,
     ) -> EngineeringContext:
+        # Fast path: no documents and no query means nothing to analyze
+        if not docs and not query.strip():
+            return EngineeringContext(
+                source_documents=[],
+                document_summary="",
+                pin_requirements=[],
+                bus_requirements=[],
+                protocol_frames=[],
+                register_hints=[],
+                bringup_sequence=[],
+                timing_constraints=[],
+                integration_notes=[],
+                risk_notes=[],
+                raw_matches=[],
+                parse_errors=[],
+            )
+
         summaries: list[str] = []
         sources: list[str] = []
         parse_errors: list[str] = []

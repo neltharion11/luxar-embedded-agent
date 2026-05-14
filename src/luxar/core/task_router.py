@@ -2,6 +2,17 @@ from __future__ import annotations
 
 from luxar.models.schemas import ExecutionPlan, TaskIntent
 
+EXPLAIN_HINT_TOKENS = ("explain", "what is", "how does", "how do", "why", "tell me", "接线", "引脚", "协议", "收发", "解释")
+PROJECT_EXECUTION_TOKENS = (
+    "generate", "create", "implement", "directly execute", "generate code", "complete project",
+    "full project", "project skeleton", "cmakelists", "linker", "startup", "system init",
+    "生成", "创建", "实现", "直接执行", "生成代码", "完整工程", "工程骨架", "链接脚本", "启动文件", "系统初始化",
+)
+PROJECT_IMPLEMENTATION_SIGNALS = (
+    "project", "工程", "app", "application", "led", "rgb", "gpio", "uart", "blink",
+    "pwm", "tim3", "cmakelists", "startup", "linker", "文件", "file", "skeleton", "代码",
+)
+
 
 class TaskRouter:
     def route(
@@ -39,7 +50,16 @@ class TaskRouter:
         dry_run: bool,
         plan_only: bool,
     ) -> TaskIntent:
-        if any(token in task for token in ("explain", "what is", "how does", "how do", "why", "tell me", "接线", "引脚", "协议", "收发", "解释")):
+        if self._looks_like_project_execution_request(task):
+            return TaskIntent(
+                intent_type="forge_project",
+                execution_mode="plan" if plan_only or dry_run else "execute",
+                required_capabilities=["planning", "forge"],
+                recommended_workflow="forge",
+                confidence=0.9,
+                reason="Task combines project implementation intent with concrete engineering/code-generation signals.",
+            )
+        if any(token in task for token in EXPLAIN_HINT_TOKENS):
             return TaskIntent(
                 intent_type="explain",
                 execution_mode="explain",
@@ -57,7 +77,7 @@ class TaskRouter:
                 confidence=0.9,
                 reason="Task asks for project or environment status information.",
             )
-        if any(token in task for token in ("build", "flash", "monitor", "debug", "编译", "烧录", "串口", "修")):
+        if any(token in task for token in ("build", "flash", "monitor", "debug", "编译", "烧录", "串口", "重建", "rebuild")):
             return TaskIntent(
                 intent_type="debug_project",
                 execution_mode="execute" if has_project and not dry_run else "plan",
@@ -133,3 +153,8 @@ class TaskRouter:
         if intent_type == "project_status":
             return ["status"]
         return ["analyze_docs", "explain"]
+
+    def _looks_like_project_execution_request(self, task: str) -> bool:
+        has_execution = any(token in task for token in PROJECT_EXECUTION_TOKENS)
+        has_implementation_signal = any(token in task for token in PROJECT_IMPLEMENTATION_SIGNALS)
+        return has_execution and has_implementation_signal

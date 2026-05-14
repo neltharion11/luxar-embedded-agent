@@ -78,71 +78,52 @@ class PDFParser:
         )
 
     def _extract_pdf_text(self, path: Path) -> str:
-        extractor_errors: list[str] = []
         min_text_len = 50
 
-        # Tier 0: Docling — AI layout-aware, produces structured Markdown
-        text = self._extract_pdf_text_docling(path)
-        if text and len(text.strip()) >= min_text_len:
-            return text
-        if text:
-            extractor_errors.append("docling: produced insufficient text")
+        # Tier 0: pymupdf embedded text — instant for text-embedded PDFs (CH1116, datasheets, manuals)
+        try:
+            import fitz  # type: ignore (pymupdf)
+            doc = fitz.open(str(path))
+            text = "\n".join(page.get_text() for page in doc)
+            if len(text.strip()) >= min_text_len:
+                return text
+        except Exception:
+            pass
 
-        # Tier 1: pymupdf embedded text + render-to-OCR cascade
+        # Tier 1: pymupdf render + RapidOCR — fallback for scanned PDFs
         try:
             import fitz  # type: ignore (pymupdf)
             import io
             from PIL import Image  # type: ignore
 
+            _MAX_OCR_PAGES = 30
+            _ENOUGH_CHARS = 4000
+            _DPI = 150
+
             doc = fitz.open(str(path))
-            text = "\n".join(page.get_text() for page in doc)
-            if len(text.strip()) >= min_text_len:
-                return text
-
-            # Tier 2: scanned PDF — render pages and OCR with RapidOCR
             pages_text: list[str] = []
-            for page in doc:
-                pix = page.get_pixmap(dpi=200)
-                img = Image.open(io.BytesIO(pix.tobytes("png")))
-                page_text = self._ocr_image_pillow(img)
-                if page_text:
-                    pages_text.append(page_text)
-            if pages_text and sum(len(t) for t in pages_text) >= min_text_len:
+            total_chars = 0
+            for i, page in enumerate(doc):
+                if i >= _MAX_OCR_PAGES or total_chars >= _ENOUGH_CHARS:
+                    break
+                try:
+                    pix = page.get_pixmap(dpi=_DPI)
+                    img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    page_text = self._ocr_image_pillow(img)
+                    if page_text:
+                        pages_text.append(page_text)
+                        total_chars += len(page_text)
+                except (MemoryError, OSError, RuntimeError):
+                    continue
+            if pages_text and total_chars >= min_text_len:
                 return "\n".join(pages_text)
-            extractor_errors.append("pymupdf+OCR: produced insufficient text")
-        except Exception as exc:
-            extractor_errors.append(f"pymupdf+OCR: {exc}")
+        except Exception:
+            pass
 
-        joined = "; ".join(extractor_errors) if extractor_errors else "No PDF extractor available."
         raise RuntimeError(
             "Unable to extract PDF text — the document may be a scanned image or have an unsupported format. "
-            "Install `docling` or `pymupdf`+`rapidocr-onnxruntime` for PDF support. "
-            f"Details: {joined}"
+            "Install `pymupdf`+`rapidocr-onnxruntime` for PDF support."
         )
-
-    def _extract_pdf_text_docling(self, path: Path) -> str:
-        """Convert PDF to Markdown using Docling's layout-aware AI models.
-
-        Docling uses DocLayNet for layout analysis and TableFormer for table
-        structure recognition, producing semantically ordered Markdown output.
-        Falls back silently on any failure — callers should try the next extractor.
-        """
-        try:
-            import os
-            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-
-            from docling.document_converter import DocumentConverter
-
-            converter = DocumentConverter()
-            result = converter.convert(str(path))
-            markdown = result.document.export_to_markdown()
-            if markdown and markdown.strip():
-                return markdown.strip()
-            return ""
-        except ImportError:
-            return ""
-        except Exception:
-            return ""
 
     def _extract_image_text(self, path: Path) -> str:
         """Extract text from image files using RapidOCR."""

@@ -51,15 +51,14 @@ class ToolchainManager:
         )
 
     def resolve_arm_gcc(self) -> str | None:
-        gcc_name = f"{self.config.build.toolchain_prefix}gcc"
-        return self._resolve_binary(
-            explicit=self.config.toolchains.arm_gcc,
-            bundled_relatives=[
-                f"gcc-arm/bin/{gcc_name}.exe",
-                f"gcc-arm/bin/{gcc_name}",
-            ],
-            fallback_name=gcc_name,
-        )
+        return self._resolve_arm_tool("gcc", explicit=self.config.toolchains.arm_gcc)
+
+    def resolve_arm_gxx(self) -> str | None:
+        return self._resolve_arm_tool("g++")
+
+    def resolve_arm_as(self) -> str | None:
+        # GCC is the preferred ASM driver for the generated STM32 projects.
+        return self.resolve_arm_gcc()
 
     def resolve_arm_gcc_bin_dir(self) -> str | None:
         gcc = self.resolve_arm_gcc()
@@ -94,5 +93,16 @@ class ToolchainManager:
                 return str(candidate.resolve())
 
         return shutil.which(fallback_name)
+
+    def _resolve_arm_tool(self, tool_suffix: str, explicit: str = "") -> str | None:
+        tool_name = f"{self.config.build.toolchain_prefix}{tool_suffix}"
+        return self._resolve_binary(
+            explicit=explicit,
+            bundled_relatives=[
+                f"gcc-arm/bin/{tool_name}.exe",
+                f"gcc-arm/bin/{tool_name}",
+            ],
+            fallback_name=tool_name,
+        )
 
 

@@ -158,8 +158,9 @@ class LangGraphDebugWorkflow:
 
     def _build_node(self, state: DebugWorkflowState) -> DebugWorkflowState:
         build_result = self.debug_loop._run_build(state["context"], clean=state.get("clean", False))
-        diagnosis = "" if build_result.success else self.debug_loop._diagnose_build_failure(build_result.stderr)
-        failure_type = "" if build_result.success else self.debug_loop._classify_build_failure(build_result.stderr)
+        build_output = self.debug_loop._combined_build_output(build_result)
+        diagnosis = "" if build_result.success else self.debug_loop._diagnose_build_failure(build_output)
+        failure_type = "" if build_result.success else self.debug_loop._classify_build_failure(build_output)
         return {
             "build_result": build_result,
             "build_attempts": state.get("build_attempts", 0) + 1,

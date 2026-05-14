@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
+import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from luxar.core.config_manager import ConfigManager, LLMSection
@@ -32,12 +35,27 @@ from luxar.core.code_fixer import CodeFixer
 from luxar.core.conversation_store import ConversationStore
 from luxar.core.context_compressor import ContextCompressor, count_tokens
 from luxar.core.llm_client import _OPENAI_PROVIDERS
-from luxar.tools.run_task import run_task
+from luxar.tools.run_task import run_task, run_task_stream
 from luxar.tools.init_project import run_init_project
 from luxar.models.schemas import DriverGenerationResult, WorkflowRunResult
 
 
 # ===== Tool Definitions (OpenAI Function Calling schema) =====
+
+MAX_AGENT_TOOL_CALLS = 20
+MAX_AGENT_TOOL_TIMEOUT_SEC = 180
+_TOOL_TIMEOUT_OVERRIDES: dict[str, int] = {
+    "analyze_document_engineering": 300,  # pymupdf+RapidOCR fallback for scanned PDFs
+}
+PROJECT_LEVEL_RUN_TASK_INTENTS = {"forge_project", "debug_project"}
+
+
+class AgentToolLimitError(RuntimeError):
+    """Raised when the agent exceeds the allowed number of tool calls."""
+
+
+class AgentToolTimeoutError(RuntimeError):
+    """Raised when a single tool call exceeds the allowed runtime."""
 
 TOOLS: list[dict] = [
     {
@@ -197,13 +215,14 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "fix_code",
-            "description": "Auto-fix code issues for a file. Can dry-run. Only works on App/ files and inside existing USER CODE sections of Core/ files. NEVER create new USER CODE sections. CubeMX-generated code outside USER CODE blocks cannot be touched.",
+            "description": "Auto-fix code issues for a file and WRITE the changes back to disk unless dry_run=true. Editable files depend on project mode: in firmware mode, App/ files, Core/ skeleton files (main.c, system_stm32xx.c), CMakeLists.txt, and stm32f1xx_hal_conf.h are all editable; in CubeMX mode, only App/ files, CMakeLists.txt, stm32f1xx_hal_conf.h, and USER CODE sections in Core/ are editable. Drivers/ files are never editable. Accepts build_error for compilation errors that static review cannot detect.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project name"},
-                    "file": {"type": "string", "description": "File to fix, e.g. App/Src/app_main.c"},
+                    "file": {"type": "string", "description": "File to fix, e.g. App/Src/app_main.c, Core/Src/main.c, CMakeLists.txt, or Core/Inc/stm32f1xx_hal_conf.h"},
                     "dry_run": {"type": "boolean", "description": "If true, show proposed fixes without modifying the file"},
+                    "build_error": {"type": "string", "description": "Compilation error message from build_project.stderr for this specific file, if any"},
                 },
                 "required": ["project", "file"],
             },
@@ -265,8 +284,332 @@ TOOLS: list[dict] = [
     },
 ]
 
+MAX_CONSECUTIVE_TOOL_FAILURES = 3
 
-def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
+
+_agent_log = logging.getLogger("luxar.agent")
+
+class ToolExecutionEnvelope(BaseModel):
+    ok: bool
+    tool: str
+    data: Any
+    error: str = ""
+    summary_source: dict = Field(default_factory=dict)
+    truncated: bool = False
+
+
+def _to_jsonable(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+    return value
+
+
+def _build_tool_envelope(
+    name: str,
+    data: Any | None = None,
+    *,
+    error: str = "",
+    summary_source: dict | None = None,
+    truncated: bool = False,
+) -> ToolExecutionEnvelope:
+    payload = _to_jsonable(data if data is not None else {})
+    source = _to_jsonable(summary_source if summary_source is not None else payload)
+    envelope = ToolExecutionEnvelope(
+        ok=not _is_tool_result_failure(payload),
+        tool=name,
+        data=payload,
+        error=error or (payload.get("error", "") if isinstance(payload, dict) else ""),
+        summary_source=source if isinstance(source, dict) else {},
+        truncated=truncated,
+    )
+    if envelope.error and not isinstance(envelope.data, dict):
+        envelope.data = {"result": envelope.data, "error": envelope.error}
+    return envelope
+
+
+def _parse_tool_result(result: Any) -> ToolExecutionEnvelope:
+    if isinstance(result, ToolExecutionEnvelope):
+        return result
+    if isinstance(result, dict) and {"ok", "tool", "data", "error", "summary_source", "truncated"} <= set(result.keys()):
+        return ToolExecutionEnvelope(**result)
+    if isinstance(result, str):
+        try:
+            payload = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return ToolExecutionEnvelope(
+                ok=False,
+                tool="unknown",
+                data={"error": "unparseable tool result", "raw_result": result},
+                error="unparseable tool result",
+                summary_source={"error": "unparseable tool result"},
+                truncated=True,
+            )
+        return _build_tool_envelope("unknown", payload)
+    return _build_tool_envelope("unknown", result)
+
+
+def _compact_tool_payload(
+    value: Any,
+    *,
+    aggressive: bool = False,
+    parent_key: str = "",
+    truncation_state: dict[str, bool] | None = None,
+) -> Any:
+    if truncation_state is None:
+        truncation_state = {"truncated": False}
+
+    string_limits = {
+        "diff": 1200 if aggressive else 4000,
+        "stdout": 1000 if aggressive else 2500,
+        "stderr": 1000 if aggressive else 2500,
+        "raw_response": 1000 if aggressive else 2000,
+    }
+    default_string_limit = 500 if aggressive else 1500
+    list_limits = {"skills": 5 if aggressive else 20}
+    default_list_limit = 10 if aggressive else 40
+    dict_limit = 20 if aggressive else 60
+
+    if isinstance(value, str):
+        limit = string_limits.get(parent_key, default_string_limit)
+        if len(value) > limit:
+            truncation_state["truncated"] = True
+            return value[:limit] + f"\n... [truncated from {len(value)} chars]"
+        return value
+
+    if isinstance(value, list):
+        limit = list_limits.get(parent_key, default_list_limit)
+        items = value[:limit]
+        if len(value) > limit:
+            truncation_state["truncated"] = True
+        return [
+            _compact_tool_payload(item, aggressive=aggressive, parent_key=parent_key, truncation_state=truncation_state)
+            for item in items
+        ]
+
+    if isinstance(value, dict):
+        items = list(value.items())
+        if len(items) > dict_limit:
+            truncation_state["truncated"] = True
+            items = items[:dict_limit]
+        return {
+            key: _compact_tool_payload(item, aggressive=aggressive, parent_key=str(key), truncation_state=truncation_state)
+            for key, item in items
+        }
+
+    return value
+
+
+def _serialize_tool_data(data: Any) -> str:
+    return json.dumps(_to_jsonable(data), ensure_ascii=False)
+
+
+def _serialize_tool_content_for_llm(envelope: ToolExecutionEnvelope, max_chars: int = 3000) -> str:
+    truncation_state = {"truncated": False}
+    compacted = _compact_tool_payload(copy.deepcopy(envelope.data), truncation_state=truncation_state)
+    text = _serialize_tool_data(compacted)
+    if len(text) <= max_chars:
+        return text
+
+    truncation_state = {"truncated": False}
+    compacted = _compact_tool_payload(
+        copy.deepcopy(envelope.summary_source or envelope.data),
+        aggressive=True,
+        truncation_state=truncation_state,
+    )
+    text = _serialize_tool_data(compacted)
+    if len(text) <= max_chars:
+        return text
+
+    fallback = {
+        "success": envelope.ok,
+        "tool": envelope.tool,
+        "error": envelope.error,
+        "truncated": True,
+        "summary_source": _compact_tool_payload(
+            copy.deepcopy(envelope.summary_source or envelope.data),
+            aggressive=True,
+            truncation_state={"truncated": False},
+        ),
+    }
+    text = _serialize_tool_data(fallback)
+    if len(text) <= max_chars:
+        return text
+
+    minimal = {
+        "success": envelope.ok,
+        "tool": envelope.tool,
+        "error": envelope.error[:500] if envelope.error else "",
+        "truncated": True,
+    }
+    return _serialize_tool_data(minimal)
+
+
+def _format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool, str]:
+    """Generate a human-readable one-line summary of a tool result.
+    Returns (success: bool, message: str)."""
+    envelope = _parse_tool_result(result)
+    if envelope.tool == "unknown":
+        envelope.tool = name
+    data = envelope.summary_source or (envelope.data if isinstance(envelope.data, dict) else {})
+    is_ok = envelope.ok
+
+    if name == "analyze_document_engineering":
+        pins = len(data.get("pin_requirements") or [])
+        regs = len(data.get("register_hints") or [])
+        buses = len(data.get("bus_requirements") or [])
+        errors = data.get("parse_errors") or []
+        parts = []
+        if pins: parts.append(f"{pins}个引脚定义")
+        if regs: parts.append(f"{regs}个寄存器")
+        if buses: parts.append(f"{buses}条总线需求")
+        msg = f"文档解析完成: {', '.join(parts)}" if parts else "文档解析完成"
+        if errors:
+            msg += f", {len(errors)}个文档解析出错"
+        elif not parts:
+            return False, "文档解析未提取到有效信息"
+        return True, msg
+
+    if name == "fix_code":
+        fixed = data.get("files_fixed") or data.get("fixed_count")
+        if isinstance(fixed, (int, float)):
+            return True, f"已修复 {int(fixed)} 个文件"
+        fixed_list = data.get("fixed_files") or []
+        if isinstance(fixed_list, list) and fixed_list:
+            return True, f"已修复 {len(fixed_list)} 个文件"
+        if data.get("applied") is True:
+            return True, "已修复 1 个文件"
+        if is_ok:
+            return True, "代码修复完成"
+        error_msg = data.get("error") or data.get("message", "")
+        return False, f"修复失败: {error_msg[:80]}"
+
+    if name == "review_project":
+        issues = data.get("issues")
+        if isinstance(issues, list):
+            n = len(issues)
+            return (n == 0, f"审查通过, {n} 个问题" if n == 0 else f"审查发现 {n} 个问题")
+        count = data.get("issue_count") or data.get("total_issues")
+        if isinstance(count, (int, float)):
+            n = int(count)
+            return (n == 0, f"审查通过, {n} 个问题" if n == 0 else f"审查发现 {n} 个问题")
+        return (is_ok, "审查完成" if is_ok else f"审查失败: {data.get('error','')}")
+
+    if name == "build_project":
+        if is_ok:
+            return True, "构建成功"
+        stderr = data.get("stderr") or ""
+        if "error" in stderr.lower():
+            errors = stderr.lower().count("error:")
+            return False, f"构建失败: {errors} 个错误"
+        error_msg = data.get("error") or data.get("message", "") or "编译出错"
+        return False, f"构建失败: {str(error_msg)[:80]}"
+
+    if name == "git_status":
+        branch = data.get("branch") or ""
+        changes = data.get("changes") or []
+        if isinstance(changes, dict):
+            change_count = len(changes.get("modified", []) or []) + len(changes.get("untracked", []) or [])
+            return True, f"工作区干净 ({branch})" if change_count == 0 else f"{change_count} 个文件变更 ({branch})"
+        if isinstance(changes, list):
+            return True, f"工作区干净 ({branch})" if not changes else f"{len(changes)} 个文件变更 ({branch})"
+        return True, "获取 Git 状态完成"
+
+    if name == "run_task":
+        if is_ok:
+            return True, "工作流执行完成"
+        error_msg = data.get("error") or data.get("message", "")
+        return False, f"工作流失败: {str(error_msg)[:80]}"
+
+    if name == "flash_project":
+        return (is_ok, "烧录成功" if is_ok else f"烧录失败: {data.get('error','')}")
+
+    if name == "monitor_project":
+        return True, "串口监控已启动"
+
+    if name == "init_project":
+        proj = data.get("name") or args.get("name", "")
+        if is_ok:
+            return True, f"项目 '{proj}' 已创建" if proj else "项目已创建"
+        return False, f"创建项目失败: {data.get('error','')}"
+
+    if name == "list_projects":
+        projs = data if isinstance(data, list) else data.get("projects", [])
+        return True, f"共 {len(projs)} 个项目"
+
+    if name == "toolchain_status":
+        if is_ok:
+            return True, "工具链就绪"
+        missing = data.get("missing", [])
+        if missing:
+            return False, f"工具链缺少: {', '.join(missing[:3])}"
+        return False, "工具链检查失败"
+
+    if name == "debug_loop":
+        return (is_ok, "调试完成" if is_ok else f"调试失败: {data.get('error','')}")
+
+    if name == "project_context":
+        project_data = data.get("project", {}) if isinstance(data, dict) else {}
+        project_name = project_data.get("name", "") if isinstance(project_data, dict) else ""
+        return True, f"项目状态正常 ({project_name})" if project_name else "项目状态正常"
+
+    if name == "generate_driver":
+        chip = data.get("chip") or ""
+        if is_ok:
+            return True, f"驱动生成完成 ({chip})" if chip else "驱动生成完成"
+        return False, f"驱动生成失败: {data.get('error','')}"
+
+    # Generic fallback for unknown tools
+    if is_ok:
+        return True, f"工具 '{name}' 已完成"
+    error_msg = data.get("error") or data.get("message", "")
+    return False, f"工具 '{name}' 返回失败: {str(error_msg)[:80]}"
+
+
+def _is_tool_result_failure(result: Any) -> bool:
+    """Check whether a JSON tool result indicates a failure.
+    Re-entry blocked results are NOT counted as failures."""
+    if isinstance(result, ToolExecutionEnvelope):
+        data = result.data
+        if isinstance(data, dict) and data.get("blocked") is True:
+            return False
+        if result.error:
+            return True
+        if result.ok is False:
+            return True
+        return _is_tool_result_failure(data)
+    if isinstance(result, str):
+        try:
+            data = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return True
+    else:
+        data = result
+    if isinstance(data, dict):
+        if data.get("blocked") is True:
+            return False
+        if data.get("success") is False:
+            return True
+        if "error" in data:
+            return True
+        if data.get("status") in ("failed", "error"):
+            return True
+    return False
+
+
+def _build_consecutive_failure_limit_message(failures: int) -> str:
+    return (
+        f"连续 {failures} 次工具调用返回了失败结果。"
+        f"我停止继续尝试，以免造成更多问题。请检查项目状态并告诉我下一步怎么做。"
+    )
+
+
+def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> ToolExecutionEnvelope:
     ws = cm.workspace_root()
     project = args.get("project", "")
     project_path = ws / project if project else None
@@ -288,7 +631,7 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                 no_flash=args.get("no_flash", False),
                 no_monitor=args.get("no_monitor", False),
             )
-            return json.dumps(result, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
         if name == "analyze_document_engineering":
             analyzer = DocumentEngineeringAnalyzer(kb_root)
@@ -296,30 +639,34 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                 docs=args.get("docs", []) or [],
                 query=args.get("query", ""),
             )
-            return json.dumps(context.model_dump(mode="json"), ensure_ascii=False)
+            return _build_tool_envelope(name, context.model_dump(mode="json"))
 
         if name == "init_project":
             platform = args.get("platform", "stm32cubemx") or "stm32cubemx"
-            result = run_init_project(
-                workspace=str(ws),
-                name=args.get("name", ""),
-                mcu=args.get("mcu", "STM32F103C8T6"),
-                platform="stm32cubemx",
-                runtime=args.get("runtime", "baremetal"),
-                project_mode="cubemx" if platform == "stm32cubemx" else "firmware",
-                firmware_package=args.get("firmware_package", "STM32Cube_FW_F1"),
-            )
-            return json.dumps(result.model_dump(mode="json") if hasattr(result, "model_dump") else result, ensure_ascii=False)
+            try:
+                result = run_init_project(
+                    workspace=str(ws),
+                    name=args.get("name", ""),
+                    mcu=args.get("mcu", "STM32F103C8T6"),
+                    platform=platform,
+                    runtime=args.get("runtime", "baremetal"),
+                    project_mode="cubemx" if platform == "stm32cubemx" else "firmware",
+                    firmware_package=args.get("firmware_package", "STM32Cube_FW_F1"),
+                )
+            except FileExistsError as e:
+                return _build_tool_envelope(name, {"success": False, "error": str(e)}, error=str(e))
+            return _build_tool_envelope(name, result)
 
         if name == "project_context":
             if not project_path or not project_path.exists():
-                return json.dumps({"error": f"Project '{project}' not found"})
+                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
             pm = ProjectManager(str(ws))
             loaded = pm.load_project(project)
             gm = GitManager(str(project_path))
             sm = SkillManager(cfg, project_root=str(cm.project_root()))
             tm = ToolchainManager(cfg, project_root=str(cm.project_root()))
-            return json.dumps(
+            return _build_tool_envelope(
+                name,
                 {
                     "project": loaded.model_dump(mode="json"),
                     "status": _project_status(project_path),
@@ -330,7 +677,6 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                     "toolchains": tm.status(),
                     "skills": sm.list_skills(),
                 },
-                ensure_ascii=False,
             )
 
         if name == "list_projects":
@@ -341,37 +687,37 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                     projs.append(data)
                 except Exception:
                     projs.append({"name": meta_file.parent.name, "error": "invalid metadata"})
-            return json.dumps({"projects": projs}, ensure_ascii=False)
+            return _build_tool_envelope(name, {"projects": projs})
 
         if name == "toolchain_status":
             tm = ToolchainManager(cfg, project_root=str(cm.project_root()))
-            return json.dumps(tm.status(), ensure_ascii=False)
+            return _build_tool_envelope(name, tm.status())
 
         if name == "project_status":
             if not project_path or not project_path.exists():
-                return json.dumps({"error": f"Project '{project}' not found"})
-            return json.dumps(_project_status(project_path), ensure_ascii=False)
+                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
+            return _build_tool_envelope(name, _project_status(project_path))
 
         if name == "project_files":
             if not project_path or not project_path.exists():
-                return json.dumps({"error": f"Project '{project}' not found"})
+                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
             engine = ReviewEngine(str(project_path))
             files = engine.discover_project_files()
-            return json.dumps({"files": files}, ensure_ascii=False)
+            return _build_tool_envelope(name, {"files": files})
 
         if name == "git_status":
             if not project_path or not project_path.exists():
-                return json.dumps({"error": f"Project '{project}' not found"})
+                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
             gm = GitManager(str(project_path))
-            return json.dumps({
+            return _build_tool_envelope(name, {
                 "diff": gm.get_diff_since_last_human_commit(),
                 "changes": gm.changed_files(),
                 "branch": gm.repo.active_branch.name,
-            }, ensure_ascii=False)
+            })
 
         if name == "build_project":
             if not project_path:
-                return json.dumps({"error": "No project specified"})
+                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
             from luxar.tools.build_project import run_build_project
             result = run_build_project(
                 project_path=str(project_path),
@@ -379,11 +725,11 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                 project_root=str(cm.project_root()),
                 clean=args.get("clean", False),
             )
-            return json.dumps({"result": str(result)}, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
         if name == "flash_project":
             if not project_path:
-                return json.dumps({"error": "No project specified"})
+                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
             from luxar.tools.flash_project import run_flash_project
             result = run_flash_project(
                 project_path=str(project_path),
@@ -391,22 +737,22 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                 project_root=str(cm.project_root()),
                 probe=args.get("probe"),
             )
-            return json.dumps({"result": str(result)}, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
         if name == "monitor_project":
             if not project_path:
-                return json.dumps({"error": "No project specified"})
+                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
             from luxar.tools.monitor_project import run_monitor_project
             result = run_monitor_project(
                 project_path=str(project_path),
                 port=args.get("port", ""),
                 baudrate=args.get("baudrate", 115200),
             )
-            return json.dumps({"result": str(result)}, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
         if name == "debug_loop":
             if not project_path:
-                return json.dumps({"error": "No project specified"})
+                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
             from luxar.tools.debug_loop_project import run_debug_loop_project
             result = run_debug_loop_project(
                 project_path=str(project_path),
@@ -416,39 +762,72 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                 port=args.get("port", ""),
                 clean=args.get("clean", False),
             )
-            return json.dumps({"result": str(result)}, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
         if name == "review_project":
             if not project_path or not project_path.exists():
-                return json.dumps({"error": f"Project '{project}' not found"})
+                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
             engine = ReviewEngine(str(project_path))
             file = args.get("file", "")
             if file:
                 report = engine.review_file(str(project_path / file))
             else:
                 report = engine.review_project()
-            return json.dumps(report.model_dump(mode="json") if hasattr(report, "model_dump") else {"report": str(report)}, ensure_ascii=False)
+            return _build_tool_envelope(name, report.model_dump(mode="json") if hasattr(report, "model_dump") else {"report": str(report)})
 
         if name == "fix_code":
             if not project_path:
-                return json.dumps({"error": "No project specified"})
+                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
             file = args.get("file", "")
             if not file:
-                return json.dumps({"error": "No file specified"})
-            # Reject edits to Core/ files without USER CODE markers (CubeMX generated)
+                return _build_tool_envelope(name, {"error": "No file specified"}, error="No file specified")
+            # build-project-level files that fix_code should always be able to edit:
+            #   - CMakeLists.txt (any location) — build configuration
+            #   - stm32f1xx_hal_conf.h / stm32_hal_conf.h — HAL project config
+            always_editable = {"cmakelists.txt", "stm32f1xx_hal_conf.h", "stm32_hal_conf.h"}
+            path_lower = str(Path(file).name).lower()
+
+            # Determine project mode to adjust Core/ protection scope.
+            # In "cubemx" mode, Core/ files are CubeMX-generated → protected.
+            # In "firmware" mode, Core/ files are Luxar skeleton → editable.
+            project_mode = "cubemx"
             try:
-                content = (project_path / file).read_text(encoding="utf-8")
-                if "core" in str(Path(file).parts).lower() and "USER CODE BEGIN" not in content:
-                    return json.dumps({"error": f"Cannot auto-fix CubeMX-generated file '{file}'. Only App/ files and Core/ files with USER CODE sections are editable."})
+                meta = json.loads((project_path / ".agent_project.json").read_text(encoding="utf-8"))
+                project_mode = str(meta.get("project_mode", "cubemx")).lower()
             except Exception:
                 pass
+
+            is_core_path = "core" in str(Path(file).parts).lower()
+            is_always_editable = path_lower in always_editable
+
+            if is_always_editable:
+                pass
+            elif project_mode == "cubemx":
+                content = ""
+                try:
+                    content = (project_path / file).read_text(encoding="utf-8")
+                except Exception:
+                    pass
+                if is_core_path and "USER CODE BEGIN" not in content:
+                    message = f"Cannot auto-fix CubeMX-generated file '{file}'. Only App/ files, Core/ files with USER CODE sections, and project config files (CMakeLists.txt, stm32f1xx_hal_conf.h) are editable."
+                    return _build_tool_envelope(name, {"error": message}, error=message)
+            else:
+                is_driver_path = "drivers" in str(Path(file).parts).lower()
+                if is_driver_path:
+                    message = f"Cannot auto-fix vendor driver file '{file}'. Driver files from STM32Cube firmware packages should not be modified."
+                    return _build_tool_envelope(name, {"error": message}, error=message)
             fixer = CodeFixer(cfg)
+            build_errors_list = None
+            raw_build_error = args.get("build_error", "")
+            if raw_build_error:
+                build_errors_list = [raw_build_error]
             result = fixer.fix_file(
                 project_path=str(project_path),
                 file_path=str(project_path / file),
+                build_errors=build_errors_list,
                 apply_changes=not args.get("dry_run", False),
             )
-            return json.dumps({"result": str(result)}, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
         if name == "generate_driver":
             from luxar.core.driver_generator import DriverGenerator
@@ -462,18 +841,214 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> str:
                 vendor=args.get("vendor", ""),
                 device=args.get("device", ""),
             )
-            return json.dumps(result.model_dump(mode="json") if hasattr(result, "model_dump") else {"result": str(result)}, ensure_ascii=False)
+            return _build_tool_envelope(name, result)
 
-        return json.dumps({"error": f"Unknown tool: {name}"})
+        return _build_tool_envelope(name, {"error": f"Unknown tool: {name}"}, error=f"Unknown tool: {name}")
     except Exception as e:
-        return json.dumps({"error": f"Tool '{name}' failed: {e}"}, ensure_ascii=False)
+        message = f"Tool '{name}' failed: {e}"
+        return _build_tool_envelope(name, {"error": message}, error=message)
 
 
-def _truncate_tool_result(result: str, max_chars: int = 3000) -> str:
-    """Prevent bloating context with huge JSON tool results."""
-    if len(result) <= max_chars:
-        return result
-    return result[:max_chars] + f"\n... [truncated from {len(result)} chars]"
+def _enforce_tool_call_budget(tool_name: str, used_calls: int) -> int:
+    next_call = used_calls + 1
+    if next_call > MAX_AGENT_TOOL_CALLS:
+        raise AgentToolLimitError(
+            f"Tool call limit exceeded: attempted call {next_call} "
+            f"but the maximum is {MAX_AGENT_TOOL_CALLS}. "
+            f"Task stopped before executing tool '{tool_name}'."
+        )
+    return next_call
+
+
+async def _execute_tool_with_limits(
+    name: str,
+    args: dict,
+    cfg: Any,
+    cm: ConfigManager,
+    *,
+    used_calls: int,
+) -> tuple[ToolExecutionEnvelope, int]:
+    next_call = _enforce_tool_call_budget(name, used_calls)
+    result = await _execute_tool_with_timeout(name, args, cfg, cm)
+    return result, next_call
+
+
+async def _execute_tool_with_timeout(name: str, args: dict, cfg: Any, cm: ConfigManager) -> ToolExecutionEnvelope:
+    timeout_sec = _TOOL_TIMEOUT_OVERRIDES.get(name, MAX_AGENT_TOOL_TIMEOUT_SEC)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_execute_tool, name, args, cfg, cm),
+            timeout=timeout_sec,
+        )
+    except asyncio.TimeoutError as exc:
+        raise AgentToolTimeoutError(
+            f"Tool execution timed out: tool '{name}' exceeded "
+            f"{timeout_sec} seconds. Task stopped."
+        ) from exc
+    return _parse_tool_result(result)
+
+
+async def _execute_run_task_stream(
+    args: dict,
+    cfg: Any,
+    cm: ConfigManager,
+):
+    for event in run_task_stream(
+        config=cfg,
+        project_root=str(cm.project_root()),
+        workspace_root=str(cm.workspace_root()),
+        driver_library_root=str(cm.driver_library_root()),
+        task=args.get("task", ""),
+        project_name=args.get("project", ""),
+        docs=args.get("docs", []) or [],
+        dry_run=args.get("dry_run", False),
+        plan_only=args.get("plan_only", False),
+        no_build=args.get("no_build", False),
+        no_flash=args.get("no_flash", False),
+        no_monitor=args.get("no_monitor", False),
+    ):
+        yield event
+        await asyncio.sleep(0)
+
+
+def _classify_run_task_intent(args: dict) -> str:
+    plan = TaskRouter().route(
+        task=args.get("task", ""),
+        project=args.get("project", ""),
+        docs=args.get("docs", []) or [],
+        dry_run=args.get("dry_run", False),
+        plan_only=args.get("plan_only", False),
+    )
+    return plan.intent.intent_type
+
+
+def _build_tool_running_payload(name: str, args: dict) -> dict:
+    payload = {"tool": name}
+    if name == "run_task":
+        task = args.get("task", "")
+        project = args.get("project", "")
+        if task:
+            payload["task"] = task
+        if project:
+            payload["project"] = project
+    return payload
+
+
+def _should_block_run_task_reentry(
+    state: dict | None,
+    args: dict,
+) -> tuple[bool, str]:
+    current_intent = _classify_run_task_intent(args)
+    if not state or not state.get("seen"):
+        return False, current_intent
+    current_project = args.get("project", "")
+    if current_project != state.get("project"):
+        return False, current_intent
+    status = state.get("status", "")
+    if status in {"failed", "missing_info", "no_final"} and not state.get("recovery_used", False):
+        return False, current_intent
+    return True, current_intent
+
+
+def _build_run_task_reentry_result(state: dict, args: dict) -> dict:
+    prior_intent = state.get("intent", "forge_project")
+    if prior_intent == "explain":
+        message = (
+            "run_task already produced an explanation in this turn. "
+            "Do not call run_task again for the same project; continue with lightweight tools "
+            "like project_context or summarize the blocker instead."
+        )
+        reason = "run_task_explain_reentry_blocked"
+    else:
+        message = (
+            "A project-level workflow is already active in this turn. "
+            "Do not call run_task again; continue from the existing workflow "
+            "or use lightweight tools like project_context, build_project, or review_project."
+        )
+        reason = "run_task_reentry_blocked"
+    return {
+        "success": False,
+        "mode": "execute",
+        "intent": prior_intent,
+        "message": message,
+        "blocked": True,
+        "reason": reason,
+        "project": args.get("project", state.get("project", "")),
+        "task": args.get("task", ""),
+    }
+
+
+def _is_active_project_context(project: str) -> bool:
+    return bool(_normalize_project_name(project))
+
+
+def _build_active_project_init_block_result(project: str, args: dict) -> dict:
+    active_project = _normalize_project_name(project)
+    requested_project = args.get("name", "")
+    return {
+        "success": True,
+        "blocked": True,
+        "reason": "init_project_blocked_active_project",
+        "project": active_project,
+        "requested_project": requested_project,
+        "message": (
+            f"当前已经在项目 '{active_project}' 中，不能在项目会话里调用 init_project。"
+            "请继续使用当前项目；如需新建项目，请回到全局会话或使用新建项目入口。"
+        ),
+    }
+
+
+def _is_lightweight_project_inspection_task(task: str) -> bool:
+    text = str(task or "").strip().lower()
+    if not text:
+        return False
+
+    implementation_terms = (
+        "实现", "生成", "创建", "新建", "添加", "修改", "修复", "烧录", "监视",
+        "build", "flash", "monitor", "implement", "generate", "create", "add", "fix",
+    )
+    if any(term in text for term in implementation_terms):
+        return False
+
+    file_terms = (
+        "文件", "文件列表", "目录", "目录结构", "结构", "状态",
+        "file", "files", "tree", "structure", "status",
+    )
+    inspect_terms = (
+        "查看", "看看", "列出", "显示", "当前", "状态",
+        "show", "list", "check", "inspect", "current",
+    )
+    return any(term in text for term in file_terms) and any(term in text for term in inspect_terms)
+
+
+def _should_block_lightweight_run_task(project: str, args: dict) -> bool:
+    return _is_active_project_context(project) and _is_lightweight_project_inspection_task(args.get("task", ""))
+
+
+def _build_lightweight_run_task_block_result(project: str, args: dict) -> dict:
+    active_project = _normalize_project_name(project)
+    return {
+        "success": True,
+        "blocked": True,
+        "reason": "run_task_lightweight_query_blocked",
+        "project": active_project,
+        "task": args.get("task", ""),
+        "message": (
+            f"当前请求只是查看项目 '{active_project}' 的状态、文件或目录结构，"
+            "不应启动 forge/run_task 工作流。请改用 project_context、project_files 或 git_status。"
+        ),
+    }
+
+
+def _guard_run_task_call(project: str, state: dict | None, args: dict) -> tuple[dict | None, str]:
+    current_intent = _classify_run_task_intent(args)
+    if state and state.get("seen"):
+        blocked, current_intent = _should_block_run_task_reentry(state, args)
+        if blocked:
+            return _build_run_task_reentry_result(state, args), current_intent
+    if _should_block_lightweight_run_task(project, args):
+        return _build_lightweight_run_task_block_result(project, args), current_intent
+    return None, current_intent
 
 
 # ===== Persistent conversation store =====
@@ -509,19 +1084,48 @@ You are Luxar, an embedded AI engineering assistant. You are currently working o
 - The user has already selected {project} as the active project.
 - ALL project-specific actions (review, build, flash, status, files, git, etc.) should use "{project}" without asking.
 - NEVER call list_projects — you are already in {project}.
+- NEVER call init_project while inside this active project conversation. The project already exists.
 - When the user says "审查" (review) → directly call review_project.
 - When the user says "构建" (build) → directly call build_project.
 - When the user says "状态" (status) → call project_context (it includes status, git, and files).
+- When the user says "查看文件", "文件列表", "目录结构", or asks to inspect current files → call project_context or project_files. Do NOT call run_task/forge.
 - Do NOT call multiple exploratory tools before the one the user asked for. Just call the right tool directly.
+- For a full project task, you may call run_task ONCE to start the workflow.
+- After run_task starts, continue with lightweight tools (fix_code, build_project, review_project). NEVER call run_task again.
+- run_task is for full project-level implementation workflows inside the active project. It must not be used for status, files, git, review-only, build-only, flash-only, or monitor-only requests.
+- fix_code accepts a build_error parameter — pass gcc error lines from build_project.stderr to fix errors that static review cannot see.
 
 ## CubeMX Rules (CRITICAL)
-- This is an STM32CubeMX project. Core/ files (main.c, freertos.c, stm32*.c, system_*.c, syscalls.c, sysmem.c, *_hal_msp.c) are GENERATED by CubeMX.
+- These rules apply to CubeMX-mode projects ONLY.
+- Core/ files (main.c, freertos.c, stm32*.c, system_*.c, syscalls.c, sysmem.c, *_hal_msp.c) are GENERATED by CubeMX.
 - You may ONLY edit code inside existing /* USER CODE BEGIN ... */ ... /* USER CODE END */ blocks.
 - NEVER create new USER CODE sections in Core/ files — this will break the CubeMX workflow.
-- NEVER add, remove, or modify code OUTSIDE of USER CODE blocks in Core/ files.
 - If the user asks you to edit Core/ files outside USER CODE blocks, explain that it will be overwritten by CubeMX regeneration and refuse.
-- App/ files (App/Src/*, App/Inc/*) are fully editable — they are user code.
-- If the user says "审查", call ONLY review_project. Do NOT call project_context/project_status/project_files first.
+
+## Firmware-Mode Rules (applies when project_mode=firmware)
+- In firmware mode, Core/ files (main.c, system_stm32xx.c, startup_stm32.s) are Luxar-generated skeletons — they ARE editable.
+- Core/Inc/stm32f1xx_hal_conf.h is a project config header — editable.
+- CMakeLists.txt is a project build config — editable.
+- App/ files (App/Src/*, App/Inc/*) are fully editable.
+- Drivers/ files are STM32Cube firmware package files — DO NOT edit them.
+- If a build error originates from an App/ or Core/ file, use fix_code immediately — do NOT hesitate.
+
+## Common Editable Files (BOTH modes)
+- CMakeLists.txt — always editable. Fix glob patterns, add/remove sources, etc.
+- Core/Inc/stm32f1xx_hal_conf.h — always editable. Enable/disable HAL modules.
+- App/Src/app_main.c, App/Inc/app_main.h — always editable.
+
+## If you say "审查", call ONLY review_project. Do NOT call project_context/project_status/project_files first.
+
+## Fix/Build Loop (IMPORTANT)
+- When build_project fails with compilation errors: extract the file path and error message from stderr, then call fix_code with the specific file and build_error.
+- Example: build_project fails with "App/Src/app_main.c:21:10: fatal error: stm32f10x.h: No such file" → call fix_code(project="manualtest", file="App/Src/app_main.c", build_error="App/Src/app_main.c:21:10: fatal error: stm32f10x.h: No such file")
+- This fix→build loop resolves errors faster than re-running run_task.
+
+## Review Results Interpretation
+- When review_project reports issues in Core/ files (main.c, syscalls.c, system_*.c, etc.), IGNORE them. These are CubeMX/HAL generated files and cannot be modified.
+- Only fix issues in App/ files. Core/ file issues are false positives for our workflow.
+- If build fails due to review errors, check if the errors are in App/ or Core/. Only App/ errors need fixing.
 
 ## Language
 - Respond in the same language the user uses. Chinese in -> Chinese out.
@@ -533,7 +1137,17 @@ You are Luxar, an embedded AI engineering assistant. You are currently working o
 - You have tools for build, flash, review, forge, debug loop, git, etc.
 - Call a tool only when the user explicitly asks for an action.
 - Summarize tool results in natural language.
-- Be concise."""
+- Be concise.
+
+## Tool Usage Rules (CRITICAL)
+- ONLY call analyze_document_engineering when the user has explicitly provided document paths. For simple requests like "Blink LED", "Colorful LED", or "GPIO control", do NOT call document analysis — these do not require datasheets.
+- If build_project fails, look at stderr for file paths and gcc error messages. Call fix_code with the specific file and build_error param containing the gcc error line. Do NOT call run_task for build failures.
+- For small, explicit, low-risk App/ fixes, act automatically instead of asking for permission. Examples: replacing `printf` with HAL/UART output, adding missing Doxygen comments, fixing include mistakes, and other review-driven cleanup in App/ files.
+- If you already know the exact fix from review/build output, do the fix immediately. Do NOT reply with “I can fix this if you want” or ask the user to confirm routine App/ code cleanup.
+- After applying an automatic App/ fix, re-run review_project. If the user asked to build or the previous step was blocked by the review gate, re-run build_project once after the fix.
+- Only stop and ask the user when the change is non-trivial, spans multiple possible designs, touches generated Core/ code outside USER CODE blocks, or may change behavior beyond the reported defect.
+- If 2 consecutive tools fail with errors, STOP and report the error to the user. Do NOT blindly try more tools in a loop. Ask the user for clarification or next steps.
+- Do NOT call multiple exploratory tools before the one the user asked for. Just call the right tool directly."""
 
 GLOBAL_SYSTEM_PROMPT = """\
 You are Luxar, a general embedded AI engineering assistant specialized in STM32 development.
@@ -552,9 +1166,91 @@ project planning, build, flash, monitor, debug, and git operations.
 - When the user asks to work on a specific project, use its name with tools.
 - If no project is specified and the user asks about existing projects, use `list_projects` to see what is available.
 - Only call tools when the user explicitly asks for a concrete action.
+- For a full project-level task, call run_task only once to start the workflow.
+- After run_task starts, do not call run_task again in the same turn. Continue from the workflow or use lightweight tools like project_context, build_project, or review_project.
 - Do NOT call tools for casual conversation or questions.
+- For routine, localized code cleanup that directly resolves a reported review/build issue, prefer doing the fix automatically rather than asking for confirmation.
 - After a tool executes, summarize the result in natural language for the user.
 - Be concise and helpful."""
+
+
+PROJECT_TEMPLATE_ALIASES: dict[str, tuple[str, ...]] = {
+    "name": ("项目名", "project name", "name"),
+    "mcu": ("mcu",),
+    "platform": ("平台", "platform"),
+    "runtime": ("运行时", "runtime"),
+    "firmware_package": ("固件包", "firmware package"),
+    "target": ("目标功能", "target behavior", "target function"),
+    "peripherals": ("外设/通信", "peripherals / buses", "peripherals", "buses"),
+    "reference_docs": ("参考文档", "reference docs", "reference documents"),
+}
+
+
+def _normalize_project_name(project: str) -> str:
+    return "" if project in {"", "__global__"} else project
+
+
+def _normalize_template_label(label: str) -> str:
+    return re.sub(r"\s+", " ", label.strip().lower())
+
+
+def _match_template_field(label: str) -> str:
+    normalized = _normalize_template_label(label)
+    for field, aliases in PROJECT_TEMPLATE_ALIASES.items():
+        for alias in aliases:
+            if normalized == _normalize_template_label(alias):
+                return field
+    return ""
+
+
+def _parse_project_creation_request(message: str) -> dict[str, str] | None:
+    parsed: dict[str, str] = {}
+    seen_values: dict[str, set[str]] = {}
+    labeled_lines = 0
+    for raw_line in message.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^\s*[-*]?\s*([^:：]+?)\s*[:：]\s*(.+?)\s*$", line)
+        if not match:
+            continue
+        field = _match_template_field(match.group(1))
+        if not field:
+            continue
+        value = match.group(2).strip()
+        if not value:
+            continue
+        labeled_lines += 1
+        seen_values.setdefault(field, set()).add(value)
+        if field not in parsed:
+            parsed[field] = value
+
+    if labeled_lines < 2:
+        return None
+    if "name" not in parsed or "mcu" not in parsed:
+        return None
+    if len(seen_values.get("name", set())) > 1:
+        return {
+            "error": "检测到多个不同的项目名。请一次只提交一个项目创建模板。",
+        }
+    return parsed
+
+
+def _build_project_creation_summary(project_payload: dict[str, str], created_name: str) -> str:
+    parts = [
+        f"项目 `{created_name}` 已创建。",
+        f"MCU: {project_payload.get('mcu', '')}",
+        f"平台: {project_payload.get('platform', 'stm32cubemx')}",
+        f"运行时: {project_payload.get('runtime', 'baremetal')}",
+        f"固件包: {project_payload.get('firmware_package', 'STM32Cube_FW_F1')}",
+    ]
+    if project_payload.get("target"):
+        parts.append(f"目标功能: {project_payload['target']}")
+    if project_payload.get("peripherals"):
+        parts.append(f"外设/通信: {project_payload['peripherals']}")
+    if project_payload.get("reference_docs"):
+        parts.append(f"参考文档: {project_payload['reference_docs']}")
+    return "\n".join(parts)
 
 
 def _get_context_limit(cfg: Any) -> int:
@@ -595,7 +1291,7 @@ def _enrich_system_prompt(base_prompt: str, msg_content: str, docs: list | None 
     enriched = base_prompt
     if docs:
         enriched += f"\n\nThe user has attached documents: {', '.join(docs)}.\nUse analyze_document_engineering to extract facts from them if needed.\n"
-    if not _conv_store:
+    if not _conv_store or not project:
         return enriched
     try:
         related = _conv_store.search(query=msg_content, project=project or None, limit=3)
@@ -609,6 +1305,38 @@ def _enrich_system_prompt(base_prompt: str, msg_content: str, docs: list | None 
         content = (r.get("content", "") or "")[:200]
         lines.append(f"- [{role}]: {content}")
     return enriched + "\n" + "\n".join(lines) + "\n"
+
+
+def _truncate_with_tool_pairing(conv: list[dict], max_keep: int = 20) -> list[dict]:
+    """Take last `max_keep` messages, but extend window backward to include
+    tool results for any assistant tool_calls that fall within the window.
+    Prevents orphan tool_calls→no tool message API rejection."""
+    if len(conv) <= max_keep:
+        return list(conv)
+    start = len(conv) - max_keep
+    # Collect tool_call_ids from assistant messages in the window
+    orphan_ids: set[str] = set()
+    for m in conv[start:]:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                tc_id = isinstance(tc, dict) and tc.get("id") or tc
+                if tc_id:
+                    orphan_ids.add(tc_id)
+    # Remove IDs that already have matching tool messages in the window
+    for m in conv[start:]:
+        tc_id = m.get("tool_call_id")
+        if tc_id:
+            orphan_ids.discard(tc_id)
+    # Extend window backward to grab missing tool results
+    if orphan_ids:
+        for i in range(start - 1, -1, -1):
+            tc_id = conv[i].get("tool_call_id")
+            if tc_id and tc_id in orphan_ids:
+                orphan_ids.discard(tc_id)
+                start = i
+                if not orphan_ids:
+                    break
+    return list(conv[start:])
 
 
 def _prepare_agent_context(
@@ -632,7 +1360,8 @@ def _prepare_agent_context(
         conv[:] = compressor.compress(conv, client)
 
     api_messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    for m in conv[-20:]:
+    recent = _truncate_with_tool_pairing(conv, max_keep=20)
+    for m in recent:
         entry: dict = {"role": m["role"], "content": m["content"]}
         if m.get("tool_call_id"):
             entry["role"] = "tool"
@@ -660,8 +1389,9 @@ def _prepare_agent_context(
 
 
 def _validate_api_messages(msgs: list[dict]) -> list[dict]:
-    """Final pass: ensure every tool message is preceded by assistant with tool_calls.
-    This is a safety net — handles edge cases from compression, old data, etc."""
+    """Final pass: ensure every tool message is preceded by assistant with tool_calls
+    AND every assistant's tool_calls have matching tool results.
+    This is a safety net — handles edge cases from compression, truncation, old data, etc."""
     clean: list[dict] = []
     for m in msgs:
         if m["role"] == "tool" and m.get("tool_call_id"):
@@ -679,7 +1409,25 @@ def _validate_api_messages(msgs: list[dict]) -> list[dict]:
                     "function": {"name": m.get("tool_name", "unknown"), "arguments": "{}"}
                 }]
         clean.append(m)
-    return clean
+    return _strip_orphan_tool_calls(clean)
+
+
+def _strip_orphan_tool_calls(msgs: list[dict]) -> list[dict]:
+    """Remove tool_calls from assistant messages that have no matching tool result.
+    DeepSeek API rejects messages where tool_call_ids lack corresponding tool messages."""
+    known_tool_ids: set[str] = {
+        m["tool_call_id"]
+        for m in msgs
+        if m["role"] == "tool" and m.get("tool_call_id")
+    }
+    for m in msgs:
+        if m["role"] == "assistant" and m.get("tool_calls"):
+            filtered = [tc for tc in m["tool_calls"] if tc.get("id") in known_tool_ids]
+            if filtered:
+                m["tool_calls"] = filtered
+            else:
+                del m["tool_calls"]
+    return msgs
 
 
 def _is_reasoning_handoff_error(exc: Exception) -> bool:
@@ -735,14 +1483,99 @@ def _repair_messages_for_reasoning_handoff(api_messages: list[dict], aggressive:
 def _retry_after_reasoning_handoff_repair(client: Any, api_messages: list[dict]) -> tuple[Any | None, list[dict], Exception | None]:
     for aggressive in (False, True):
         repaired = _repair_messages_for_reasoning_handoff(api_messages, aggressive=aggressive)
-        if repaired == api_messages:
-            continue
         try:
             return client.complete_with_tools(messages=repaired, tools=TOOLS), repaired, None
         except Exception as retry_exc:
             if not _is_reasoning_handoff_error(retry_exc):
                 return None, repaired, retry_exc
     return None, api_messages, None
+
+
+def _create_project_from_template(project_payload: dict[str, str], cfg: Any, cm: ConfigManager):
+    platform = (project_payload.get("platform", "stm32cubemx") or "stm32cubemx").strip().lower()
+    runtime = (project_payload.get("runtime", "baremetal") or "baremetal").strip().lower()
+    if platform not in {"stm32cubemx", "stm32firmware"}:
+        raise ValueError("平台必须是 stm32cubemx 或 stm32firmware。")
+    if runtime not in {"baremetal", "freertos"}:
+        raise ValueError("运行时必须是 baremetal 或 freertos。")
+
+    return run_init_project(
+        workspace=str(cm.workspace_root()),
+        name=project_payload["name"].strip(),
+        mcu=project_payload["mcu"].strip(),
+        platform=platform,
+        runtime=runtime,
+        project_mode="cubemx" if platform == "stm32cubemx" else "firmware",
+        firmware_package=(project_payload.get("firmware_package", "") or cfg.stm32.firmware_package).strip(),
+    )
+
+
+async def _stream_project_template_creation(
+    conv: list[dict],
+    project_payload: dict[str, str],
+    cfg: Any,
+    cm: ConfigManager,
+    storage_project: str,
+):
+    tool_call_id = f"call-{uuid.uuid4()}"
+    tool_args = json.dumps(
+        {
+            "name": project_payload["name"].strip(),
+            "mcu": project_payload["mcu"].strip(),
+            "platform": (project_payload.get("platform", "stm32cubemx") or "stm32cubemx").strip().lower(),
+            "runtime": (project_payload.get("runtime", "baremetal") or "baremetal").strip().lower(),
+            "firmware_package": (project_payload.get("firmware_package", "") or cfg.stm32.firmware_package).strip(),
+        },
+        ensure_ascii=False,
+    )
+    yield {"event": "tool_call", "data": json.dumps({"tool_call": "init_project"})}
+
+    assistant_tool_msg = {
+        "id": str(uuid.uuid4()),
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": tool_call_id,
+            "type": "function",
+            "function": {"name": "init_project", "arguments": tool_args},
+        }],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    conv.append(assistant_tool_msg)
+    yield {"event": "tool_running", "data": json.dumps({"tool": "init_project"})}
+
+    try:
+        project = _create_project_from_template(project_payload, cfg, cm)
+    except Exception as exc:
+        yield {"event": "error", "data": json.dumps({"error": str(exc)})}
+        _save_conv(storage_project)
+        return
+
+    project_result = project.model_dump(mode="json") if hasattr(project, "model_dump") else project
+    tool_envelope = _build_tool_envelope("init_project", project_result)
+    tool_result = _serialize_tool_data(tool_envelope.data)
+    conv.append({
+        "id": str(uuid.uuid4()),
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "tool_name": "init_project",
+        "content": _serialize_tool_content_for_llm(tool_envelope),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    yield {"event": "tool_result", "data": json.dumps({"tool": "init_project", "result": tool_result})}
+    ok, summary = _format_tool_result_summary("init_project", {}, tool_envelope)
+    _agent_log.info("init_project → %s", summary) if ok else _agent_log.warning("init_project → %s", summary)
+
+    summary = _build_project_creation_summary(project_payload, project_payload["name"].strip())
+    conv.append({
+        "id": str(uuid.uuid4()),
+        "role": "assistant",
+        "content": summary,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    _save_conv(storage_project)
+    yield {"event": "token", "data": json.dumps({"token": summary})}
+    yield {"event": "done", "data": "[DONE]"}
 
 
 async def _run_agent_loop(
@@ -754,20 +1587,55 @@ async def _run_agent_loop(
     client: Any,
     docs: list | None = None,
 ) -> dict[str, str]:
+    # Pre-flight API key check
+    if hasattr(client, "has_valid_api_key") and not client.has_valid_api_key():
+        return {
+            "content": (
+                f"API key not configured for provider '{cfg.llm.provider}'. "
+                "Set the environment variable or add the key in Model Config."
+            ),
+            "reasoning_content": "",
+        }
+
     api_messages = _prepare_agent_context(conv, msg_content, project, cfg, cm, client, docs)
 
     max_rounds = 20
+    max_repair_attempts = 2
+    repair_count = 0
+    tool_calls_used = 0
+    consecutive_failures = 0
+    run_task_state = {
+        "seen": False,
+        "project": "",
+        "task": "",
+        "intent": "",
+        "workflow_started": False,
+        "status": "",
+        "recovery_used": False,
+    }
     for _ in range(max_rounds):
         try:
             resp = client.complete_with_tools(messages=api_messages, tools=TOOLS)
         except Exception as e:
-            if _is_reasoning_handoff_error(e):
+            if _is_reasoning_handoff_error(e) and repair_count < max_repair_attempts:
+                repair_count += 1
                 resp, repaired, retry_error = _retry_after_reasoning_handoff_repair(client, api_messages)
-                if resp is None:
-                    return {"content": f"Error calling LLM: {retry_error or e}", "reasoning_content": ""}
-                api_messages = repaired
+                if resp is not None:
+                    api_messages = repaired
+                    continue
+                # Exhausted repair attempts
+                return {
+                    "content": (
+                        f"Error calling LLM after {max_repair_attempts} recovery attempts: {retry_error or e}. "
+                        "Try resetting the conversation or checking the API configuration."
+                    ),
+                    "reasoning_content": "",
+                }
             else:
-                return {"content": f"Error calling LLM: {e}", "reasoning_content": ""}
+                return {
+                    "content": f"Error calling LLM: {e}",
+                    "reasoning_content": "",
+                }
 
         if resp.tool_calls:
             # Add assistant message with tool_calls BEFORE tool results (API requirement)
@@ -790,19 +1658,92 @@ async def _run_agent_loop(
             api_messages.append(assistant_msg)
             conv.append(assistant_msg)
             for tc in resp.tool_calls:
-                result = _execute_tool(tc.function_name, tc.arguments, cfg, cm)
-                result = _truncate_tool_result(result)
+                if tc.function_name == "run_task":
+                    guard_result, current_intent = _guard_run_task_call(project, run_task_state, tc.arguments)
+                    if guard_result:
+                        try:
+                            result = _build_tool_envelope("run_task", guard_result)
+                            tool_calls_used = _enforce_tool_call_budget("run_task", tool_calls_used)
+                        except AgentToolLimitError as e:
+                            return {
+                                "content": str(e),
+                                "reasoning_content": "",
+                            }
+                    else:
+                        if run_task_state["seen"] and run_task_state["status"] in {"failed", "missing_info", "no_final"}:
+                            run_task_state["recovery_used"] = True
+                        run_task_state.update({
+                            "seen": True,
+                            "project": tc.arguments.get("project", ""),
+                            "task": tc.arguments.get("task", ""),
+                            "intent": current_intent,
+                            "workflow_started": False,
+                            "status": "started",
+                        })
+                        try:
+                            result, tool_calls_used = await _execute_tool_with_limits(
+                                tc.function_name,
+                                tc.arguments,
+                                cfg,
+                                cm,
+                                used_calls=tool_calls_used,
+                            )
+                            data = result.data if isinstance(result.data, dict) else {}
+                            if isinstance(data, dict):
+                                run_task_state["status"] = "completed" if data.get("success") else "failed"
+                                if data.get("mode") == "plan" and not data.get("success"):
+                                    run_task_state["status"] = "missing_info"
+                        except (AgentToolLimitError, AgentToolTimeoutError) as e:
+                            return {
+                                "content": str(e),
+                                "reasoning_content": "",
+                            }
+                elif tc.function_name == "init_project" and _is_active_project_context(project):
+                    try:
+                        result = _build_tool_envelope("init_project", _build_active_project_init_block_result(project, tc.arguments))
+                        tool_calls_used = _enforce_tool_call_budget("init_project", tool_calls_used)
+                    except AgentToolLimitError as e:
+                        return {
+                            "content": str(e),
+                            "reasoning_content": "",
+                        }
+                else:
+                    try:
+                        result, tool_calls_used = await _execute_tool_with_limits(
+                            tc.function_name,
+                            tc.arguments,
+                            cfg,
+                            cm,
+                            used_calls=tool_calls_used,
+                        )
+                    except (AgentToolLimitError, AgentToolTimeoutError) as e:
+                        return {
+                            "content": str(e),
+                            "reasoning_content": "",
+                        }
+                if _is_tool_result_failure(result):
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_CONSECUTIVE_TOOL_FAILURES:
+                        return {
+                            "content": _build_consecutive_failure_limit_message(consecutive_failures),
+                            "reasoning_content": "",
+                        }
+                else:
+                    consecutive_failures = 0
+                ok, summary = _format_tool_result_summary(tc.function_name, tc.arguments, result)
+                _agent_log.info("%s → %s", tc.function_name, summary) if ok else _agent_log.warning("%s → %s", tc.function_name, summary)
+                tool_content = _serialize_tool_content_for_llm(result)
                 tool_msg = {
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": result,
+                    "content": tool_content,
                 }
                 api_messages.append(tool_msg)
                 conv.append({
                     "id": str(uuid.uuid4()),
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": result,
+                    "content": tool_content,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 })
         else:
@@ -855,11 +1796,37 @@ async def _run_agent_loop_stream(
     client: Any,
     docs: list | None = None,
 ):
+    # Pre-flight API key check to prevent confusing hangs downstream
+    if hasattr(client, "has_valid_api_key") and not client.has_valid_api_key():
+        yield {
+            "event": "error",
+            "data": json.dumps({
+                "error": (
+                    f"API key not configured for provider '{cfg.llm.provider}'. "
+                    "Set the environment variable or add the key in Model Config."
+                )
+            }),
+        }
+        return
+
     api_messages = _prepare_agent_context(conv, msg_content, project, cfg, cm, client, docs)
 
     max_rounds = 20
+    max_repair_attempts = 2
+    repair_count = 0
+    consecutive_failures = 0
     final_content = ""
     final_reasoning = ""
+    tool_calls_used = 0
+    run_task_state = {
+        "seen": False,
+        "project": "",
+        "task": "",
+        "intent": "",
+        "workflow_started": False,
+        "status": "",
+        "recovery_used": False,
+    }
     for _ in range(max_rounds):
         round_content = ""
         round_reasoning = ""
@@ -879,15 +1846,33 @@ async def _run_agent_loop_stream(
                     collected_args += event.get("arguments", "")
                     yield {"event": "tool_call", "data": json.dumps({"tool_call": event["name"]})}
         except Exception as e:
-            if _is_reasoning_handoff_error(e):
-                repaired = _repair_messages_for_reasoning_handoff(api_messages, aggressive=False)
-                if repaired == api_messages:
-                    repaired = _repair_messages_for_reasoning_handoff(api_messages, aggressive=True)
+            if _is_reasoning_handoff_error(e) and repair_count < max_repair_attempts:
+                repair_count += 1
+                aggressive = repair_count > 1
+                repaired = _repair_messages_for_reasoning_handoff(api_messages, aggressive=aggressive)
                 if repaired != api_messages:
                     api_messages = repaired
-                    yield {"event": "warning", "data": json.dumps({"warning": "Recovered from stale reasoning context and retried."})}
-                    continue
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                yield {"event": "reset_output", "data": json.dumps({"reason": "reasoning_handoff_retry"})}
+                yield {
+                    "event": "warning",
+                    "data": json.dumps({
+                        "warning": (
+                            f"Recovered from stale reasoning context and retried "
+                            f"(attempt {repair_count}/{max_repair_attempts})."
+                        )
+                    }),
+                }
+                continue
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "error": str(e),
+                    "detail": (
+                        "The assistant encountered an error. If this persists, "
+                        "try resetting the conversation or checking the API key configuration."
+                    ),
+                }),
+            }
             return
 
         if collected_tc_name:
@@ -911,23 +1896,100 @@ async def _run_agent_loop_stream(
             ast_msg["created_at"] = datetime.now(timezone.utc).isoformat()
             api_messages.append(ast_msg)
             conv.append(ast_msg)
-            yield {"event": "tool_running", "data": json.dumps({"tool": collected_tc_name})}
-            result = _execute_tool(collected_tc_name, args, cfg, cm)
-            result = _truncate_tool_result(result)
+            try:
+                tool_calls_used = _enforce_tool_call_budget(collected_tc_name, tool_calls_used)
+            except AgentToolLimitError as e:
+                yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                return
+            yield {
+                "event": "tool_running",
+                "data": json.dumps(_build_tool_running_payload(collected_tc_name, args), ensure_ascii=False),
+            }
+            try:
+                if collected_tc_name == "run_task":
+                    guard_result, current_intent = _guard_run_task_call(project, run_task_state, args)
+                    if guard_result:
+                        result = _build_tool_envelope("run_task", guard_result)
+                    else:
+                        if run_task_state["seen"] and run_task_state["status"] in {"failed", "missing_info", "no_final"}:
+                            run_task_state["recovery_used"] = True
+                        run_task_state.update({
+                            "seen": True,
+                            "project": args.get("project", ""),
+                            "task": args.get("task", ""),
+                            "intent": current_intent,
+                            "workflow_started": False,
+                            "status": "started",
+                        })
+                        stream_runner = _execute_run_task_stream(args, cfg, cm)
+                        final_result = None
+                        try:
+                            while True:
+                                workflow_event = await stream_runner.__anext__()
+                                if workflow_event.get("type") == "workflow_started":
+                                    run_task_state["workflow_started"] = True
+                                if workflow_event.get("type") in {"workflow_finished", "workflow_failed"}:
+                                    payload = workflow_event.get("payload", {}) or {}
+                                    if isinstance(payload.get("result"), dict):
+                                        final_result = payload["result"]
+                                yield {
+                                    "event": workflow_event.get("type", "workflow_warning"),
+                                    "data": json.dumps({
+                                        key: value for key, value in workflow_event.items() if key != "type"
+                                    }, ensure_ascii=False),
+                                }
+                        except StopAsyncIteration:
+                            final_result = final_result or {
+                                "success": False,
+                                "mode": "execute",
+                                "message": "run_task stream ended without a final result.",
+                            }
+                            run_task_state["status"] = "completed" if final_result.get("success") else "failed"
+                            if final_result.get("mode") == "plan" and not final_result.get("success"):
+                                run_task_state["status"] = "missing_info"
+                            if final_result.get("message") == "run_task stream ended without a final result.":
+                                run_task_state["status"] = "no_final"
+                            result = _build_tool_envelope("run_task", final_result)
+                elif collected_tc_name == "init_project" and _is_active_project_context(project):
+                    result = _build_tool_envelope("init_project", _build_active_project_init_block_result(project, args))
+                else:
+                    result = await _execute_tool_with_timeout(collected_tc_name, args, cfg, cm)
+            except AgentToolTimeoutError as e:
+                yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                return
+            if _is_tool_result_failure(result):
+                consecutive_failures += 1
+                if consecutive_failures >= MAX_CONSECUTIVE_TOOL_FAILURES:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"error": _build_consecutive_failure_limit_message(consecutive_failures)}),
+                    }
+                    return
+            else:
+                consecutive_failures = 0
             tool_msg = {
                 "role": "tool",
                 "tool_call_id": collected_tc_id,
-                "content": result,
+                "content": _serialize_tool_content_for_llm(result),
             }
             api_messages.append(tool_msg)
             conv.append({
                 "id": str(uuid.uuid4()),
                 "role": "tool",
                 "tool_call_id": collected_tc_id,
-                "content": result,
+                "content": _serialize_tool_content_for_llm(result),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
-            yield {"event": "tool_result", "data": json.dumps({"tool": collected_tc_name, "result": result})}
+            yield {
+                "event": "tool_result",
+                "data": json.dumps({"tool": collected_tc_name, "result": _serialize_tool_data(result.data)}, ensure_ascii=False),
+            }
+            ok, summary = _format_tool_result_summary(collected_tc_name, args, result)
+            _agent_log.info("%s → %s", collected_tc_name, summary) if ok else _agent_log.warning("%s → %s", collected_tc_name, summary)
+            yield {
+                "event": "log",
+                "data": json.dumps({"success": ok, "message": summary, "tool": collected_tc_name}, ensure_ascii=False),
+            }
         else:
             final_content = round_content
             final_reasoning = round_reasoning
@@ -1014,6 +2076,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         msg_content = body.get("message", "") or body.get("content", "")
         stream = body.get("stream", False)
         conv = _get_conv(project)
+        normalized_project = _normalize_project_name(project)
 
         user_msg = {
             "id": str(uuid.uuid4()),
@@ -1023,14 +2086,62 @@ def create_app(config_path: str | None = None) -> FastAPI:
         }
         conv.append(user_msg)
         docs = body.get("docs", []) or []
+        project_payload = _parse_project_creation_request(msg_content) if not normalized_project and not docs else None
+        if project_payload and project_payload.get("error"):
+            assistant_msg = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": project_payload["error"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            conv.append(assistant_msg)
+            _save_conv(project)
+            if stream:
+                async def _error_stream():
+                    yield {"event": "token", "data": json.dumps({"token": project_payload["error"]})}
+                    yield {"event": "done", "data": "[DONE]"}
+                return EventSourceResponse(_error_stream())
+            return {"message": assistant_msg, "project": project}
+
+        if project_payload:
+            if stream:
+                return EventSourceResponse(
+                    _stream_project_template_creation(conv, project_payload, cfg, cm, project)
+                )
+            try:
+                created = _create_project_from_template(project_payload, cfg, cm)
+            except Exception as exc:
+                assistant_msg = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": str(exc),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                conv.append(assistant_msg)
+                _save_conv(project)
+                return {"message": assistant_msg, "project": project}
+            summary = _build_project_creation_summary(project_payload, project_payload["name"].strip())
+            assistant_msg = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": summary,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            conv.append(assistant_msg)
+            _save_conv(project)
+            return {
+                "message": assistant_msg,
+                "project": project,
+                "created_project": created.model_dump(mode="json") if hasattr(created, "model_dump") else created,
+            }
 
         from luxar.core.llm_client import LLMClient
         client = LLMClient(cfg)
 
         if stream:
-            return EventSourceResponse(_run_agent_loop_stream(conv, msg_content, project, cfg, cm, client, docs))
+            return EventSourceResponse(_run_agent_loop_stream(conv, msg_content, normalized_project, cfg, cm, client, docs))
         else:
-            reply = await _run_agent_loop(conv, msg_content, project, cfg, cm, client, docs)
+            reply = await _run_agent_loop(conv, msg_content, normalized_project, cfg, cm, client, docs)
             assistant_msg = {
                 "id": str(uuid.uuid4()),
                 "role": "assistant",

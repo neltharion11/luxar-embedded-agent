@@ -754,22 +754,39 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function getTaskArtifact(taskResult, key) {
+  if (!taskResult || typeof taskResult !== 'object') return {};
+  if (taskResult.artifacts && typeof taskResult.artifacts === 'object' && taskResult.artifacts[key]) {
+    return taskResult.artifacts[key];
+  }
+  return taskResult[key] || {};
+}
+
 function renderTaskResultCards(taskResult) {
   if (!taskResult || typeof taskResult !== 'object') return '';
   var cards = [];
-  if (taskResult.project && taskResult.project.name) {
+  var project = getTaskArtifact(taskResult, 'project');
+  var workflow = getTaskArtifact(taskResult, 'workflow');
+  var driverPipeline = getTaskArtifact(taskResult, 'driver_pipeline');
+  if (project && project.name) {
     cards.push(
       '<div class="chat-result-card"><h4>Project</h4><ul>' +
-      '<li><span>Name:</span> ' + escapeHtml(taskResult.project.name || '') + '</li>' +
-      '<li><span>MCU:</span> ' + escapeHtml(taskResult.project.mcu || '-') + '</li>' +
-      '<li><span>Platform:</span> ' + escapeHtml(taskResult.project.platform || '-') + '</li>' +
+      '<li><span>Name:</span> ' + escapeHtml(project.name || '') + '</li>' +
+      '<li><span>MCU:</span> ' + escapeHtml(project.mcu || '-') + '</li>' +
+      '<li><span>Platform:</span> ' + escapeHtml(project.platform || '-') + '</li>' +
       '</ul></div>'
     );
   }
-  if (taskResult.workflow && taskResult.workflow.summary) {
+  if (workflow && workflow.summary) {
     cards.push(
       '<div class="chat-result-card"><h4>Workflow</h4><ul><li>' +
-      escapeHtml(taskResult.workflow.summary) +
+      escapeHtml(workflow.summary) +
+      '</li></ul></div>'
+    );
+  } else if (driverPipeline && (driverPipeline.error || driverPipeline.chip || driverPipeline.interface)) {
+    cards.push(
+      '<div class="chat-result-card"><h4>Driver</h4><ul><li>' +
+      escapeHtml(driverPipeline.error || ((driverPipeline.chip || '') + ' ' + (driverPipeline.interface || '')).trim()) +
       '</li></ul></div>'
     );
   } else if (taskResult.message) {
@@ -790,6 +807,35 @@ function extractProjectNameFromToolResult(toolName, resultText) {
   } catch (e) {
     return null;
   }
+}
+
+function renderStreamMarkdown(target, markdown, container) {
+  target.innerHTML = marked.parse(markdown);
+  target.querySelectorAll('pre code').forEach(function(block) {
+    try { hljs.highlightElement(block); } catch(e) {}
+  });
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+function appendWorkflowLine(state, chunk) {
+  if (!chunk) return state;
+  var workflow = chunk.workflow || 'workflow';
+  var step = chunk.step || '';
+  var status = chunk.status || '';
+  var message = chunk.message || '';
+  var prefix = '`[' + workflow + (step ? ':' + step : '') + ']`';
+  var line = prefix;
+  if (status) line += ' ' + status;
+  if (message) line += ' - ' + message;
+  return state + '\n\n' + line + '\n\n';
+}
+
+function formatToolRunningLine(chunk) {
+  if (!chunk || !chunk.tool) return '';
+  if (chunk.tool === 'run_task' && chunk.task) {
+    return '_' + t('chat.toolRunning') + ': ' + chunk.task + '..._';
+  }
+  return '_' + t('chat.toolRunning') + ': ' + chunk.tool + '..._';
 }
 
 async function loadSidebarProjects() {
@@ -1161,6 +1207,7 @@ async function sendMessage() {
   bubbleDiv.appendChild(typingDiv);
   container.appendChild(bubbleDiv);
   var streamContent = '';
+  var workflowMode = false;
   var statusController = createChatStatusController(typingDiv);
   statusController.setState('thinking');
 
@@ -1201,11 +1248,7 @@ async function sendMessage() {
                 statusController.markEvent();
                 statusController.setState('streaming');
                 streamContent += token;
-                mdDiv.innerHTML = marked.parse(streamContent);
-                mdDiv.querySelectorAll('pre code').forEach(function(block) {
-                  try { hljs.highlightElement(block); } catch(e) {}
-                });
-                container.scrollTop = container.scrollHeight;
+                renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
           }
@@ -1230,11 +1273,7 @@ async function sendMessage() {
               if (token) {
                 statusController.setState('streaming');
                 streamContent += token;
-                mdDiv.innerHTML = marked.parse(streamContent);
-                mdDiv.querySelectorAll('pre code').forEach(function(block) {
-                  try { hljs.highlightElement(block); } catch(e) {}
-                });
-                container.scrollTop = container.scrollHeight;
+                renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
           } else if (currentEvent === 'result') {
@@ -1253,32 +1292,53 @@ async function sendMessage() {
             try {
               var chunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: chunk.tool_call || ''});
-              if (chunk.tool_call) {
-                streamContent += '\n\n_' + t('chat.toolRunning') + ': ' + chunk.tool_call + '..._\n\n';
-                mdDiv.innerHTML = marked.parse(streamContent);
-                container.scrollTop = container.scrollHeight;
-              }
             } catch(e) {}
           } else if (currentEvent === 'tool_running') {
             try {
               var runningChunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: runningChunk.tool || ''});
+              if (!(workflowMode && runningChunk.tool === 'run_task')) {
+                var toolLine = formatToolRunningLine(runningChunk);
+                if (toolLine) {
+                  streamContent += '\n\n' + toolLine + '\n\n';
+                  renderStreamMarkdown(mdDiv, streamContent, container);
+                }
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'workflow_started' || currentEvent === 'workflow_step_started' || currentEvent === 'workflow_step_finished' || currentEvent === 'workflow_warning' || currentEvent === 'workflow_failed' || currentEvent === 'workflow_finished') {
+            try {
+              var workflowChunk = JSON.parse(dataStr);
+              workflowMode = true;
+              streamContent = appendWorkflowLine(streamContent, workflowChunk);
+              renderStreamMarkdown(mdDiv, streamContent, container);
             } catch(e) {}
           } else if (currentEvent === 'warning') {
             try {
               var warningChunk = JSON.parse(dataStr);
               if (warningChunk.warning) {
                 streamContent += '\n\n_' + t('chat.recovering') + ': ' + warningChunk.warning + '_\n\n';
-                mdDiv.innerHTML = marked.parse(streamContent);
-                container.scrollTop = container.scrollHeight;
+                renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
+          } else if (currentEvent === 'log') {
+            try {
+              var logData = JSON.parse(dataStr);
+              if (logData.message) {
+                var icon = logData.success ? '\u2705' : '\u274C';
+                streamContent += '\n\n' + icon + ' ' + logData.message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '\n\n';
+                renderStreamMarkdown(mdDiv, streamContent, container);
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'reset_output') {
+            streamContent = '';
+            workflowMode = false;
+            mdDiv.innerHTML = '';
+            resultDiv.innerHTML = '';
           } else if (currentEvent === 'error') {
             try {
               var chunk = JSON.parse(dataStr);
               streamContent += '\n\n_' + t('chat.error') + ': ' + chunk.error + '_\n\n';
-              mdDiv.innerHTML = marked.parse(streamContent);
-              container.scrollTop = container.scrollHeight;
+              renderStreamMarkdown(mdDiv, streamContent, container);
             } catch(e) {}
             statusController.finish('error');
           } else if (currentEvent === 'done') {

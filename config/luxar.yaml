@@ -16,6 +16,12 @@ llm: {api_key_env: DEEPSEEK_API_KEY, base_url:
 monitor: {default_baudrate: 115200, default_timeout: 10}
 platform: {default_platform: stm32cubemx, default_runtime: baremetal}
 review:
+  auto_fix_enabled: true
+  auto_fix_rule_ids: [EMB-003, EMB-004]
+  fix_max_tokens: 8192
+  fix_retry_attempts: 1
+  fix_thinking_enabled: false
+  fix_timeout_sec: 30
   enabled: true
   fail_on_warning: false
   layers: {custom_rules: true, semantic_review: true, static_analysis: true}

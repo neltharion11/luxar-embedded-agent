@@ -11,11 +11,22 @@ class FirmwareLibraryManager:
     def resolve_stm32_package(self, package: str) -> Path | None:
         candidate = Path(package)
         if candidate.exists():
-            return candidate.resolve()
+            resolved = candidate.resolve()
+            if self._is_placeholder_package(resolved):
+                replacement = self._find_versioned_package(resolved.name)
+                return replacement or resolved
+            return resolved
 
         named = self.firmware_root / "stm32" / package
         if named.exists():
-            return named.resolve()
+            resolved = named.resolve()
+            if self._is_placeholder_package(resolved):
+                replacement = self._find_versioned_package(package)
+                return replacement or resolved
+            return resolved
+        replacement = self._find_versioned_package(package)
+        if replacement is not None:
+            return replacement
         return None
 
     def list_stm32_packages(self) -> list[str]:
@@ -46,7 +57,33 @@ class FirmwareLibraryManager:
             "has_drivers": drivers_dir.exists(),
             "has_cmsis": cmsis_dir.exists(),
             "has_hal_driver": bool(hal_candidates),
+            "is_placeholder": self._is_placeholder_package(package),
+            "validation_errors": self.validate_stm32_package(package),
         }
+
+    def validate_stm32_package(self, package_path: str | Path) -> list[str]:
+        package = Path(package_path).resolve()
+        errors: list[str] = []
+        if self._is_placeholder_package(package):
+            errors.append(f"Firmware package '{package.name}' is a placeholder; use a real STM32Cube package.")
+        required_files = [
+            package / "Drivers" / "CMSIS" / "Core" / "Include" / "core_cm3.h",
+            package / "Drivers" / "CMSIS" / "Device" / "ST" / "STM32F1xx" / "Include" / "stm32f1xx.h",
+            package / "Drivers" / "STM32F1xx_HAL_Driver" / "Inc" / "stm32f1xx_hal.h",
+            package / "Drivers" / "STM32F1xx_HAL_Driver" / "Inc" / "stm32f1xx_hal_gpio.h",
+            package / "Drivers" / "STM32F1xx_HAL_Driver" / "Src" / "stm32f1xx_hal.c",
+        ]
+        for path in required_files:
+            if not path.exists():
+                errors.append(f"Required firmware file missing: {path}")
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")[:512]
+            except Exception:
+                text = ""
+            if "Placeholder" in text or "placeholder" in text:
+                errors.append(f"Required firmware file is a placeholder: {path}")
+        return errors
 
     def stage_stm32_firmware_package(
         self,
@@ -57,6 +94,10 @@ class FirmwareLibraryManager:
         package = Path(package_path).resolve()
         project = Path(project_path).resolve()
         created: list[str] = []
+
+        validation_errors = self.validate_stm32_package(package)
+        if validation_errors:
+            raise ValueError("; ".join(validation_errors))
 
         drivers_src = package / "Drivers"
         if not drivers_src.exists():
@@ -111,6 +152,28 @@ class FirmwareLibraryManager:
                 created.append(str(dst))
 
         return created
+
+    def _find_versioned_package(self, package: str) -> Path | None:
+        root = self.firmware_root / "stm32"
+        if not root.exists():
+            return None
+        prefix = package.rstrip("\\/")
+        candidates = sorted(
+            [path for path in root.iterdir() if path.is_dir() and path.name.startswith(f"{prefix}_V")],
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        return candidates[0].resolve() if candidates else None
+
+    def _is_placeholder_package(self, package: Path) -> bool:
+        readme = package / "README.md"
+        if not readme.exists():
+            return False
+        try:
+            text = readme.read_text(encoding="utf-8", errors="ignore").lower()
+        except Exception:
+            return False
+        return "placeholder" in text and "replace this folder" in text
 
     def collect_stm32_build_context(self, package_path: str | Path, family: str) -> dict:
         package = Path(package_path).resolve()

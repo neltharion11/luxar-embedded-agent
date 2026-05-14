@@ -42,10 +42,11 @@ class DebugLoop:
         with ProjectLock(str(project)):
             build_result = self._run_build(context, clean=clean)
             if not build_result.success:
+                build_output = self._combined_build_output(build_result)
                 return DebugLoopResult(
                     success=False,
                     stage="build",
-                    diagnosis=self._diagnose_build_failure(build_result.stderr),
+                    diagnosis=self._diagnose_build_failure(build_output),
                     build_result=build_result,
                     snapshot_path=context["snapshot_path"],
                     log_dir=context["log_dir"],
@@ -189,6 +190,15 @@ class DebugLoop:
             return "Build failed during link. Check startup files, linker script, or missing source files."
         return "Build failed. Inspect stderr for compiler or linker diagnostics."
 
+    def _combined_build_output(self, build_result) -> str:
+        return "\n".join(
+            part for part in [
+                getattr(build_result, "stdout", "") or "",
+                getattr(build_result, "stderr", "") or "",
+                "\n".join(getattr(build_result, "errors", []) or []),
+            ] if part.strip()
+        )
+
     def _classify_build_failure(self, stderr: str) -> str:
         lowered = stderr.lower()
         if "cmake" in lowered and "not found" in lowered:
@@ -218,7 +228,7 @@ class DebugLoop:
 
     def _attempt_build_fix(self, context: dict, build_result) -> dict[str, list[str]]:
         project = context["project"]
-        reports = self._extract_build_error_reports(project, build_result.stderr)
+        reports = self._extract_build_error_reports(project, self._combined_build_output(build_result))
         if not reports:
             return {"actions": [], "fixed_files": []}
 
@@ -262,7 +272,7 @@ class DebugLoop:
         if not created_files:
             return {"actions": [], "fixed_files": []}
 
-        link_failure = self._classify_link_failure(build_result.stderr)
+        link_failure = self._classify_link_failure(self._combined_build_output(build_result))
         if link_failure == "linker_script_missing":
             message = "Restored missing STM32 linker/runtime scaffold files before retrying the link step."
         elif link_failure == "startup_symbol_missing":

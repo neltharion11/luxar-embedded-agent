@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from luxar.core.driver_artifacts import copy_driver_artifacts
 from luxar.core.driver_library import DriverLibrary
 from luxar.core.knowledge_base import KnowledgeBase
 from luxar.models.schemas import DriverMetadata
@@ -31,11 +32,11 @@ class AssetReuseAdvisor:
         keywords = [chip.strip(), device.strip(), vendor.strip(), protocol, register_summary.strip()]
         query = " ".join(item for item in keywords if item)
 
-        driver_matches = self.driver_library.search_drivers(
-            keyword=device.strip() or chip.strip(),
+        driver_matches = self._search_driver_matches(
+            chip=chip,
+            device=device,
             protocol=protocol,
-            vendor=vendor.strip(),
-            limit=5,
+            vendor=vendor,
         )
         knowledge_matches = self.knowledge_base.search(query=query, limit=3) if query else []
         skill_path = self.skill_root / "protocols" / interface.strip().lower() / "SKILL.md"
@@ -92,15 +93,11 @@ class AssetReuseAdvisor:
         threshold: float = REUSE_CONFIDENCE_THRESHOLD,
     ) -> DriverMetadata | None:
         if driver_matches is None:
-            protocol = interface.strip().upper()
-            normalized_device = device.strip().lower()
-            normalized_chip = chip.strip().lower()
-            normalized_vendor = vendor.strip().lower()
-            driver_matches = self.driver_library.search_drivers(
-                keyword=normalized_device or normalized_chip,
-                protocol=protocol,
-                vendor=normalized_vendor,
-                limit=5,
+            driver_matches = self._search_driver_matches(
+                chip=chip,
+                device=device,
+                protocol=interface.strip().upper(),
+                vendor=vendor,
             )
         candidate, confidence = self._score_candidates(
             chip=chip,
@@ -156,6 +153,43 @@ class AssetReuseAdvisor:
 
         return best_candidate, best_score
 
+    def _search_driver_matches(
+        self,
+        *,
+        chip: str,
+        device: str,
+        protocol: str,
+        vendor: str,
+        limit: int = 5,
+    ) -> list[DriverMetadata]:
+        normalized_vendor = vendor.strip().lower()
+        keywords: list[str] = []
+        for item in (device.strip().lower(), chip.strip().lower()):
+            if item and item not in keywords:
+                keywords.append(item)
+
+        combined: list[DriverMetadata] = []
+        seen_paths: set[str] = set()
+
+        def collect(search_vendor: str) -> None:
+            for keyword in keywords:
+                for item in self.driver_library.search_drivers(
+                    keyword=keyword,
+                    protocol=protocol,
+                    vendor=search_vendor,
+                    limit=limit,
+                ):
+                    resolved_path = str(Path(item.path).resolve())
+                    if resolved_path in seen_paths:
+                        continue
+                    seen_paths.add(resolved_path)
+                    combined.append(item)
+
+        collect(normalized_vendor)
+        if not combined and normalized_vendor:
+            collect("")
+        return combined[:limit]
+
     def materialize_reused_driver(
         self,
         candidate: DriverMetadata,
@@ -171,7 +205,11 @@ class AssetReuseAdvisor:
 
         target_header = resolved_output / f"{target_stem}.h"
         target_source = resolved_output / f"{target_stem}.c"
-        shutil.copy2(source_header, target_header)
-        shutil.copy2(source_source, target_source)
+        copy_driver_artifacts(
+            source_header=source_header,
+            source_source=source_source,
+            target_header=target_header,
+            target_source=target_source,
+        )
         return str(target_header), str(target_source)
 

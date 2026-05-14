@@ -135,6 +135,39 @@ class DriverRequirement(BaseModel):
     rationale: str = ""
 
 
+class PeripheralCapability(BaseModel):
+    interface: str
+    instance: str = ""
+    mode: str = ""
+    pins: dict[str, str] = Field(default_factory=dict)
+    clock_source: str = ""
+    frequency: str = ""
+    dma: list[str] = Field(default_factory=list)
+    irq: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    owner: str = "firmware"
+    notes: str = ""
+
+
+class DriverBinding(BaseModel):
+    device: str
+    driver: str = ""
+    transport: str = ""
+    peripheral: str = ""
+    pins: dict[str, str] = Field(default_factory=dict)
+    callbacks: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+class BuildManifest(BaseModel):
+    core_sources: list[str] = Field(default_factory=list)
+    app_sources: list[str] = Field(default_factory=list)
+    hal_sources: list[str] = Field(default_factory=list)
+    driver_sources: list[str] = Field(default_factory=list)
+    include_dirs: list[str] = Field(default_factory=list)
+    compile_definitions: list[str] = Field(default_factory=list)
+
+
 class PinRequirement(BaseModel):
     name: str
     role: str = ""
@@ -180,6 +213,12 @@ class ProjectPlan(BaseModel):
     requirement_summary: str
     features: list[str] = Field(default_factory=list)
     needed_drivers: list[DriverRequirement] = Field(default_factory=list)
+    internal_peripherals: list[PeripheralCapability] = Field(default_factory=list)
+    external_devices: list[DriverRequirement] = Field(default_factory=list)
+    board_features: list[PeripheralCapability] = Field(default_factory=list)
+    middleware_services: list[str] = Field(default_factory=list)
+    transport_bindings: list[DriverBinding] = Field(default_factory=list)
+    build_manifest: Optional[BuildManifest] = None
     peripheral_hints: list[str] = Field(default_factory=list)
     cubemx_or_firmware_actions: list[str] = Field(default_factory=list)
     app_behavior_summary: str = ""
@@ -261,6 +300,26 @@ class WorkflowRunResult(BaseModel):
     summary: str = ""
     output: dict = Field(default_factory=dict)
     completed_at: datetime = Field(default_factory=datetime.now)
+
+
+class TaskArtifacts(BaseModel):
+    project: dict = Field(default_factory=dict)
+    workflow: dict = Field(default_factory=dict)
+    driver_pipeline: dict = Field(default_factory=dict)
+    build_result: dict = Field(default_factory=dict)
+    report: dict = Field(default_factory=dict)
+    fixed_files: list[str] = Field(default_factory=list)
+    driver_request: dict = Field(default_factory=dict)
+
+
+class TaskRunResult(BaseModel):
+    success: bool
+    mode: str
+    intent: str
+    execution_plan: dict = Field(default_factory=dict)
+    message: str = ""
+    engineering_context: dict = Field(default_factory=dict)
+    artifacts: TaskArtifacts = Field(default_factory=TaskArtifacts)
 
 
 class TaskIntent(BaseModel):

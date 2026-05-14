@@ -43,7 +43,13 @@ class ReviewSection(BaseModel):
     enabled: bool = True
     layers: ReviewLayers = Field(default_factory=ReviewLayers)
     max_fix_iterations: int = 3
+    fix_timeout_sec: int = 30
+    fix_retry_attempts: int = 1
+    fix_max_tokens: int = 8192
+    fix_thinking_enabled: bool = False
     fail_on_warning: bool = False
+    auto_fix_enabled: bool = True
+    auto_fix_rule_ids: list[str] = Field(default_factory=lambda: ["EMB-003", "EMB-004"])
 
 
 class PlatformSection(BaseModel):

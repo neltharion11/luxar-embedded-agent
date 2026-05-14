@@ -17,7 +17,7 @@ VERIFICATION_GATE_APP = """
 [VERIFICATION GATE — BEFORE returning code, verify ALL of the following:]
 1. `app_main_init(void)` declared in header AND implemented in source
 2. `app_main_loop(void)` declared in header AND implemented in source
-3. No hardcoded HAL handles (hspi1, hi2c1, huart1) — use injection or TODO instead
+3. No hardcoded HAL handles (hspi1, hi2c1, huart1, huart2, htim3, etc.) — use the luxar_hardware layer (luxar_uart_write, luxar_delay_ms, etc.) or mark with TODO
 4. No `malloc`, `free`, or unsolicited `printf`
 5. All exported functions have `/** ... */` Doxygen comments
 6. When a pin/port is unknown, mark it with `/* TODO(luxar): configure XXX pin */`
@@ -30,7 +30,7 @@ VERIFICATION_GATE_DRIVER = """
 [VERIFICATION GATE — BEFORE returning code, verify ALL of the following:]
 1. Header declares the driver's init/read/write/deinit functions with Doxygen
 2. Source implements ALL functions declared in the header
-3. No direct HAL handle references (hspi1, hi2c1, huart1)
+3. No direct HAL handle references (hspi\\d+, hi2c\\d+, huart\\d+, htim\\d+)
 4. All HAL operations go through injected function pointers or interface struct
 5. No `malloc` / `free` / `printf`
 6. All pointer parameters have NULL checks at function entry
@@ -64,15 +64,15 @@ UART_DIAGNOSTIC_REQUIREMENT = """
 [DIAGNOSTIC OUTPUT — every program MUST include UART debug output:]
 1. Print a boot banner with project name and MCU info on startup
 2. Print each initialization step with [OK] or [FAIL] status
-   Example: "SYSCLK: 8000000 Hz [OK]"
+   Example: "SYSCLK: 72000000 Hz [OK]"
    Example: "GPIOB: PB0 output [OK]"
-   Example: "SysTick: RELOAD=7999, check 10ms dt=10 [OK]"
+   Example: "SysTick: 1ms tick [OK]"
 3. In the main loop, print periodic status at meaningful intervals
-4. Use a lightweight uart_puts() / uart_putc() implementation
-   (no printf, no stdlib — bare-metal register writes to USART_DR)
+4. Use the LUXAR hardware layer for UART output:
+   - Call luxar_uart_write("your debug text") — this is the project's hardware abstraction
+   - luxar_uart_write() already handles UART init, baud rate (115200 8N1), and TX via USART2 (PA2/PA3)
+   - Do NOT reference huart2, HAL_UART_Transmit, or any HAL handles directly in app code
 5. If a hardware check fails (e.g., clock not ready, SysTick not ticking),
    print "[FAIL] <reason>" and either halt or retry
-6. Use USART2 (PA2 TX, PA3 RX) at 115200 8N1 as the default debug port
-   if the board has CH343P USB-serial converter
-This requirement applies to app_main.c. Driver code may omit UART.
+6. This requirement applies to app_main.c. Driver code may omit UART.
 """.strip()

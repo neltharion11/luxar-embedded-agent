@@ -16,6 +16,21 @@ from luxar.models.schemas import (
 
 
 class DriverPipelineTests(unittest.TestCase):
+    def test_resolve_output_dir_sanitizes_vendor_path_components(self) -> None:
+        config = AgentConfig()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline = DriverPipeline(config=config, project_root=tmpdir)
+            resolved = pipeline._resolve_output_dir(
+                interface="I2C",
+                chip="CH1116",
+                vendor="WiseChip / Sino Wealth",
+                device="OLED 128x64",
+            )
+
+            self.assertIn("wisechip sino wealth", str(resolved).lower())
+            self.assertTrue(str(resolved).lower().endswith("oled 128x64"))
+            self.assertNotIn(" / ", str(resolved))
+
     def test_pipeline_succeeds_when_initial_review_passes(self) -> None:
         config = AgentConfig()
 

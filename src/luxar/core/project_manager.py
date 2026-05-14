@@ -38,8 +38,16 @@ class ProjectManager:
         runtime: str = "baremetal",
         project_mode: str = "cubemx",
         firmware_package: str = "",
+        overwrite: bool = False,
     ) -> ProjectConfig:
         project_dir = self.workspace / name
+        metadata_path = project_dir / ".agent_project.json"
+        if metadata_path.exists() and not overwrite:
+            existing = ProjectConfig.model_validate_json(metadata_path.read_text(encoding="utf-8"))
+            raise FileExistsError(
+                f"Project '{name}' already exists (MCU={existing.mcu}). "
+                f"Use overwrite=True to recreate it, or continue working on the existing project."
+            )
         project_dir.mkdir(parents=True, exist_ok=True)
 
         for rel_dir in ("App", "App/Inc", "App/Src", "logs"):

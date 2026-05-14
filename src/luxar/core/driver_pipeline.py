@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from luxar.core.code_fixer import CodeFixer
@@ -146,10 +147,15 @@ class DriverPipeline:
             self.project_root
             / self.config.agent.driver_library
             / "generated"
-            / interface.lower()
-            / (vendor.strip().lower() or "generic")
-            / ((device.strip() or chip.strip()).lower())
+            / self._safe_path_component(interface, fallback="generic")
+            / self._safe_path_component(vendor, fallback="generic")
+            / self._safe_path_component(device or chip, fallback="generated_driver")
         ).resolve()
+
+    def _safe_path_component(self, value: str, fallback: str) -> str:
+        text = re.sub(r"[\\/:*?\"<>|]+", " ", (value or "").strip().lower())
+        text = re.sub(r"\s+", " ", text).strip(" .")
+        return text or fallback
 
     def _files_needing_fix(self, report: ReviewReport) -> list[str]:
         target_files: list[str] = []
