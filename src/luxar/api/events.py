@@ -1,0 +1,10 @@
+"""Named event constants for the vNext API surface."""
+
+PHASE_CHANGED = "phase_changed"
+SKILL_LOADED = "skill_loaded"
+LESSON_RECORDED = "lesson_recorded"
+SKILL_EXECUTION_SELECTED = "skill_execution_selected"
+SKILL_EXECUTION_COMPLETED = "skill_execution_completed"
+PROMOTION_CANDIDATE_CREATED = "promotion_candidate_created"
+PROMOTION_APPLIED = "promotion_applied"
+ESCALATION_TRIGGERED = "escalation_triggered"

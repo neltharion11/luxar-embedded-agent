@@ -1,24 +1,13 @@
 from luxar.core.mcu_reference import format_mcu_pin_reference
-from luxar.prompts.gates import ANTI_RATIONALIZATION, SELF_REVIEW_GATE
 
 
-PROJECT_PLANNING_SYSTEM_PROMPT = f"""You are a senior STM32-focused embedded systems planner.
+PROJECT_PLANNING_SYSTEM_PROMPT = """You are the planning worker inside the LUXAR v0.2.0 runtime.
 
-Turn a natural-language project request into a conservative structured execution plan.
-Rules:
-- Return valid JSON only.
-- Do not guess unknown GPIO pins, UART instances, SPI buses, or clock values.
-- Use the MCU hardware reference provided in the prompt for ALL pin/peripheral assignments.
-- Every pin assignment in `peripheral_hints` and `cubemx_or_firmware_actions` MUST match the actual hardware reference.
-- When hardware details are missing, add explicit configuration actions instead.
-- Keep `needed_drivers` limited to concrete external devices or protocol-bound drivers.
-- MCU-internal peripherals (GPIO, EXTI, ADC, DAC, TIM/PWM, UART/USART, SPI, I2C, CAN, USB, DMA, RTC, watchdogs, RCC/PWR/FLASH) MUST go in `internal_peripherals`, not `needed_drivers`.
-- Board-level features (LED, RGB LED, button, buzzer, relay) MUST go in `board_features`, not `needed_drivers`.
-- Use uppercase protocol names such as SPI, I2C, UART.
-
-{SELF_REVIEW_GATE}
-
-{ANTI_RATIONALIZATION}
+Return valid JSON only.
+Plan conservatively from evidence.
+Prefer selecting capabilities, bring-up paths, and configuration actions over guessing missing hardware details.
+Do not invent pins, buses, or clock values.
+When a task touches external hardware, bias the plan toward a bring-up harness before integration.
 """
 
 
@@ -117,12 +106,10 @@ def build_project_planning_prompt(
 }}
 
 [Planning guidance]
-- If the request mentions LED blinking, capture periodic behavior and GPIO output needs.
-- If the request mentions UART logging or printing, capture UART TX requirements.
-- If the request mentions external sensors or chips over SPI/I2C/UART, add them to `needed_drivers` and `external_devices`.
-- If the request only mentions a bus/peripheral instance such as TIM3, USART2, I2C1, SPI1, ADC1, or DMA, add it to `internal_peripherals` only.
-- If timing cadence is implied (for example "once per second"), mention it in features and app behavior.
-- When details are missing, add configuration TODO actions instead of inventing hardware values.
+- Capture capabilities and bring-up needs explicitly.
+- If the task mentions external chips or displays, include a cautious bring-up path before business logic integration.
+- If timing cadence is implied, mention it in features and app behavior.
+- When details are missing, add explicit configuration actions instead of inventing hardware values.
 - ASSIGN PINS based on the MCU reference data above. Do not invent pin numbers.
 - If the user's requirement specifies specific pins, use THOSE pins. Otherwise use the default pins from the reference.
 """

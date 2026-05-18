@@ -817,25 +817,10 @@ function renderStreamMarkdown(target, markdown, container) {
   if (container) container.scrollTop = container.scrollHeight;
 }
 
-function appendWorkflowLine(state, chunk) {
-  if (!chunk) return state;
-  var workflow = chunk.workflow || 'workflow';
-  var step = chunk.step || '';
-  var status = chunk.status || '';
-  var message = chunk.message || '';
-  var prefix = '`[' + workflow + (step ? ':' + step : '') + ']`';
-  var line = prefix;
-  if (status) line += ' ' + status;
-  if (message) line += ' - ' + message;
-  return state + '\n\n' + line + '\n\n';
-}
-
 function formatToolRunningLine(chunk) {
   if (!chunk || !chunk.tool) return '';
-  if (chunk.tool === 'run_task' && chunk.task) {
-    return '_' + t('chat.toolRunning') + ': ' + chunk.task + '..._';
-  }
-  return '_' + t('chat.toolRunning') + ': ' + chunk.tool + '..._';
+  var suffix = chunk.task ? chunk.task : chunk.tool;
+  return '_' + t('chat.toolRunning') + ': ' + suffix + '..._';
 }
 
 async function loadSidebarProjects() {
@@ -1207,7 +1192,6 @@ async function sendMessage() {
   bubbleDiv.appendChild(typingDiv);
   container.appendChild(bubbleDiv);
   var streamContent = '';
-  var workflowMode = false;
   var statusController = createChatStatusController(typingDiv);
   statusController.setState('thinking');
 
@@ -1297,19 +1281,44 @@ async function sendMessage() {
             try {
               var runningChunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: runningChunk.tool || ''});
-              if (!(workflowMode && runningChunk.tool === 'run_task')) {
-                var toolLine = formatToolRunningLine(runningChunk);
-                if (toolLine) {
-                  streamContent += '\n\n' + toolLine + '\n\n';
-                  renderStreamMarkdown(mdDiv, streamContent, container);
-                }
+              var toolLine = formatToolRunningLine(runningChunk);
+              if (toolLine) {
+                streamContent += '\n\n' + toolLine + '\n\n';
+                renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
-          } else if (currentEvent === 'workflow_started' || currentEvent === 'workflow_step_started' || currentEvent === 'workflow_step_finished' || currentEvent === 'workflow_warning' || currentEvent === 'workflow_failed' || currentEvent === 'workflow_finished') {
+          } else if (currentEvent === 'phase_changed') {
             try {
-              var workflowChunk = JSON.parse(dataStr);
-              workflowMode = true;
-              streamContent = appendWorkflowLine(streamContent, workflowChunk);
+              var phaseChunk = JSON.parse(dataStr);
+              var phaseLine = '_phase: ' + escapeHtml(phaseChunk.phase || 'runtime');
+              if (phaseChunk.tool) phaseLine += ' · ' + escapeHtml(phaseChunk.tool);
+              phaseLine += '_';
+              streamContent += '\n\n' + phaseLine + '\n\n';
+              renderStreamMarkdown(mdDiv, streamContent, container);
+            } catch(e) {}
+          } else if (currentEvent === 'skill_loaded') {
+            try {
+              var skillChunk = JSON.parse(dataStr);
+              var skillName = skillChunk.tool || skillChunk.name || 'skill';
+              streamContent += '\n\n_' + t('chat.toolRunning') + ': skill ' + escapeHtml(skillName) + '_\n\n';
+              renderStreamMarkdown(mdDiv, streamContent, container);
+            } catch(e) {}
+          } else if (currentEvent === 'lesson_recorded') {
+            try {
+              var lessonChunk = JSON.parse(dataStr);
+              streamContent += '\n\n_lesson recorded: ' + escapeHtml(lessonChunk.tool || 'lesson_record') + '_\n\n';
+              renderStreamMarkdown(mdDiv, streamContent, container);
+            } catch(e) {}
+          } else if (currentEvent === 'promotion_applied') {
+            try {
+              var promotionChunk = JSON.parse(dataStr);
+              streamContent += '\n\n_promotion applied: ' + escapeHtml(promotionChunk.tool || 'promotion') + '_\n\n';
+              renderStreamMarkdown(mdDiv, streamContent, container);
+            } catch(e) {}
+          } else if (currentEvent === 'escalation_triggered') {
+            try {
+              var escalationChunk = JSON.parse(dataStr);
+              streamContent += '\n\n_' + t('chat.error') + ': ' + escapeHtml(escalationChunk.reason || 'escalation') + '_\n\n';
               renderStreamMarkdown(mdDiv, streamContent, container);
             } catch(e) {}
           } else if (currentEvent === 'warning') {
@@ -1331,7 +1340,6 @@ async function sendMessage() {
             } catch(e) {}
           } else if (currentEvent === 'reset_output') {
             streamContent = '';
-            workflowMode = false;
             mdDiv.innerHTML = '';
             resultDiv.innerHTML = '';
           } else if (currentEvent === 'error') {
@@ -1376,19 +1384,20 @@ async function sendMessage() {
 
 async function loadDashboard() {
   try {
-    var results = await Promise.all([apiGet('/api/config'), apiGet('/api/projects'), apiGet('/api/skills'), apiGet('/api/toolchains')]);
-    var config = results[0], pdata = results[1], sdata = results[2], tcdata = results[3];
+    var results = await Promise.all([apiGet('/api/config'), apiGet('/api/projects'), apiGet('/api/skills'), apiGet('/api/workspace')]);
+    var config = results[0], pdata = results[1], sdata = results[2], wsdata = results[3];
     var projList = pdata.projects || [];
     var skillList = sdata.skills || [];
-    var tc = Object.values(tcdata).filter(function(v) { return v && v !== ''; });
+    var workspace = wsdata.workspace || {};
+    var tc = [];
     document.getElementById('stat-projects').textContent = projList.length;
     document.getElementById('stat-skills').textContent = skillList.length;
-    document.getElementById('stat-toolchains').textContent = tc.length;
+    document.getElementById('stat-toolchains').textContent = tc.length || (workspace.projects || []).length;
     document.getElementById('cfg-provider').textContent = (config.llm && config.llm.provider) || '-';
     document.getElementById('cfg-model').textContent = (config.llm && config.llm.model) || '-';
     document.getElementById('cfg-platform').textContent = (config.platform && config.platform.default_platform) || '-';
     document.getElementById('cfg-runtime').textContent = (config.platform && config.platform.default_runtime) || '-';
-    document.getElementById('cfg-workspace').textContent = (config.agent && config.agent.workspace) || '-';
+    document.getElementById('cfg-workspace').textContent = workspace.workspace_root || '-';
     var dashList = document.getElementById('dash-project-list');
     if (!projList.length) { dashList.innerHTML = '<div class="empty-state">' + t('sidebar.noProjects') + '</div>'; }
     else {
@@ -1397,7 +1406,7 @@ async function loadDashboard() {
         return '<div class="driver-item" onclick="selectProject(\'' + name + '\')"><div class="item-title">' + escapeHtml(p.name) + '</div></div>';
       }).join('');
     }
-    try { var d = await apiGet('/api/drivers?keyword='); document.getElementById('stat-drivers').textContent = (d.drivers || []).length; } catch(e) {}
+    document.getElementById('stat-drivers').textContent = skillList.length;
   } catch(e) {
     document.getElementById('dash-project-list').innerHTML = '<div class="empty-state">' + t('drivers.failed') + '</div>';
   }
@@ -1412,21 +1421,23 @@ function searchDrivers() {
     var list = document.getElementById('driver-list');
     list.innerHTML = '<div class="empty-state">' + t('drivers.loading') + '</div>';
     try {
-      var data = await apiGet('/api/drivers?keyword=' + encodeURIComponent(q) + '&limit=50');
-      var drivers = data.drivers || [];
-      if (!drivers.length) { list.innerHTML = '<div class="empty-state">' + t('drivers.none') + '</div>'; return; }
-      list.innerHTML = drivers.map(function(d) {
-        var name = d.name || (d.path ? d.path.split(/[\\/]/).pop() : '') || t('drivers.unnamed');
+      var data = await apiGet('/api/skills');
+      var skills = (data.skills || []).filter(function(s) {
+        var haystack = [s.name, s.title, s.category, s.summary, s.metadata && s.metadata.mode].join(' ').toLowerCase();
+        return !q || haystack.indexOf(q.toLowerCase()) !== -1;
+      });
+      if (!skills.length) { list.innerHTML = '<div class="empty-state">' + t('drivers.none') + '</div>'; return; }
+      list.innerHTML = skills.map(function(s) {
+        var name = s.title || s.name || t('drivers.unnamed');
         var tags = '';
-        if (d.reuse_count > 0) tags += '<span class="tag tag-cloud">' + t('drivers.reused') + ' ' + d.reuse_count + 'x</span> ';
-        if (d.review_passed) tags += '<span class="tag tag-green">' + t('drivers.reviewed') + '</span>';
-        else if (d.review_issue_count) tags += '<span class="tag tag-red">' + d.review_issue_count + ' ' + t('drivers.issues') + '</span>';
+        if (s.category) tags += '<span class="tag tag-cloud">' + escapeHtml(s.category) + '</span> ';
+        if (s.metadata && s.metadata.mode) tags += '<span class="tag tag-green">' + escapeHtml(s.metadata.mode) + '</span>';
         return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
-          '<span class="tag tag-black">' + escapeHtml(d.interface || '?') + '</span>' +
+          '<span class="tag tag-black">' + escapeHtml((s.metadata && s.metadata.mode) || '?') + '</span>' +
           '<span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(name) + '</span>' +
           '</div>' +
-          '<div style="font-size:13px;color:#60646c">' + escapeHtml(d.chip || '') + (d.vendor ? ' \u00b7 ' + escapeHtml(d.vendor) : '') + '</div>' +
-          '<div style="font-size:11px;color:#b0b4ba;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(d.path || '') + '">' + escapeHtml(d.source_doc ? d.source_doc.slice(0,80) + '...' : d.path || '') + '</div>' +
+          '<div style="font-size:13px;color:#60646c">' + escapeHtml(s.summary || 'Runtime skill') + '</div>' +
+          '<div style="font-size:11px;color:#b0b4ba;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(s.path || '') + '">' + escapeHtml(s.path || '') + '</div>' +
           '<div style="margin-top:8px">' + tags + '</div>' +
           '</div>';
       }).join('');
@@ -1444,8 +1455,10 @@ async function loadSkills() {
     var skills = data.skills || [];
     if (!skills.length) { list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.none') + '</div>'; return; }
     list.innerHTML = skills.map(function(s) {
-      var srcHtml = s.source_project ? '<div style="font-size:11px;color:#b0b4ba;margin-top:8px">' + t('skills.source') + ': ' + escapeHtml(s.source_project) + '</div>' : '';
-      return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span class="tag tag-black">' + escapeHtml(s.protocol || '?') + '</span><span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(s.device || t('skills.unknownDevice')) + '</span></div><div style="font-size:13px;color:#60646c">' + (s.summary || t('skills.noSummary')) + '</div>' + srcHtml + '</div>';
+      var srcHtml = s.path ? '<div style="font-size:11px;color:#b0b4ba;margin-top:8px">' + t('skills.source') + ': ' + escapeHtml(s.path) + '</div>' : '';
+      var mode = (s.metadata && s.metadata.mode) || '?';
+      var title = s.title || s.name || t('skills.unknownDevice');
+      return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span class="tag tag-black">' + escapeHtml(mode) + '</span><span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(title) + '</span></div><div style="font-size:13px;color:#60646c">' + escapeHtml(s.summary || t('skills.noSummary')) + '</div>' + srcHtml + '</div>';
     }).join('');
   } catch(e) {
     list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.failed') + ': ' + e.message + '</div>';

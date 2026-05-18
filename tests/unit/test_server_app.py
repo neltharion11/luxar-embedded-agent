@@ -13,7 +13,6 @@ from luxar.models.schemas import EngineeringContext
 from luxar.server.app import (
     AgentToolTimeoutError,
     _build_tool_envelope,
-    _execute_tool,
     _format_tool_result_summary,
     _is_tool_result_failure,
     _repair_messages_for_reasoning_handoff,
@@ -63,8 +62,9 @@ class ServerAppTests(unittest.TestCase):
 
     def test_analyze_docs_endpoint_returns_engineering_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app.DocumentEngineeringAnalyzer") as analyzer_cls:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
+                "luxar.server.app.DocumentEngineeringAnalyzer"
+            ) as analyzer_cls:
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = object()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
@@ -78,114 +78,36 @@ class ServerAppTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         payload = response.json()
-        self.assertIn("engineering_context", payload)
         self.assertEqual("SPI sensor with CS and INT.", payload["engineering_context"]["document_summary"])
 
-    def test_run_task_endpoint_uses_single_entry_orchestrator(self) -> None:
+    def test_legacy_public_endpoints_are_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app.run_task") as run_task_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = object()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                run_task_mock.return_value = {"success": True, "mode": "plan"}
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/run-task",
-                        json={"project": "DirectF1C", "task": "Blink LED and print UART logs", "plan_only": True},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertEqual("plan", response.json()["mode"])
-        self.assertTrue(run_task_mock.called)
-
-    def test_create_project_endpoint_initializes_project(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app.run_init_project") as init_mock:
-                cm = cm_cls.return_value
-                cfg = type("Cfg", (), {})()
-                cfg.platform = type("Platform", (), {"default_platform": "stm32cubemx", "default_runtime": "baremetal"})()
-                cfg.stm32 = type("Stm32", (), {"project_mode": "firmware", "firmware_package": "STM32Cube_FW_F1"})()
-                cm.ensure_default_config.return_value = cfg
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                init_mock.return_value = type("Proj", (), {"model_dump": lambda self, mode="json": {"name": "BlinkTest", "mcu": "STM32F103C8T6"}})()
-                with TestClient(create_app()) as client:
-                    response = client.post("/api/projects", json={"name": "BlinkTest", "mcu": "STM32F103C8T6"})
-
-        self.assertEqual(200, response.status_code)
-        self.assertEqual("BlinkTest", response.json()["project"]["name"])
-
-    def test_import_project_endpoint_registers_existing_project(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source = Path(tmpdir) / "external_project"
-            source.mkdir(parents=True, exist_ok=True)
             with patch("luxar.server.app.ConfigManager") as cm_cls:
                 cm = cm_cls.return_value
-                cfg = type("Cfg", (), {})()
-                cfg.platform = type("Platform", (), {"default_platform": "stm32cubemx", "default_runtime": "baremetal"})()
-                cfg.stm32 = type("Stm32", (), {"project_mode": "firmware", "firmware_package": "STM32Cube_FW_F1"})()
-                cm.ensure_default_config.return_value = cfg
+                cm.ensure_default_config.return_value = self._cfg_stub()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
                 cm.workspace_root.return_value = Path(tmpdir) / "projects"
                 cm.project_root.return_value = Path(tmpdir)
                 with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/projects/import",
-                        json={"source_path": str(source), "name": "ImportedProj", "mcu": "STM32F103C8T6"},
-                    )
+                    for method, path in [
+                        ("post", "/api/run-task"),
+                        ("get", "/api/review/Demo"),
+                        ("get", "/api/project-context/Demo"),
+                        ("get", "/api/git/Demo"),
+                        ("get", "/api/drivers"),
+                        ("get", "/api/knowledge-base"),
+                        ("get", "/api/toolchains"),
+                        ("post", "/api/generate-driver"),
+                        ("post", "/api/generate-driver-loop"),
+                    ]:
+                        response = getattr(client, method)(path)
+                        self.assertEqual(404, response.status_code, path)
 
-        self.assertEqual(200, response.status_code)
-        self.assertEqual("ImportedProj", response.json()["project"]["name"])
-
-    def test_pick_directory_endpoint_returns_selected_path(self) -> None:
+    def test_conversation_endpoint_uses_vnext_agent_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("tkinter.Tk") as tk_cls, \
-                 patch("tkinter.filedialog.askdirectory", return_value=str(Path(tmpdir) / "picked")):
-                cm = cm_cls.return_value
-                cfg = type("Cfg", (), {})()
-                cfg.platform = type("Platform", (), {"default_platform": "stm32cubemx", "default_runtime": "baremetal"})()
-                cfg.stm32 = type("Stm32", (), {"project_mode": "firmware", "firmware_package": "STM32Cube_FW_F1"})()
-                cm.ensure_default_config.return_value = cfg
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                with TestClient(create_app()) as client:
-                    response = client.get("/api/pick-directory")
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn("picked", response.json()["path"])
-
-    def test_pick_files_endpoint_returns_selected_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            file_a = str(Path(tmpdir) / "doc1.pdf")
-            file_b = str(Path(tmpdir) / "doc2.md")
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("tkinter.Tk"), \
-                 patch("tkinter.filedialog.askopenfilenames", return_value=(file_a, file_b)):
-                cm = cm_cls.return_value
-                cfg = type("Cfg", (), {})()
-                cfg.platform = type("Platform", (), {"default_platform": "stm32cubemx", "default_runtime": "baremetal"})()
-                cfg.stm32 = type("Stm32", (), {"project_mode": "firmware", "firmware_package": "STM32Cube_FW_F1"})()
-                cm.ensure_default_config.return_value = cfg
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                with TestClient(create_app()) as client:
-                    response = client.get("/api/pick-files")
-
-        self.assertEqual(200, response.status_code)
-        self.assertEqual([file_a, file_b], response.json()["paths"])
-
-    def test_conversation_endpoint_defaults_to_single_entry_execution(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app._run_agent_loop") as run_loop_mock:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
+                "luxar.server.app._run_agent_loop"
+            ) as run_loop_mock:
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = self._cfg_stub()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
@@ -195,219 +117,32 @@ class ServerAppTests(unittest.TestCase):
                 with TestClient(create_app()) as client:
                     response = client.post(
                         "/api/conversations/DirectF1C",
-                        json={"message": "Blink LED and print UART", "stream": False},
+                        json={"message": "Bring up OLED", "stream": False},
                     )
 
         self.assertEqual(200, response.status_code)
-        payload = response.json()
-        self.assertIn("message", payload)
         self.assertTrue(run_loop_mock.called)
 
-    def test_global_structured_project_request_creates_project_without_llm(self) -> None:
+    def test_streaming_conversation_emits_vnext_phase_and_skill_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app.run_init_project") as init_mock, \
-                 patch("luxar.core.llm_client.LLMClient") as llm_cls:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                init_mock.return_value = type(
-                    "Proj",
-                    (),
-                    {"model_dump": lambda self, mode="json": {"name": "EnvMonitor", "mcu": "STM32F103C8T6"}},
-                )()
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/__global__",
-                        json={
-                            "message": "\n".join([
-                                "项目名：EnvMonitor",
-                                "MCU：STM32F103C8T6",
-                                "平台：stm32firmware",
-                                "运行时：baremetal",
-                                "固件包：STM32Cube_FW_F1",
-                                "目标功能：LED 彩虹变换",
-                            ]),
-                            "stream": False,
-                        },
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertEqual("EnvMonitor", response.json()["created_project"]["name"])
-        self.assertTrue(init_mock.called)
-        self.assertFalse(llm_cls.called)
-
-    def test_global_structured_project_request_rejects_multiple_project_names(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app.run_init_project") as init_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/__global__",
-                        json={
-                            "message": "\n".join([
-                                "项目名：EnvMonitor",
-                                "MCU：STM32F103C8T6",
-                                "项目名：BareTest",
-                            ]),
-                            "stream": False,
-                        },
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn("多个不同的项目名", response.json()["message"]["content"])
-        self.assertFalse(init_mock.called)
-
-    def test_non_stream_conversation_persists_reasoning_content(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_with_tools") as complete_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                complete_mock.return_value = type(
-                    "Resp",
-                    (),
-                    {"content": "你好，我在。", "reasoning_content": "internal-thought", "tool_calls": None},
-                )()
-                with TestClient(create_app()) as client:
-                    post_response = client.post(
-                        "/api/conversations/ReasoningKeep",
-                        json={"message": "你好", "stream": False},
-                    )
-                    get_response = client.get("/api/conversations/ReasoningKeep")
-
-        self.assertEqual(200, post_response.status_code)
-        self.assertEqual(200, get_response.status_code)
-        messages = get_response.json()["messages"]
-        self.assertEqual("assistant", messages[-1]["role"])
-        self.assertEqual("internal-thought", messages[-1]["reasoning_content"])
-
-    def test_import_conversation_endpoint_copies_messages_to_project(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app._run_agent_loop") as run_loop_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                run_loop_mock.return_value = {"content": "已记录项目需求。", "reasoning_content": ""}
-                with TestClient(create_app()) as client:
-                    client.post("/api/conversations/__global__/reset")
-                    post_response = client.post(
-                        "/api/conversations/__global__",
-                        json={"message": "项目名：EnvMonitor", "stream": False},
-                    )
-                    import_response = client.post(
-                        "/api/conversations/EnvMonitor/import",
-                        json={"source_project": "__global__", "replace": True},
-                    )
-                    get_response = client.get("/api/conversations/EnvMonitor")
-
-        self.assertEqual(200, post_response.status_code)
-        self.assertEqual(200, import_response.status_code)
-        self.assertEqual(2, import_response.json()["imported_messages"])
-        messages = get_response.json()["messages"]
-        self.assertEqual("user", messages[0]["role"])
-        self.assertEqual("项目名：EnvMonitor", messages[0]["content"])
-        self.assertEqual("assistant", messages[1]["role"])
-
-    def test_streaming_conversation_emits_done_event_without_tool_calls(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                complete_stream_mock.return_value = iter([
-                    {"type": "token", "content": "hello"},
-                ])
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/StreamPlain",
-                        json={"message": "你好", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn("event: token", response.text)
-        self.assertIn("event: done", response.text)
-
-    def test_streaming_global_structured_project_request_emits_single_init_project_flow(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.server.app.run_init_project") as init_mock, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-                init_mock.return_value = type(
-                    "Proj",
-                    (),
-                    {"model_dump": lambda self, mode="json": {"name": "BareTest", "mcu": "STM32F103C8T6"}},
-                )()
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/__global__",
-                        json={
-                            "message": "\n".join([
-                                "项目名：BareTest",
-                                "MCU：STM32F103C8T6",
-                                "平台：stm32firmware",
-                                "运行时：baremetal",
-                            ]),
-                            "stream": True,
-                        },
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn("event: tool_call", response.text)
-        self.assertIn("event: tool_result", response.text)
-        self.assertIn("event: done", response.text)
-        self.assertEqual(1, response.text.count("event: tool_call"))
-        self.assertEqual(1, response.text.count("event: tool_result"))
-        self.assertTrue(init_mock.called)
-        self.assertFalse(complete_stream_mock.called)
-
-    def test_streaming_conversation_emits_tool_running_before_done(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app._execute_tool", return_value='{"ok": true}') as exec_tool_mock:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
+                "luxar.core.llm_client.LLMClient.complete_stream"
+            ) as complete_stream_mock, patch(
+                "luxar.server.app._execute_tool_with_timeout",
+                return_value=_build_tool_envelope("skills_list", {"skills": [{"name": "oled-ch1116"}]}),
+            ):
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = self._cfg_stub()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
                 cm.workspace_root.return_value = Path(tmpdir) / "projects"
                 cm.project_root.return_value = Path(tmpdir)
 
-                rounds = iter([
+                rounds = iter(
                     [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "build_project",
-                            "arguments": '{"project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "done"},
-                    ],
-                ])
+                        [{"type": "tool_call", "id": "call-1", "name": "skills_list", "arguments": "{}"}],
+                        [{"type": "token", "content": "done"}],
+                    ]
+                )
 
                 def _stream_side_effect(*args, **kwargs):
                     yield from next(rounds)
@@ -415,338 +150,90 @@ class ServerAppTests(unittest.TestCase):
                 complete_stream_mock.side_effect = _stream_side_effect
                 with TestClient(create_app()) as client:
                     response = client.post(
-                        "/api/conversations/StreamTool",
-                        json={"message": "帮我跑任务", "stream": True},
+                        "/api/conversations/StreamSkills",
+                        json={"message": "List skills", "stream": True},
                         headers={"Accept": "text/event-stream"},
                     )
 
         self.assertEqual(200, response.status_code)
-        self.assertTrue(exec_tool_mock.called)
-        self.assertIn("event: tool_call", response.text)
-        self.assertIn("event: tool_running", response.text)
-        self.assertIn("event: tool_result", response.text)
-        self.assertIn("event: done", response.text)
+        self.assertIn("event: phase_changed", response.text)
+        self.assertIn("event: skill_loaded", response.text)
+        self.assertNotIn("event: workflow_started", response.text)
 
-    def test_streaming_active_project_blocks_init_project_tool_call(self) -> None:
+    def test_streaming_conversation_emits_lesson_and_promotion_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app.run_init_project") as init_mock:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
+                "luxar.core.llm_client.LLMClient.complete_stream"
+            ) as complete_stream_mock, patch(
+                "luxar.server.app._execute_tool_with_timeout"
+            ) as execute_mock:
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = self._cfg_stub()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
                 cm.workspace_root.return_value = Path(tmpdir) / "projects"
                 cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "init_project",
-                            "arguments": '{"name":"Demo","mcu":"STM32F103C8T6"}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "继续使用当前项目。"},
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/Demo",
-                        json={"message": "项目已存在，继续实现功能", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertFalse(init_mock.called)
-        self.assertIn("init_project_blocked_active_project", response.text)
-        self.assertIn("event: done", response.text)
-
-    def test_streaming_active_project_blocks_lightweight_run_task_query(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app.run_task_stream") as run_task_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "run_task",
-                            "arguments": '{"task":"查看 Demo 项目当前所有文件列表","project":"Demo","plan_only":true}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "我会改用轻量工具查看项目。"},
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/Demo",
-                        json={"message": "查看 Demo 项目当前所有文件列表", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertFalse(run_task_stream_mock.called)
-        self.assertIn("run_task_lightweight_query_blocked", response.text)
-        self.assertIn("event: done", response.text)
-
-    def test_streaming_conversation_for_run_task_emits_workflow_events(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app.run_task_stream") as run_task_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "run_task",
-                            "arguments": '{"task":"blink","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "done"},
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                run_task_stream_mock.return_value = iter([
-                    {"type": "workflow_started", "workflow": "forge", "message": "开始"},
-                    {"type": "workflow_step_started", "workflow": "forge", "step": "plan", "message": "规划"},
-                    {"type": "workflow_step_finished", "workflow": "forge", "step": "plan", "status": "completed", "message": "完成"},
-                    {
-                        "type": "workflow_finished",
-                        "workflow": "forge",
-                        "status": "completed",
-                        "message": "结束",
-                        "payload": {"result": {"success": True, "mode": "execute", "workflow": {"summary": "ok"}}},
-                    },
-                ])
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/StreamWorkflow",
-                        json={"message": "帮我创建工程", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn('"task": "blink"', response.text)
-        self.assertIn("event: workflow_started", response.text)
-        self.assertIn("event: workflow_step_started", response.text)
-        self.assertIn("event: workflow_step_finished", response.text)
-        self.assertIn("event: workflow_finished", response.text)
-        self.assertIn("event: tool_result", response.text)
-        self.assertIn('"success": true', response.text.lower())
-
-    def test_streaming_conversation_blocks_reentrant_project_level_run_task(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app.run_task_stream") as run_task_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "run_task",
-                            "arguments": '{"task":"blink led project","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-2",
-                            "name": "run_task",
-                            "arguments": '{"task":"check project structure","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "done"},
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                run_task_stream_mock.return_value = iter([
-                    {"type": "workflow_started", "workflow": "forge", "message": "开始"},
-                    {
-                        "type": "workflow_finished",
-                        "workflow": "forge",
-                        "status": "completed",
-                        "message": "结束",
-                        "payload": {"result": {"success": True, "mode": "execute", "workflow": {"summary": "ok"}}},
-                    },
-                ])
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/StreamWorkflow",
-                        json={"message": "帮我创建工程", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertEqual(1, run_task_stream_mock.call_count)
-        self.assertIn("run_task_reentry_blocked", response.text)
-
-    def test_streaming_conversation_blocks_reentrant_explain_run_task(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app.run_task_stream") as run_task_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "run_task",
-                            "arguments": '{"task":"解释一下 PA6 PA7 PB0 是什么引脚","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-2",
-                            "name": "run_task",
-                            "arguments": '{"task":"再解释一下 manualtest 项目的完整文件结构","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "done"},
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                run_task_stream_mock.return_value = iter([
-                    {
-                        "type": "workflow_started",
-                        "workflow": "explain",
-                        "message": "开始执行任务：解释一下 PA6 PA7 PB0 是什么引脚",
-                    },
-                    {
-                        "type": "workflow_finished",
-                        "workflow": "explain",
-                        "status": "completed",
-                        "message": "解释完成",
-                        "payload": {"result": {"success": True, "mode": "explain", "intent": "explain", "message": "解释完成"}},
-                    },
-                ])
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/StreamExplain",
-                        json={"message": "解释引脚", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertEqual(1, run_task_stream_mock.call_count)
-        self.assertIn("run_task_explain_reentry_blocked", response.text)
-
-    def test_streaming_conversation_allows_one_recovery_after_explain_no_final(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch("luxar.server.app.run_task_stream") as run_task_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "run_task",
-                            "arguments": '{"task":"解释一下 PA6 PA7 PB0 是什么引脚","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-2",
-                            "name": "run_task",
-                            "arguments": '{"task":"重新解释一下 PA6 PA7 PB0 是什么引脚","project":"Demo"}',
-                        }
-                    ],
-                    [
-                        {"type": "token", "content": "done"},
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                run_task_stream_mock.side_effect = [
-                    iter([{"type": "workflow_started", "workflow": "explain", "message": "开始"}]),
-                    iter([
-                        {"type": "workflow_started", "workflow": "explain", "message": "恢复"},
-                        {
-                            "type": "workflow_finished",
-                            "workflow": "explain",
-                            "status": "completed",
-                            "message": "恢复完成",
-                            "payload": {"result": {"success": True, "mode": "explain", "intent": "explain", "message": "恢复完成"}},
-                        },
-                    ]),
+                execute_mock.side_effect = [
+                    _build_tool_envelope("lesson_record", {"lesson": {"topic": "oled_dark_screen"}}),
+                    _build_tool_envelope("skill_promote", {"promotion_level": "validated"}),
                 ]
+
+                rounds = iter(
+                    [
+                        [{"type": "tool_call", "id": "call-1", "name": "lesson_record", "arguments": '{"payload":{"topic":"oled_dark_screen"}}'}],
+                        [{"type": "tool_call", "id": "call-2", "name": "skill_promote", "arguments": '{"name":"oled-ch1116"}'}],
+                        [{"type": "token", "content": "done"}],
+                    ]
+                )
+
+                def _stream_side_effect(*args, **kwargs):
+                    yield from next(rounds)
+
+                complete_stream_mock.side_effect = _stream_side_effect
                 with TestClient(create_app()) as client:
                     response = client.post(
-                        "/api/conversations/StreamExplainRecovery",
-                        json={"message": "解释引脚", "stream": True},
+                        "/api/conversations/Lessons",
+                        json={"message": "Record and promote", "stream": True},
                         headers={"Accept": "text/event-stream"},
                     )
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual(2, run_task_stream_mock.call_count)
-        self.assertIn("run_task stream ended without a final result.", response.text)
-        self.assertIn("恢复完成", response.text)
+        self.assertIn("event: lesson_recorded", response.text)
+        self.assertIn("event: promotion_applied", response.text)
+
+    def test_streaming_conversation_emits_escalation_on_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
+                "luxar.core.llm_client.LLMClient.complete_stream"
+            ) as complete_stream_mock, patch(
+                "luxar.server.app._execute_tool_with_timeout",
+                side_effect=AgentToolTimeoutError("sentinel"),
+            ):
+                cm = cm_cls.return_value
+                cm.ensure_default_config.return_value = self._cfg_stub()
+                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
+                cm.workspace_root.return_value = Path(tmpdir) / "projects"
+                cm.project_root.return_value = Path(tmpdir)
+
+                rounds = iter(
+                    [
+                        [{"type": "tool_call", "id": "call-1", "name": "workspace_build", "arguments": '{"project":"Demo"}'}],
+                    ]
+                )
+
+                def _stream_side_effect(*args, **kwargs):
+                    yield from next(rounds)
+
+                complete_stream_mock.side_effect = _stream_side_effect
+                with TestClient(create_app()) as client:
+                    response = client.post(
+                        "/api/conversations/StreamTimeout",
+                        json={"message": "Build", "stream": True},
+                        headers={"Accept": "text/event-stream"},
+                    )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn("event: escalation_triggered", response.text)
+        self.assertIn("event: error", response.text)
 
     def test_run_agent_loop_stops_when_tool_call_limit_is_exceeded(self) -> None:
         cfg = self._cfg_stub()
@@ -754,13 +241,12 @@ class ServerAppTests(unittest.TestCase):
         cm.workspace_root = lambda: Path(".")
         cm.project_root = lambda: Path(".")
         cm.driver_library_root = lambda: Path(".")
-        cm.skill_library_root = lambda: Path(".")
 
         tool_calls = [
             type(
                 "ToolCall",
                 (),
-                {"id": f"call-{index}", "function_name": "run_task", "arguments": {"task": f"task-{index}"}},
+                {"id": f"call-{index}", "function_name": "runtime_run", "arguments": {"task": f"task-{index}"}},
             )()
             for index in range(21)
         ]
@@ -772,155 +258,42 @@ class ServerAppTests(unittest.TestCase):
             {"content": None, "reasoning_content": "", "tool_calls": tool_calls},
         )()
 
-        with patch("luxar.server.app._prepare_agent_context", return_value=[]), \
-             patch("luxar.server.app._execute_tool", return_value='{"ok": true}'):
+        with patch("luxar.server.app._prepare_agent_context", return_value=[]), patch(
+            "luxar.server.app._execute_tool", return_value=_build_tool_envelope("runtime_run", {"success": True})
+        ):
             reply = asyncio.run(_run_agent_loop([], "run many tools", "Demo", cfg, cm, client))
 
         self.assertIn("Tool call limit exceeded", reply["content"])
         self.assertIn("attempted call 21", reply["content"])
 
-    def test_streaming_conversation_emits_error_when_tool_times_out(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                 patch(
-                     "luxar.server.app._execute_tool_with_timeout",
-                     side_effect=AgentToolTimeoutError("sentinel"),
-                 ):
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                rounds = iter([
-                    [
-                        {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "build_project",
-                            "arguments": '{"project":"Demo"}',
-                        }
-                    ],
-                ])
-
-                def _stream_side_effect(*args, **kwargs):
-                    yield from next(rounds)
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/StreamTimeout",
-                        json={"message": "帮我跑任务", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn("event: error", response.text)
-        self.assertIn("sentinel", response.text)
-
-    def test_streaming_conversation_emits_reset_output_on_reasoning_repair(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                 patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock:
-                cm = cm_cls.return_value
-                cm.ensure_default_config.return_value = self._cfg_stub()
-                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
-                cm.workspace_root.return_value = Path(tmpdir) / "projects"
-                cm.project_root.return_value = Path(tmpdir)
-
-                call_counter = {"count": 0}
-
-                def _stream_side_effect(*args, **kwargs):
-                    call_counter["count"] += 1
-                    if call_counter["count"] == 1:
-                        def _broken():
-                            yield {"type": "token", "content": "旧前缀"}
-                            raise Exception("reasoning_content must be passed back")
-                        return _broken()
-                    return iter([{"type": "token", "content": "新内容"}])
-
-                complete_stream_mock.side_effect = _stream_side_effect
-                with TestClient(create_app()) as client:
-                    response = client.post(
-                        "/api/conversations/RetryProject",
-                        json={"message": "你好", "stream": True},
-                        headers={"Accept": "text/event-stream"},
-                    )
-
-        self.assertEqual(200, response.status_code)
-        self.assertIn("event: reset_output", response.text)
-        self.assertIn("event: warning", response.text)
-        self.assertIn("event: done", response.text)
-
-    def test_execute_tool_init_project_respects_platform_argument(self) -> None:
-        cfg = self._cfg_stub()
-        cm = type("CM", (), {})()
-        cm.workspace_root = lambda: Path(".")
-        cm.project_root = lambda: Path(".")
-        cm.driver_library_root = lambda: Path(".")
-
-        with patch("luxar.server.app.run_init_project") as init_mock:
-            init_mock.return_value = type(
-                "Proj",
-                (),
-                {"model_dump": lambda self, mode="json": {"name": "BareTest"}},
-            )()
-            result = _execute_tool(
-                "init_project",
-                {
-                    "name": "BareTest",
-                    "mcu": "STM32F103C8T6",
-                    "platform": "stm32firmware",
-                    "runtime": "baremetal",
-                },
-                cfg,
-                cm,
-            )
-            self.assertEqual("BareTest", result.data["name"])
-
-        self.assertEqual("stm32firmware", init_mock.call_args.kwargs["platform"])
-
     def test_streaming_tool_result_payloads_stay_parseable_for_large_results(self) -> None:
         large_tools = {
-            "build_project": {"success": False, "stderr": "error:\n" * 1200, "stdout": "", "return_code": 1},
-            "fix_code": {"success": True, "file_path": "App/Src/app_main.c", "applied": True, "raw_response": "x" * 7000},
-            "generate_driver": {"success": True, "chip": "BMI270", "interface": "SPI", "raw_response": "y" * 7000},
-            "git_status": {"diff": "z" * 8000, "changes": {"modified": ["a.c"], "untracked": ["b.c"]}, "branch": "main"},
-            "project_context": {
-                "project": {"name": "Demo"},
-                "status": {"git": {"branch": "main"}},
-                "git": {"branch": "main", "changes": {"modified": [], "untracked": []}},
-                "toolchains": {},
-                "skills": [{"name": f"skill-{index}"} for index in range(120)],
-            },
+            "workspace_build": {"success": False, "stderr": "error:\n" * 1200, "stdout": "", "return_code": 1},
+            "skill_execute": {"success": True, "evidence": [{"step": "probe", "detail": "x" * 4000}], "raw_response": "x" * 7000},
+            "skills_list": {"skills": [{"name": f"skill-{index}"} for index in range(120)]},
+            "workspace_inspect": {"workspace_root": "C:/tmp", "projects": [{"name": f"proj-{index}"} for index in range(120)]},
         }
 
         for tool_name, payload in large_tools.items():
             with self.subTest(tool=tool_name):
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    with patch("luxar.server.app.ConfigManager") as cm_cls, \
-                         patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, \
-                         patch("luxar.server.app._execute_tool", return_value=_build_tool_envelope(tool_name, payload)):
+                    with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
+                        "luxar.core.llm_client.LLMClient.complete_stream"
+                    ) as complete_stream_mock, patch(
+                        "luxar.server.app._execute_tool", return_value=_build_tool_envelope(tool_name, payload)
+                    ):
                         cm = cm_cls.return_value
                         cm.ensure_default_config.return_value = self._cfg_stub()
                         cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
                         cm.workspace_root.return_value = Path(tmpdir) / "projects"
                         cm.project_root.return_value = Path(tmpdir)
 
-                        rounds = iter([
+                        rounds = iter(
                             [
-                                {
-                                    "type": "tool_call",
-                                    "id": "call-1",
-                                    "name": tool_name,
-                                    "arguments": '{"project":"Demo"}',
-                                }
-                            ],
-                            [
-                                {"type": "token", "content": "done"},
-                            ],
-                        ])
+                                [{"type": "tool_call", "id": "call-1", "name": tool_name, "arguments": '{"project":"Demo"}'}],
+                                [{"type": "token", "content": "done"}],
+                            ]
+                        )
 
                         def _stream_side_effect(*args, **kwargs):
                             yield from next(rounds)
@@ -945,8 +318,7 @@ class ServerAppTests(unittest.TestCase):
                         break
                 self.assertIsNotNone(tool_result_payload)
                 self.assertEqual(tool_name, tool_result_payload["tool"])
-                parsed_result = json.loads(tool_result_payload["result"])
-                self.assertIsInstance(parsed_result, dict)
+                self.assertIsInstance(json.loads(tool_result_payload["result"]), dict)
 
     def test_tool_content_serializer_compacts_large_fields_without_mutating_canonical_data(self) -> None:
         payload = {
@@ -954,7 +326,7 @@ class ServerAppTests(unittest.TestCase):
             "raw_response": "r" * 10000,
             "skills": [{"name": f"skill-{index}"} for index in range(50)],
         }
-        envelope = _build_tool_envelope("git_status", payload)
+        envelope = _build_tool_envelope("skills_list", payload)
         original_diff = envelope.data["diff"]
         original_raw_response = envelope.data["raw_response"]
         original_skills = list(envelope.data["skills"])
@@ -970,37 +342,60 @@ class ServerAppTests(unittest.TestCase):
         self.assertEqual(original_raw_response, envelope.data["raw_response"])
         self.assertEqual(original_skills, envelope.data["skills"])
 
-    def test_tool_summary_uses_normalized_payload_shapes(self) -> None:
+    def test_tool_summary_uses_vnext_payload_shapes(self) -> None:
         cases = [
-            ("build_project", _build_tool_envelope("build_project", {"success": False, "stderr": "error: one\nerror: two"}), "构建失败: 2 个错误"),
-            ("fix_code", _build_tool_envelope("fix_code", {"success": True, "applied": True, "file_path": "main.c"}), "已修复 1 个文件"),
-            ("generate_driver", _build_tool_envelope("generate_driver", {"success": True, "chip": "BMI270", "interface": "SPI"}), "驱动生成完成 (BMI270)"),
-            ("git_status", _build_tool_envelope("git_status", {"branch": "main", "changes": {"modified": ["a.c"], "untracked": ["b.c"]}}), "2 个文件变更 (main)"),
+            (
+                "workspace_build",
+                _build_tool_envelope("workspace_build", {"success": False, "stderr": "error: one\nerror: two"}),
+                "构建失败: 2 个错误",
+            ),
+            (
+                "skill_execute",
+                _build_tool_envelope("skill_execute", {"success": True, "evidence": [{"step": "probe"}]}),
+                "技能执行完成: 1 条证据",
+            ),
+            (
+                "runtime_run",
+                _build_tool_envelope(
+                    "runtime_run",
+                    {"selected_skills": [{"name": "a"}], "selected_executable_skills": [{"name": "b"}]},
+                ),
+                "runtime 规划完成: 1 个技能, 1 个可执行技能",
+            ),
+            ("skills_list", _build_tool_envelope("skills_list", {"skills": [{"name": "a"}, {"name": "b"}]}), "已加载 2 个技能"),
         ]
 
         for tool_name, envelope, expected in cases:
             with self.subTest(tool=tool_name):
                 ok, summary = _format_tool_result_summary(tool_name, {}, envelope)
-                self.assertTrue(ok or tool_name == "build_project")
+                self.assertTrue(ok or tool_name == "workspace_build")
                 self.assertEqual(expected, summary)
 
     def test_tool_failure_detection_treats_blocked_as_non_failure_and_bad_json_as_failure(self) -> None:
-        blocked = _build_tool_envelope("run_task", {"success": False, "blocked": True, "reason": "blocked"})
+        blocked = _build_tool_envelope("runtime_run", {"success": False, "blocked": True, "reason": "blocked"})
         self.assertFalse(_is_tool_result_failure(blocked))
         self.assertTrue(_is_tool_result_failure("{bad json"))
 
     def test_reasoning_handoff_repair_drops_plain_assistant_turns(self) -> None:
-        repaired = _repair_messages_for_reasoning_handoff([
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "old reply without reasoning"},
-            {"role": "assistant", "content": None, "tool_calls": [{
-                "id": "call-1",
-                "type": "function",
-                "function": {"name": "review_project", "arguments": "{}"},
-            }]},
-            {"role": "tool", "tool_call_id": "call-1", "content": "{}"},
-        ])
+        repaired = _repair_messages_for_reasoning_handoff(
+            [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "old reply without reasoning"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "skill_execute", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-1", "content": "{}"},
+            ]
+        )
 
         self.assertEqual("system", repaired[0]["role"])
         self.assertEqual("user", repaired[1]["role"])

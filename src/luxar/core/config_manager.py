@@ -10,16 +10,21 @@ from pydantic import BaseModel, Field
 
 class AgentSection(BaseModel):
     name: str = "Luxar"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
     skill_library: str = "./workspace/skill_library"
     firmware_library: str = "./workspace/firmware_library"
+    skills_root: str = "./workspace/skills"
+    lesson_library: str = "./workspace/lessons"
+    memory_root: str = "./workspace/memory"
+    prompts_root: str = "./workspace/prompts"
 
 
 class LLMSection(BaseModel):
     provider: str = "deepseek"
     model: str = "deepseek-chat"
+    prompt_stack_mode: str = "vnext"
     temperature: float = 0.2
     max_tokens: int = 4096
     thinking_enabled: bool = False
@@ -194,6 +199,22 @@ class ConfigManager:
     def firmware_library_root(self) -> Path:
         config = self.ensure_default_config()
         return self.resolve_path(config.agent.firmware_library)
+
+    def skills_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.skills_root)
+
+    def lesson_library_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.lesson_library)
+
+    def memory_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.memory_root)
+
+    def prompts_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.prompts_root)
 
     def toolchain_root(self) -> Path:
         config = self.ensure_default_config()

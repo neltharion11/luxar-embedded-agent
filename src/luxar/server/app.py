@@ -20,24 +20,37 @@ from sse_starlette.sse import EventSourceResponse
 
 from luxar.core.config_manager import ConfigManager, LLMSection
 from luxar.core.document_engineering import DocumentEngineeringAnalyzer
-from luxar.core.driver_library import DriverLibrary
-from luxar.core.knowledge_base import KnowledgeBase
 from luxar.core.project_manager import ProjectManager
-from luxar.core.skill_manager import SkillManager
-from luxar.core.task_router import TaskRouter
-from luxar.core.toolchain_manager import ToolchainManager
 from luxar.core.firmware_library_manager import FirmwareLibraryManager
 from luxar.core.git_manager import GitManager
 from luxar.core.review_engine import ReviewEngine
-from luxar.core.driver_generator import DriverGenerator
-from luxar.core.driver_pipeline import DriverPipeline
-from luxar.core.code_fixer import CodeFixer
 from luxar.core.conversation_store import ConversationStore
 from luxar.core.context_compressor import ContextCompressor, count_tokens
 from luxar.core.llm_client import _OPENAI_PROVIDERS
-from luxar.tools.run_task import run_task, run_task_stream
+from luxar.tools.memory_tool import (
+    memory_lesson_promote,
+    memory_lesson_record,
+    memory_lessons,
+    memory_read,
+    memory_search,
+    memory_write,
+)
+from luxar.tools.runtime_tool import explain_runtime_tool, run_runtime
+from luxar.tools.skills_tool import (
+    skill_execute,
+    skill_manage,
+    skill_promote,
+    skill_view,
+    skills_list as vnext_skills_list,
+)
 from luxar.tools.init_project import run_init_project
-from luxar.models.schemas import DriverGenerationResult, WorkflowRunResult
+from luxar.tools.workspace_tool import (
+    workspace_build,
+    workspace_flash,
+    workspace_inspect,
+    workspace_monitor,
+    workspace_probe,
+)
 
 
 # ===== Tool Definitions (OpenAI Function Calling schema) =====
@@ -45,9 +58,9 @@ from luxar.models.schemas import DriverGenerationResult, WorkflowRunResult
 MAX_AGENT_TOOL_CALLS = 20
 MAX_AGENT_TOOL_TIMEOUT_SEC = 180
 _TOOL_TIMEOUT_OVERRIDES: dict[str, int] = {
-    "analyze_document_engineering": 300,  # pymupdf+RapidOCR fallback for scanned PDFs
+    "workspace_build": 300,
+    "workspace_flash": 300,
 }
-PROJECT_LEVEL_RUN_TASK_INTENTS = {"forge_project", "debug_project"}
 
 
 class AgentToolLimitError(RuntimeError):
@@ -61,23 +74,13 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "run_task",
-            "description": "Execute a complex multi-step embedded workflow (forge a project, run debug loop, generate a driver). Use only when the user explicitly requests a full project-level action involving multiple stages (plan, generate, review, fix, build). For single-step actions like build, flash, review, or git status, use their specific tools instead.",
+            "name": "runtime_run",
+            "description": "Run the LUXAR v0.2.0 runtime for a task inside the current workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task": {"type": "string", "description": "Natural-language task description"},
                     "project": {"type": "string", "description": "Optional project name"},
-                    "docs": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional document paths to analyze before routing the task",
-                    },
-                    "dry_run": {"type": "boolean", "description": "If true, plan without modifying files"},
-                    "plan_only": {"type": "boolean", "description": "If true, return a structured execution plan only"},
-                    "no_build": {"type": "boolean", "description": "Skip build stage"},
-                    "no_flash": {"type": "boolean", "description": "Skip flash stage"},
-                    "no_monitor": {"type": "boolean", "description": "Skip monitor stage"},
                 },
                 "required": ["task"],
             },
@@ -86,48 +89,33 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "analyze_document_engineering",
-            "description": "Extract structured engineering facts from one or more documents, including pins, buses, protocol frames, bring-up steps, timing constraints, and integration notes.",
+            "name": "runtime_explain",
+            "description": "Explain the LUXAR v0.2.0 runtime model and current orchestration approach.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skills_list",
+            "description": "List available runtime skills, optionally filtered by category.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "docs": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Document paths to analyze",
-                    },
-                    "query": {"type": "string", "description": "Optional query to focus extraction"},
+                    "category": {"type": "string", "description": "Optional skill category filter"},
                 },
-                "required": ["docs"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "project_context",
-            "description": "Get a unified project context including project metadata, git summary, toolchains, and local assets relevant to planning and chat assistance.",
+            "name": "skill_view",
+            "description": "View a single runtime skill by name.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project": {"type": "string", "description": "Project name"},
-                },
-                "required": ["project"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "init_project",
-            "description": "Create a new empty STM32 project. Use 'stm32cubemx' for CubeMX-oriented projects, or 'stm32firmware' for bare firmware skeletons. Project creation does not generate a .ioc file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Project name, e.g. BlinkTest"},
-                    "mcu": {"type": "string", "description": "MCU model, e.g. STM32F103C8T6 (default)"},
-                    "platform": {"type": "string", "description": "Project type: stm32cubemx (CubeMX-oriented) or stm32firmware (bare skeleton)"},
-                    "runtime": {"type": "string", "description": "baremetal or freertos (default: baremetal)"},
+                    "name": {"type": "string", "description": "Skill name"},
                 },
                 "required": ["name"],
             },
@@ -136,13 +124,173 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "build_project",
-            "description": "Build a project using CMake and Ninja. Optionally perform a clean build first.",
+            "name": "skill_manage",
+            "description": "Create, edit, patch, or archive a runtime skill.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "create, edit, patch, or archive"},
+                    "name": {"type": "string", "description": "Skill name"},
+                    "category": {"type": "string", "description": "Skill category"},
+                    "content": {"type": "string", "description": "Replacement or creation content"},
+                    "old_string": {"type": "string", "description": "Patch target text"},
+                    "new_string": {"type": "string", "description": "Patch replacement text"},
+                },
+                "required": ["action", "name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skill_promote",
+            "description": "Promote a runtime skill to a higher promotion level.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill name"},
+                    "category": {"type": "string", "description": "Optional skill category"},
+                    "promotion_level": {"type": "string", "description": "Target promotion level"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skill_execute",
+            "description": "Execute an executable runtime skill and collect evidence.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill name"},
+                    "category": {"type": "string", "description": "Optional skill category"},
+                    "project": {"type": "string", "description": "Project name"},
+                    "port": {"type": "string", "description": "Optional serial port"},
+                    "baudrate": {"type": "integer", "description": "Optional monitor baudrate"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_read",
+            "description": "Read durable memory or user memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "memory or user"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_write",
+            "description": "Write durable memory or user memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Content to write"},
+                    "target": {"type": "string", "description": "memory or user"},
+                    "append": {"type": "boolean", "description": "Append when true; replace when false"},
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_search",
+            "description": "Search memory, lessons, and recall context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lesson_list",
+            "description": "List recorded lessons.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lesson_search",
+            "description": "Search recorded lessons.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "limit": {"type": "integer", "description": "Maximum number of results"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lesson_record",
+            "description": "Record a lesson candidate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "payload": {"type": "object", "description": "Lesson payload"},
+                    "promoted": {"type": "boolean", "description": "Store directly as promoted"},
+                },
+                "required": ["payload"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lesson_promote",
+            "description": "Promote a lesson into promoted state with evidence count.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "slug": {"type": "string", "description": "Lesson slug"},
+                    "evidence_count": {"type": "integer", "description": "Evidence count"},
+                },
+                "required": ["slug"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_inspect",
+            "description": "Inspect the runtime workspace layout and roots.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_build",
+            "description": "Build a project through the workspace runtime primitive.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project name"},
-                    "clean": {"type": "boolean", "description": "Whether to clean build first"},
+                    "clean": {"type": "boolean", "description": "Whether to clean first"},
                 },
                 "required": ["project"],
             },
@@ -151,13 +299,13 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "flash_project",
-            "description": "Flash the compiled firmware binary to the target MCU via ST-Link programmer or another probe.",
+            "name": "workspace_flash",
+            "description": "Flash a project through the workspace runtime primitive.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project name"},
-                    "probe": {"type": "string", "description": "Probe/debugger type, e.g. stlink"},
+                    "probe": {"type": "string", "description": "Optional probe"},
                 },
                 "required": ["project"],
             },
@@ -166,14 +314,14 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "monitor_project",
-            "description": "Open a serial (UART) monitor session to read device output from a given COM port.",
+            "name": "workspace_monitor",
+            "description": "Monitor a project through the workspace runtime primitive.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project name"},
-                    "port": {"type": "string", "description": "Serial port, e.g. COM3"},
-                    "baudrate": {"type": "integer", "description": "Baud rate, default 115200"},
+                    "port": {"type": "string", "description": "Serial port"},
+                    "baudrate": {"type": "integer", "description": "Baudrate"},
                 },
                 "required": ["project", "port"],
             },
@@ -182,103 +330,15 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "debug_loop",
-            "description": "Run the full build -> flash -> monitor debug loop with automatic recovery for build errors, flash failures, and monitor issues.",
+            "name": "workspace_probe",
+            "description": "Run a workspace probe primitive such as i2c.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project name"},
-                    "probe": {"type": "string", "description": "Probe type, e.g. stlink"},
-                    "port": {"type": "string", "description": "Serial port, e.g. COM3"},
-                    "clean": {"type": "boolean", "description": "Clean build before starting"},
+                    "probe_type": {"type": "string", "description": "Probe type"},
                 },
                 "required": ["project"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "review_project",
-            "description": "Run a multi-layer code review. When called without a file, reviews all App/ source files plus Core/ files that contain USER CODE sections (e.g. main.c, freertos.c). Pure CubeMX-generated Core/ files are skipped.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project": {"type": "string", "description": "Project name"},
-                    "file": {"type": "string", "description": "Optional specific file to review (e.g. App/Src/app_main.c). If omitted, reviews all source files."},
-                },
-                "required": ["project"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "fix_code",
-            "description": "Auto-fix code issues for a file and WRITE the changes back to disk unless dry_run=true. Editable files depend on project mode: in firmware mode, App/ files, Core/ skeleton files (main.c, system_stm32xx.c), CMakeLists.txt, and stm32f1xx_hal_conf.h are all editable; in CubeMX mode, only App/ files, CMakeLists.txt, stm32f1xx_hal_conf.h, and USER CODE sections in Core/ are editable. Drivers/ files are never editable. Accepts build_error for compilation errors that static review cannot detect.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project": {"type": "string", "description": "Project name"},
-                    "file": {"type": "string", "description": "File to fix, e.g. App/Src/app_main.c, Core/Src/main.c, CMakeLists.txt, or Core/Inc/stm32f1xx_hal_conf.h"},
-                    "dry_run": {"type": "boolean", "description": "If true, show proposed fixes without modifying the file"},
-                    "build_error": {"type": "string", "description": "Compilation error message from build_project.stderr for this specific file, if any"},
-                },
-                "required": ["project", "file"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "git_status",
-            "description": "Show git diff since last human commit, list changed (modified/untracked) files, and show current branch for a project.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project": {"type": "string", "description": "Project name"},
-                },
-                "required": ["project"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_projects",
-            "description": "List all initialized projects. Only use this in GLOBAL mode (no active project). When a project IS active, you already know its name.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "toolchain_status",
-            "description": "Show the status of all configured toolchains (cmake, arm-gcc, ninja, openocd, stm32 programmer CLI).",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_driver",
-            "description": "Generate a new MCU-agnostic embedded driver (header + source) for a given chip and interface using the LLM. Optionally specify vendor and device for reuse context.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "chip": {"type": "string", "description": "Target chip, e.g. BMI270"},
-                    "interface": {"type": "string", "description": "Communication interface, e.g. SPI, I2C"},
-                    "doc_summary": {"type": "string", "description": "Documentation summary describing the device and its protocol"},
-                    "vendor": {"type": "string", "description": "Vendor name, e.g. Bosch"},
-                    "device": {"type": "string", "description": "Device name, e.g. BMI270"},
-                },
-                "required": ["chip", "interface"],
             },
         },
     },
@@ -459,48 +519,64 @@ def _format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[boo
     data = envelope.summary_source or (envelope.data if isinstance(envelope.data, dict) else {})
     is_ok = envelope.ok
 
-    if name == "analyze_document_engineering":
-        pins = len(data.get("pin_requirements") or [])
-        regs = len(data.get("register_hints") or [])
-        buses = len(data.get("bus_requirements") or [])
-        errors = data.get("parse_errors") or []
-        parts = []
-        if pins: parts.append(f"{pins}个引脚定义")
-        if regs: parts.append(f"{regs}个寄存器")
-        if buses: parts.append(f"{buses}条总线需求")
-        msg = f"文档解析完成: {', '.join(parts)}" if parts else "文档解析完成"
-        if errors:
-            msg += f", {len(errors)}个文档解析出错"
-        elif not parts:
-            return False, "文档解析未提取到有效信息"
-        return True, msg
+    if name == "runtime_run":
+        selected = len(data.get("selected_skills") or [])
+        executable = len(data.get("selected_executable_skills") or [])
+        msg = f"runtime 规划完成: {selected} 个技能"
+        if executable:
+            msg += f", {executable} 个可执行技能"
+        return is_ok, msg if is_ok else f"runtime 失败: {data.get('error') or data.get('message', '')[:80]}"
 
-    if name == "fix_code":
-        fixed = data.get("files_fixed") or data.get("fixed_count")
-        if isinstance(fixed, (int, float)):
-            return True, f"已修复 {int(fixed)} 个文件"
-        fixed_list = data.get("fixed_files") or []
-        if isinstance(fixed_list, list) and fixed_list:
-            return True, f"已修复 {len(fixed_list)} 个文件"
-        if data.get("applied") is True:
-            return True, "已修复 1 个文件"
-        if is_ok:
-            return True, "代码修复完成"
-        error_msg = data.get("error") or data.get("message", "")
-        return False, f"修复失败: {error_msg[:80]}"
+    if name == "runtime_explain":
+        return is_ok, "runtime 模型已解释" if is_ok else f"runtime 解释失败: {data.get('error','')}"
 
-    if name == "review_project":
-        issues = data.get("issues")
-        if isinstance(issues, list):
-            n = len(issues)
-            return (n == 0, f"审查通过, {n} 个问题" if n == 0 else f"审查发现 {n} 个问题")
-        count = data.get("issue_count") or data.get("total_issues")
-        if isinstance(count, (int, float)):
-            n = int(count)
-            return (n == 0, f"审查通过, {n} 个问题" if n == 0 else f"审查发现 {n} 个问题")
-        return (is_ok, "审查完成" if is_ok else f"审查失败: {data.get('error','')}")
+    if name == "skills_list":
+        skills = data.get("skills") or []
+        return is_ok, f"已加载 {len(skills)} 个技能"
 
-    if name == "build_project":
+    if name == "skill_view":
+        skill = data.get("skill") or {}
+        title = skill.get("name") or data.get("name") or "技能"
+        return is_ok, f"已查看技能: {title}" if is_ok else f"技能查看失败: {data.get('error','')}"
+
+    if name == "skill_manage":
+        return is_ok, f"技能已{data.get('action', '处理')}" if is_ok else f"技能处理失败: {data.get('error','')}"
+
+    if name == "skill_promote":
+        level = data.get("promotion_level") or "validated"
+        return is_ok, f"技能已晋升为 {level}" if is_ok else f"技能晋升失败: {data.get('error','')}"
+
+    if name == "skill_execute":
+        evidence = data.get("evidence") or []
+        return is_ok, f"技能执行完成: {len(evidence)} 条证据" if is_ok else f"技能执行失败: {data.get('error','')}"
+
+    if name == "memory_read":
+        return is_ok, "记忆已读取" if is_ok else f"记忆读取失败: {data.get('error','')}"
+
+    if name == "memory_write":
+        return is_ok, "记忆已更新" if is_ok else f"记忆写入失败: {data.get('error','')}"
+
+    if name == "memory_search":
+        results = data.get("results") or []
+        return is_ok, f"召回到 {len(results)} 条上下文"
+
+    if name == "lesson_list":
+        lessons = data.get("lessons") or []
+        return is_ok, f"已列出 {len(lessons)} 条经验"
+
+    if name == "lesson_search":
+        lessons = data.get("lessons") or []
+        return is_ok, f"匹配到 {len(lessons)} 条经验"
+
+    if name == "lesson_record":
+        lesson = data.get("lesson") or {}
+        topic = lesson.get("topic") or lesson.get("slug") or "lesson"
+        return is_ok, f"已记录经验: {topic}" if is_ok else f"经验记录失败: {data.get('error','')}"
+
+    if name == "lesson_promote":
+        return is_ok, "经验已晋升" if is_ok else f"经验晋升失败: {data.get('error','')}"
+
+    if name == "workspace_build":
         if is_ok:
             return True, "构建成功"
         stderr = data.get("stderr") or ""
@@ -510,59 +586,18 @@ def _format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[boo
         error_msg = data.get("error") or data.get("message", "") or "编译出错"
         return False, f"构建失败: {str(error_msg)[:80]}"
 
-    if name == "git_status":
-        branch = data.get("branch") or ""
-        changes = data.get("changes") or []
-        if isinstance(changes, dict):
-            change_count = len(changes.get("modified", []) or []) + len(changes.get("untracked", []) or [])
-            return True, f"工作区干净 ({branch})" if change_count == 0 else f"{change_count} 个文件变更 ({branch})"
-        if isinstance(changes, list):
-            return True, f"工作区干净 ({branch})" if not changes else f"{len(changes)} 个文件变更 ({branch})"
-        return True, "获取 Git 状态完成"
-
-    if name == "run_task":
-        if is_ok:
-            return True, "工作流执行完成"
-        error_msg = data.get("error") or data.get("message", "")
-        return False, f"工作流失败: {str(error_msg)[:80]}"
-
-    if name == "flash_project":
+    if name == "workspace_flash":
         return (is_ok, "烧录成功" if is_ok else f"烧录失败: {data.get('error','')}")
 
-    if name == "monitor_project":
+    if name == "workspace_monitor":
         return True, "串口监控已启动"
 
-    if name == "init_project":
-        proj = data.get("name") or args.get("name", "")
-        if is_ok:
-            return True, f"项目 '{proj}' 已创建" if proj else "项目已创建"
-        return False, f"创建项目失败: {data.get('error','')}"
+    if name == "workspace_probe":
+        probe_type = data.get("probe_type") or args.get("probe_type", "")
+        return is_ok, f"{probe_type or 'workspace'} 探测已执行"
 
-    if name == "list_projects":
-        projs = data if isinstance(data, list) else data.get("projects", [])
-        return True, f"共 {len(projs)} 个项目"
-
-    if name == "toolchain_status":
-        if is_ok:
-            return True, "工具链就绪"
-        missing = data.get("missing", [])
-        if missing:
-            return False, f"工具链缺少: {', '.join(missing[:3])}"
-        return False, "工具链检查失败"
-
-    if name == "debug_loop":
-        return (is_ok, "调试完成" if is_ok else f"调试失败: {data.get('error','')}")
-
-    if name == "project_context":
-        project_data = data.get("project", {}) if isinstance(data, dict) else {}
-        project_name = project_data.get("name", "") if isinstance(project_data, dict) else ""
-        return True, f"项目状态正常 ({project_name})" if project_name else "项目状态正常"
-
-    if name == "generate_driver":
-        chip = data.get("chip") or ""
-        if is_ok:
-            return True, f"驱动生成完成 ({chip})" if chip else "驱动生成完成"
-        return False, f"驱动生成失败: {data.get('error','')}"
+    if name == "workspace_inspect":
+        return is_ok, "工作区状态已读取"
 
     # Generic fallback for unknown tools
     if is_ok:
@@ -616,232 +651,120 @@ def _execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager) -> ToolExe
     kb_root = cm.driver_library_root() / "knowledge_base"
 
     try:
-        if name == "run_task":
-            result = run_task(
-                config=cfg,
-                project_root=str(cm.project_root()),
-                workspace_root=str(cm.workspace_root()),
-                driver_library_root=str(cm.driver_library_root()),
-                task=args.get("task", ""),
-                project_name=args.get("project", ""),
-                docs=args.get("docs", []) or [],
-                dry_run=args.get("dry_run", False),
-                plan_only=args.get("plan_only", False),
-                no_build=args.get("no_build", False),
-                no_flash=args.get("no_flash", False),
-                no_monitor=args.get("no_monitor", False),
-            )
-            return _build_tool_envelope(name, result)
+        if name == "runtime_run":
+            return _build_tool_envelope(name, run_runtime(task=args.get("task", ""), project=args.get("project", "")))
 
-        if name == "analyze_document_engineering":
-            analyzer = DocumentEngineeringAnalyzer(kb_root)
-            context = analyzer.analyze(
-                docs=args.get("docs", []) or [],
-                query=args.get("query", ""),
-            )
-            return _build_tool_envelope(name, context.model_dump(mode="json"))
+        if name == "runtime_explain":
+            return _build_tool_envelope(name, explain_runtime_tool())
 
-        if name == "init_project":
-            platform = args.get("platform", "stm32cubemx") or "stm32cubemx"
-            try:
-                result = run_init_project(
-                    workspace=str(ws),
-                    name=args.get("name", ""),
-                    mcu=args.get("mcu", "STM32F103C8T6"),
-                    platform=platform,
-                    runtime=args.get("runtime", "baremetal"),
-                    project_mode="cubemx" if platform == "stm32cubemx" else "firmware",
-                    firmware_package=args.get("firmware_package", "STM32Cube_FW_F1"),
-                )
-            except FileExistsError as e:
-                return _build_tool_envelope(name, {"success": False, "error": str(e)}, error=str(e))
-            return _build_tool_envelope(name, result)
+        if name == "skills_list":
+            return _build_tool_envelope(name, vnext_skills_list(category=args.get("category")))
 
-        if name == "project_context":
-            if not project_path or not project_path.exists():
-                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
-            pm = ProjectManager(str(ws))
-            loaded = pm.load_project(project)
-            gm = GitManager(str(project_path))
-            sm = SkillManager(cfg, project_root=str(cm.project_root()))
-            tm = ToolchainManager(cfg, project_root=str(cm.project_root()))
+        if name == "skill_view":
+            return _build_tool_envelope(name, skill_view(name=args.get("name", "")))
+
+        if name == "skill_manage":
             return _build_tool_envelope(
                 name,
-                {
-                    "project": loaded.model_dump(mode="json"),
-                    "status": _project_status(project_path),
-                    "git": {
-                        "branch": gm.repo.active_branch.name,
-                        "changes": gm.changed_files(),
-                    },
-                    "toolchains": tm.status(),
-                    "skills": sm.list_skills(),
-                },
+                skill_manage(
+                    action=args.get("action", ""),
+                    name=args.get("name", ""),
+                    category=args.get("category", "workflows"),
+                    content=args.get("content", ""),
+                    old_string=args.get("old_string", ""),
+                    new_string=args.get("new_string", ""),
+                ),
             )
 
-        if name == "list_projects":
-            projs = []
-            for meta_file in sorted(ws.glob("*/.agent_project.json")):
-                try:
-                    data = json.loads(meta_file.read_text(encoding="utf-8"))
-                    projs.append(data)
-                except Exception:
-                    projs.append({"name": meta_file.parent.name, "error": "invalid metadata"})
-            return _build_tool_envelope(name, {"projects": projs})
-
-        if name == "toolchain_status":
-            tm = ToolchainManager(cfg, project_root=str(cm.project_root()))
-            return _build_tool_envelope(name, tm.status())
-
-        if name == "project_status":
-            if not project_path or not project_path.exists():
-                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
-            return _build_tool_envelope(name, _project_status(project_path))
-
-        if name == "project_files":
-            if not project_path or not project_path.exists():
-                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
-            engine = ReviewEngine(str(project_path))
-            files = engine.discover_project_files()
-            return _build_tool_envelope(name, {"files": files})
-
-        if name == "git_status":
-            if not project_path or not project_path.exists():
-                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
-            gm = GitManager(str(project_path))
-            return _build_tool_envelope(name, {
-                "diff": gm.get_diff_since_last_human_commit(),
-                "changes": gm.changed_files(),
-                "branch": gm.repo.active_branch.name,
-            })
-
-        if name == "build_project":
-            if not project_path:
-                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
-            from luxar.tools.build_project import run_build_project
-            result = run_build_project(
-                project_path=str(project_path),
-                config=cfg,
-                project_root=str(cm.project_root()),
-                clean=args.get("clean", False),
+        if name == "skill_promote":
+            return _build_tool_envelope(
+                name,
+                skill_promote(
+                    name=args.get("name", ""),
+                    category=args.get("category", ""),
+                    promotion_level=args.get("promotion_level", "validated"),
+                ),
             )
-            return _build_tool_envelope(name, result)
 
-        if name == "flash_project":
-            if not project_path:
-                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
-            from luxar.tools.flash_project import run_flash_project
-            result = run_flash_project(
-                project_path=str(project_path),
-                config=cfg,
-                project_root=str(cm.project_root()),
-                probe=args.get("probe"),
+        if name == "skill_execute":
+            return _build_tool_envelope(
+                name,
+                skill_execute(
+                    name=args.get("name", ""),
+                    category=args.get("category", ""),
+                    project=args.get("project", ""),
+                    port=args.get("port", ""),
+                    baudrate=int(args.get("baudrate", 115200)),
+                ),
             )
-            return _build_tool_envelope(name, result)
 
-        if name == "monitor_project":
-            if not project_path:
-                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
-            from luxar.tools.monitor_project import run_monitor_project
-            result = run_monitor_project(
-                project_path=str(project_path),
-                port=args.get("port", ""),
-                baudrate=args.get("baudrate", 115200),
+        if name == "memory_read":
+            return _build_tool_envelope(name, memory_read(target=args.get("target", "memory")))
+
+        if name == "memory_write":
+            return _build_tool_envelope(
+                name,
+                memory_write(
+                    content=args.get("content", ""),
+                    target=args.get("target", "memory"),
+                    append=bool(args.get("append", True)),
+                ),
             )
-            return _build_tool_envelope(name, result)
 
-        if name == "debug_loop":
-            if not project_path:
-                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
-            from luxar.tools.debug_loop_project import run_debug_loop_project
-            result = run_debug_loop_project(
-                project_path=str(project_path),
-                config=cfg,
-                project_root=str(cm.project_root()),
-                probe=args.get("probe"),
-                port=args.get("port", ""),
-                clean=args.get("clean", False),
+        if name == "memory_search":
+            return _build_tool_envelope(name, memory_search(query=args.get("query", "")))
+
+        if name == "lesson_list":
+            return _build_tool_envelope(name, memory_lessons())
+
+        if name == "lesson_search":
+            return _build_tool_envelope(
+                name,
+                memory_lessons(query=args.get("query", ""), limit=int(args.get("limit", 5))),
             )
-            return _build_tool_envelope(name, result)
 
-        if name == "review_project":
-            if not project_path or not project_path.exists():
-                return _build_tool_envelope(name, {"error": f"Project '{project}' not found"}, error=f"Project '{project}' not found")
-            engine = ReviewEngine(str(project_path))
-            file = args.get("file", "")
-            if file:
-                report = engine.review_file(str(project_path / file))
-            else:
-                report = engine.review_project()
-            return _build_tool_envelope(name, report.model_dump(mode="json") if hasattr(report, "model_dump") else {"report": str(report)})
-
-        if name == "fix_code":
-            if not project_path:
-                return _build_tool_envelope(name, {"error": "No project specified"}, error="No project specified")
-            file = args.get("file", "")
-            if not file:
-                return _build_tool_envelope(name, {"error": "No file specified"}, error="No file specified")
-            # build-project-level files that fix_code should always be able to edit:
-            #   - CMakeLists.txt (any location) — build configuration
-            #   - stm32f1xx_hal_conf.h / stm32_hal_conf.h — HAL project config
-            always_editable = {"cmakelists.txt", "stm32f1xx_hal_conf.h", "stm32_hal_conf.h"}
-            path_lower = str(Path(file).name).lower()
-
-            # Determine project mode to adjust Core/ protection scope.
-            # In "cubemx" mode, Core/ files are CubeMX-generated → protected.
-            # In "firmware" mode, Core/ files are Luxar skeleton → editable.
-            project_mode = "cubemx"
-            try:
-                meta = json.loads((project_path / ".agent_project.json").read_text(encoding="utf-8"))
-                project_mode = str(meta.get("project_mode", "cubemx")).lower()
-            except Exception:
-                pass
-
-            is_core_path = "core" in str(Path(file).parts).lower()
-            is_always_editable = path_lower in always_editable
-
-            if is_always_editable:
-                pass
-            elif project_mode == "cubemx":
-                content = ""
-                try:
-                    content = (project_path / file).read_text(encoding="utf-8")
-                except Exception:
-                    pass
-                if is_core_path and "USER CODE BEGIN" not in content:
-                    message = f"Cannot auto-fix CubeMX-generated file '{file}'. Only App/ files, Core/ files with USER CODE sections, and project config files (CMakeLists.txt, stm32f1xx_hal_conf.h) are editable."
-                    return _build_tool_envelope(name, {"error": message}, error=message)
-            else:
-                is_driver_path = "drivers" in str(Path(file).parts).lower()
-                if is_driver_path:
-                    message = f"Cannot auto-fix vendor driver file '{file}'. Driver files from STM32Cube firmware packages should not be modified."
-                    return _build_tool_envelope(name, {"error": message}, error=message)
-            fixer = CodeFixer(cfg)
-            build_errors_list = None
-            raw_build_error = args.get("build_error", "")
-            if raw_build_error:
-                build_errors_list = [raw_build_error]
-            result = fixer.fix_file(
-                project_path=str(project_path),
-                file_path=str(project_path / file),
-                build_errors=build_errors_list,
-                apply_changes=not args.get("dry_run", False),
+        if name == "lesson_record":
+            return _build_tool_envelope(
+                name,
+                memory_lesson_record(payload=args.get("payload", {}) or {}, promoted=bool(args.get("promoted", False))),
             )
-            return _build_tool_envelope(name, result)
 
-        if name == "generate_driver":
-            from luxar.core.driver_generator import DriverGenerator
-            gen = DriverGenerator(cfg, project_root=str(cm.project_root()))
-            result = gen.generate_driver(
-                chip=args.get("chip", ""),
-                interface=args.get("interface", ""),
-                protocol_summary=args.get("doc_summary", ""),
-                register_summary=args.get("register_summary", ""),
-                output_dir=str(cm.project_root() / "generated"),
-                vendor=args.get("vendor", ""),
-                device=args.get("device", ""),
+        if name == "lesson_promote":
+            return _build_tool_envelope(
+                name,
+                memory_lesson_promote(slug=args.get("slug", ""), evidence_count=int(args.get("evidence_count", 1))),
             )
-            return _build_tool_envelope(name, result)
+
+        if name == "workspace_inspect":
+            return _build_tool_envelope(name, workspace_inspect())
+
+        if name == "workspace_build":
+            return _build_tool_envelope(
+                name,
+                workspace_build(project=args.get("project", ""), clean=bool(args.get("clean", False))),
+            )
+
+        if name == "workspace_flash":
+            return _build_tool_envelope(
+                name,
+                workspace_flash(project=args.get("project", ""), probe=args.get("probe", "")),
+            )
+
+        if name == "workspace_monitor":
+            return _build_tool_envelope(
+                name,
+                workspace_monitor(
+                    project=args.get("project", ""),
+                    port=args.get("port", ""),
+                    baudrate=int(args.get("baudrate", 115200)),
+                ),
+            )
+
+        if name == "workspace_probe":
+            return _build_tool_envelope(
+                name,
+                workspace_probe(project=args.get("project", ""), probe_type=args.get("probe_type", "i2c")),
+            )
 
         return _build_tool_envelope(name, {"error": f"Unknown tool: {name}"}, error=f"Unknown tool: {name}")
     except Exception as e:
@@ -888,98 +811,15 @@ async def _execute_tool_with_timeout(name: str, args: dict, cfg: Any, cm: Config
     return _parse_tool_result(result)
 
 
-async def _execute_run_task_stream(
-    args: dict,
-    cfg: Any,
-    cm: ConfigManager,
-):
-    for event in run_task_stream(
-        config=cfg,
-        project_root=str(cm.project_root()),
-        workspace_root=str(cm.workspace_root()),
-        driver_library_root=str(cm.driver_library_root()),
-        task=args.get("task", ""),
-        project_name=args.get("project", ""),
-        docs=args.get("docs", []) or [],
-        dry_run=args.get("dry_run", False),
-        plan_only=args.get("plan_only", False),
-        no_build=args.get("no_build", False),
-        no_flash=args.get("no_flash", False),
-        no_monitor=args.get("no_monitor", False),
-    ):
-        yield event
-        await asyncio.sleep(0)
-
-
-def _classify_run_task_intent(args: dict) -> str:
-    plan = TaskRouter().route(
-        task=args.get("task", ""),
-        project=args.get("project", ""),
-        docs=args.get("docs", []) or [],
-        dry_run=args.get("dry_run", False),
-        plan_only=args.get("plan_only", False),
-    )
-    return plan.intent.intent_type
-
-
 def _build_tool_running_payload(name: str, args: dict) -> dict:
     payload = {"tool": name}
-    if name == "run_task":
-        task = args.get("task", "")
-        project = args.get("project", "")
-        if task:
-            payload["task"] = task
-        if project:
-            payload["project"] = project
+    task = args.get("task", "")
+    project = args.get("project", "")
+    if task:
+        payload["task"] = task
+    if project:
+        payload["project"] = project
     return payload
-
-
-def _should_block_run_task_reentry(
-    state: dict | None,
-    args: dict,
-) -> tuple[bool, str]:
-    current_intent = _classify_run_task_intent(args)
-    if not state or not state.get("seen"):
-        return False, current_intent
-    current_project = args.get("project", "")
-    if current_project != state.get("project"):
-        return False, current_intent
-    status = state.get("status", "")
-    if status in {"failed", "missing_info", "no_final"} and not state.get("recovery_used", False):
-        return False, current_intent
-    return True, current_intent
-
-
-def _build_run_task_reentry_result(state: dict, args: dict) -> dict:
-    prior_intent = state.get("intent", "forge_project")
-    if prior_intent == "explain":
-        message = (
-            "run_task already produced an explanation in this turn. "
-            "Do not call run_task again for the same project; continue with lightweight tools "
-            "like project_context or summarize the blocker instead."
-        )
-        reason = "run_task_explain_reentry_blocked"
-    else:
-        message = (
-            "A project-level workflow is already active in this turn. "
-            "Do not call run_task again; continue from the existing workflow "
-            "or use lightweight tools like project_context, build_project, or review_project."
-        )
-        reason = "run_task_reentry_blocked"
-    return {
-        "success": False,
-        "mode": "execute",
-        "intent": prior_intent,
-        "message": message,
-        "blocked": True,
-        "reason": reason,
-        "project": args.get("project", state.get("project", "")),
-        "task": args.get("task", ""),
-    }
-
-
-def _is_active_project_context(project: str) -> bool:
-    return bool(_normalize_project_name(project))
 
 
 def _build_active_project_init_block_result(project: str, args: dict) -> dict:
@@ -996,59 +836,6 @@ def _build_active_project_init_block_result(project: str, args: dict) -> dict:
             "请继续使用当前项目；如需新建项目，请回到全局会话或使用新建项目入口。"
         ),
     }
-
-
-def _is_lightweight_project_inspection_task(task: str) -> bool:
-    text = str(task or "").strip().lower()
-    if not text:
-        return False
-
-    implementation_terms = (
-        "实现", "生成", "创建", "新建", "添加", "修改", "修复", "烧录", "监视",
-        "build", "flash", "monitor", "implement", "generate", "create", "add", "fix",
-    )
-    if any(term in text for term in implementation_terms):
-        return False
-
-    file_terms = (
-        "文件", "文件列表", "目录", "目录结构", "结构", "状态",
-        "file", "files", "tree", "structure", "status",
-    )
-    inspect_terms = (
-        "查看", "看看", "列出", "显示", "当前", "状态",
-        "show", "list", "check", "inspect", "current",
-    )
-    return any(term in text for term in file_terms) and any(term in text for term in inspect_terms)
-
-
-def _should_block_lightweight_run_task(project: str, args: dict) -> bool:
-    return _is_active_project_context(project) and _is_lightweight_project_inspection_task(args.get("task", ""))
-
-
-def _build_lightweight_run_task_block_result(project: str, args: dict) -> dict:
-    active_project = _normalize_project_name(project)
-    return {
-        "success": True,
-        "blocked": True,
-        "reason": "run_task_lightweight_query_blocked",
-        "project": active_project,
-        "task": args.get("task", ""),
-        "message": (
-            f"当前请求只是查看项目 '{active_project}' 的状态、文件或目录结构，"
-            "不应启动 forge/run_task 工作流。请改用 project_context、project_files 或 git_status。"
-        ),
-    }
-
-
-def _guard_run_task_call(project: str, state: dict | None, args: dict) -> tuple[dict | None, str]:
-    current_intent = _classify_run_task_intent(args)
-    if state and state.get("seen"):
-        blocked, current_intent = _should_block_run_task_reentry(state, args)
-        if blocked:
-            return _build_run_task_reentry_result(state, args), current_intent
-    if _should_block_lightweight_run_task(project, args):
-        return _build_lightweight_run_task_block_result(project, args), current_intent
-    return None, current_intent
 
 
 # ===== Persistent conversation store =====
@@ -1078,100 +865,28 @@ def _save_conv(project: str):
 # ===== Agent Loop: LLM reasoning + tool execution =====
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are Luxar, an embedded AI engineering assistant. You are currently working on STM32 project '{project}'.
+You are LUXAR v0.2.0 operating inside project '{project}'.
 
-## Current Project: {project}
-- The user has already selected {project} as the active project.
-- ALL project-specific actions (review, build, flash, status, files, git, etc.) should use "{project}" without asking.
-- NEVER call list_projects — you are already in {project}.
-- NEVER call init_project while inside this active project conversation. The project already exists.
-- When the user says "审查" (review) → directly call review_project.
-- When the user says "构建" (build) → directly call build_project.
-- When the user says "状态" (status) → call project_context (it includes status, git, and files).
-- When the user says "查看文件", "文件列表", "目录结构", or asks to inspect current files → call project_context or project_files. Do NOT call run_task/forge.
-- Do NOT call multiple exploratory tools before the one the user asked for. Just call the right tool directly.
-- For a full project task, you may call run_task ONCE to start the workflow.
-- After run_task starts, continue with lightweight tools (fix_code, build_project, review_project). NEVER call run_task again.
-- run_task is for full project-level implementation workflows inside the active project. It must not be used for status, files, git, review-only, build-only, flash-only, or monitor-only requests.
-- fix_code accepts a build_error parameter — pass gcc error lines from build_project.stderr to fix errors that static review cannot see.
-
-## CubeMX Rules (CRITICAL)
-- These rules apply to CubeMX-mode projects ONLY.
-- Core/ files (main.c, freertos.c, stm32*.c, system_*.c, syscalls.c, sysmem.c, *_hal_msp.c) are GENERATED by CubeMX.
-- You may ONLY edit code inside existing /* USER CODE BEGIN ... */ ... /* USER CODE END */ blocks.
-- NEVER create new USER CODE sections in Core/ files — this will break the CubeMX workflow.
-- If the user asks you to edit Core/ files outside USER CODE blocks, explain that it will be overwritten by CubeMX regeneration and refuse.
-
-## Firmware-Mode Rules (applies when project_mode=firmware)
-- In firmware mode, Core/ files (main.c, system_stm32xx.c, startup_stm32.s) are Luxar-generated skeletons — they ARE editable.
-- Core/Inc/stm32f1xx_hal_conf.h is a project config header — editable.
-- CMakeLists.txt is a project build config — editable.
-- App/ files (App/Src/*, App/Inc/*) are fully editable.
-- Drivers/ files are STM32Cube firmware package files — DO NOT edit them.
-- If a build error originates from an App/ or Core/ file, use fix_code immediately — do NOT hesitate.
-
-## Common Editable Files (BOTH modes)
-- CMakeLists.txt — always editable. Fix glob patterns, add/remove sources, etc.
-- Core/Inc/stm32f1xx_hal_conf.h — always editable. Enable/disable HAL modules.
-- App/Src/app_main.c, App/Inc/app_main.h — always editable.
-
-## If you say "审查", call ONLY review_project. Do NOT call project_context/project_status/project_files first.
-
-## Fix/Build Loop (IMPORTANT)
-- When build_project fails with compilation errors: extract the file path and error message from stderr, then call fix_code with the specific file and build_error.
-- Example: build_project fails with "App/Src/app_main.c:21:10: fatal error: stm32f10x.h: No such file" → call fix_code(project="manualtest", file="App/Src/app_main.c", build_error="App/Src/app_main.c:21:10: fatal error: stm32f10x.h: No such file")
-- This fix→build loop resolves errors faster than re-running run_task.
-
-## Review Results Interpretation
-- When review_project reports issues in Core/ files (main.c, syscalls.c, system_*.c, etc.), IGNORE them. These are CubeMX/HAL generated files and cannot be modified.
-- Only fix issues in App/ files. Core/ file issues are false positives for our workflow.
-- If build fails due to review errors, check if the errors are in App/ or Core/. Only App/ errors need fixing.
-
-## Language
-- Respond in the same language the user uses. Chinese in -> Chinese out.
-
-## Conversation
-- Chat naturally. For casual conversation — respond directly.
-
-## Tool usage
-- You have tools for build, flash, review, forge, debug loop, git, etc.
-- Call a tool only when the user explicitly asks for an action.
-- Summarize tool results in natural language.
-- Be concise.
-
-## Tool Usage Rules (CRITICAL)
-- ONLY call analyze_document_engineering when the user has explicitly provided document paths. For simple requests like "Blink LED", "Colorful LED", or "GPIO control", do NOT call document analysis — these do not require datasheets.
-- If build_project fails, look at stderr for file paths and gcc error messages. Call fix_code with the specific file and build_error param containing the gcc error line. Do NOT call run_task for build failures.
-- For small, explicit, low-risk App/ fixes, act automatically instead of asking for permission. Examples: replacing `printf` with HAL/UART output, adding missing Doxygen comments, fixing include mistakes, and other review-driven cleanup in App/ files.
-- If you already know the exact fix from review/build output, do the fix immediately. Do NOT reply with “I can fix this if you want” or ask the user to confirm routine App/ code cleanup.
-- After applying an automatic App/ fix, re-run review_project. If the user asked to build or the previous step was blocked by the review gate, re-run build_project once after the fix.
-- Only stop and ask the user when the change is non-trivial, spans multiple possible designs, touches generated Core/ code outside USER CODE blocks, or may change behavior beyond the reported defect.
-- If 2 consecutive tools fail with errors, STOP and report the error to the user. Do NOT blindly try more tools in a loop. Ask the user for clarification or next steps.
-- Do NOT call multiple exploratory tools before the one the user asked for. Just call the right tool directly."""
+- Respond in the same language as the user.
+- Harness is the runtime behavior system. Use runtime, skills, memory, and workspace primitives only.
+- Do not fabricate tool output, build status, flash status, probe results, or hardware state.
+- Treat skills as the only procedural artifact. Prefer loading, executing, patching, and promoting skills over inventing ad-hoc workflows.
+- Use memory and lessons for recall and self-improvement. Record failures as lessons before assuming a reusable skill update.
+- Use workspace primitives for concrete actions like inspect, build, flash, monitor, and probe.
+- If the task cannot be completed with current evidence, explain the blocker instead of pretending success.
+- Keep explanations concise and action-oriented.
+"""
 
 GLOBAL_SYSTEM_PROMPT = """\
-You are Luxar, a general embedded AI engineering assistant specialized in STM32 development.
-You help users with embedded development concepts, code review, driver generation,
-project planning, build, flash, monitor, debug, and git operations.
+You are LUXAR v0.2.0.
 
-## Language
-- Respond in the same language the user uses. Chinese in → Chinese out. English in → English out.
-
-## Conversation
-- Be a helpful conversational assistant first. Chat naturally, answer questions, explain concepts, give advice.
-- For casual conversation, greetings, questions about your capabilities, or discussion about code — respond directly without calling any tool.
-
-## Tool usage
-- You have tools that can create projects (run_task/forge_project), list projects, check project status, etc.
-- When the user asks to work on a specific project, use its name with tools.
-- If no project is specified and the user asks about existing projects, use `list_projects` to see what is available.
-- Only call tools when the user explicitly asks for a concrete action.
-- For a full project-level task, call run_task only once to start the workflow.
-- After run_task starts, do not call run_task again in the same turn. Continue from the workflow or use lightweight tools like project_context, build_project, or review_project.
-- Do NOT call tools for casual conversation or questions.
-- For routine, localized code cleanup that directly resolves a reported review/build issue, prefer doing the fix automatically rather than asking for confirmation.
-- After a tool executes, summarize the result in natural language for the user.
-- Be concise and helpful."""
+- Respond in the same language as the user.
+- Harness is the runtime behavior system. Use runtime, skills, memory, and workspace primitives only.
+- Skills are the only procedural artifacts. Memory stores stable facts. Lessons store unpromoted experience.
+- Do not fabricate evidence, hardware state, or tool results.
+- For casual conversation or explanation-only requests, respond directly without tools.
+- For concrete actions, use the smallest appropriate primitive and summarize the evidence-backed result.
+"""
 
 
 PROJECT_TEMPLATE_ALIASES: dict[str, tuple[str, ...]] = {
@@ -1604,15 +1319,6 @@ async def _run_agent_loop(
     repair_count = 0
     tool_calls_used = 0
     consecutive_failures = 0
-    run_task_state = {
-        "seen": False,
-        "project": "",
-        "task": "",
-        "intent": "",
-        "workflow_started": False,
-        "status": "",
-        "recovery_used": False,
-    }
     for _ in range(max_rounds):
         try:
             resp = client.complete_with_tools(messages=api_messages, tools=TOOLS)
@@ -1658,69 +1364,19 @@ async def _run_agent_loop(
             api_messages.append(assistant_msg)
             conv.append(assistant_msg)
             for tc in resp.tool_calls:
-                if tc.function_name == "run_task":
-                    guard_result, current_intent = _guard_run_task_call(project, run_task_state, tc.arguments)
-                    if guard_result:
-                        try:
-                            result = _build_tool_envelope("run_task", guard_result)
-                            tool_calls_used = _enforce_tool_call_budget("run_task", tool_calls_used)
-                        except AgentToolLimitError as e:
-                            return {
-                                "content": str(e),
-                                "reasoning_content": "",
-                            }
-                    else:
-                        if run_task_state["seen"] and run_task_state["status"] in {"failed", "missing_info", "no_final"}:
-                            run_task_state["recovery_used"] = True
-                        run_task_state.update({
-                            "seen": True,
-                            "project": tc.arguments.get("project", ""),
-                            "task": tc.arguments.get("task", ""),
-                            "intent": current_intent,
-                            "workflow_started": False,
-                            "status": "started",
-                        })
-                        try:
-                            result, tool_calls_used = await _execute_tool_with_limits(
-                                tc.function_name,
-                                tc.arguments,
-                                cfg,
-                                cm,
-                                used_calls=tool_calls_used,
-                            )
-                            data = result.data if isinstance(result.data, dict) else {}
-                            if isinstance(data, dict):
-                                run_task_state["status"] = "completed" if data.get("success") else "failed"
-                                if data.get("mode") == "plan" and not data.get("success"):
-                                    run_task_state["status"] = "missing_info"
-                        except (AgentToolLimitError, AgentToolTimeoutError) as e:
-                            return {
-                                "content": str(e),
-                                "reasoning_content": "",
-                            }
-                elif tc.function_name == "init_project" and _is_active_project_context(project):
-                    try:
-                        result = _build_tool_envelope("init_project", _build_active_project_init_block_result(project, tc.arguments))
-                        tool_calls_used = _enforce_tool_call_budget("init_project", tool_calls_used)
-                    except AgentToolLimitError as e:
-                        return {
-                            "content": str(e),
-                            "reasoning_content": "",
-                        }
-                else:
-                    try:
-                        result, tool_calls_used = await _execute_tool_with_limits(
-                            tc.function_name,
-                            tc.arguments,
-                            cfg,
-                            cm,
-                            used_calls=tool_calls_used,
-                        )
-                    except (AgentToolLimitError, AgentToolTimeoutError) as e:
-                        return {
-                            "content": str(e),
-                            "reasoning_content": "",
-                        }
+                try:
+                    result, tool_calls_used = await _execute_tool_with_limits(
+                        tc.function_name,
+                        tc.arguments,
+                        cfg,
+                        cm,
+                        used_calls=tool_calls_used,
+                    )
+                except (AgentToolLimitError, AgentToolTimeoutError) as e:
+                    return {
+                        "content": str(e),
+                        "reasoning_content": "",
+                    }
                 if _is_tool_result_failure(result):
                     consecutive_failures += 1
                     if consecutive_failures >= MAX_CONSECUTIVE_TOOL_FAILURES:
@@ -1818,15 +1474,6 @@ async def _run_agent_loop_stream(
     final_content = ""
     final_reasoning = ""
     tool_calls_used = 0
-    run_task_state = {
-        "seen": False,
-        "project": "",
-        "task": "",
-        "intent": "",
-        "workflow_started": False,
-        "status": "",
-        "recovery_used": False,
-    }
     for _ in range(max_rounds):
         round_content = ""
         round_reasoning = ""
@@ -1905,57 +1552,18 @@ async def _run_agent_loop_stream(
                 "event": "tool_running",
                 "data": json.dumps(_build_tool_running_payload(collected_tc_name, args), ensure_ascii=False),
             }
+            yield {
+                "event": "phase_changed",
+                "data": json.dumps({"phase": "tool_running", "tool": collected_tc_name}, ensure_ascii=False),
+            }
             try:
-                if collected_tc_name == "run_task":
-                    guard_result, current_intent = _guard_run_task_call(project, run_task_state, args)
-                    if guard_result:
-                        result = _build_tool_envelope("run_task", guard_result)
-                    else:
-                        if run_task_state["seen"] and run_task_state["status"] in {"failed", "missing_info", "no_final"}:
-                            run_task_state["recovery_used"] = True
-                        run_task_state.update({
-                            "seen": True,
-                            "project": args.get("project", ""),
-                            "task": args.get("task", ""),
-                            "intent": current_intent,
-                            "workflow_started": False,
-                            "status": "started",
-                        })
-                        stream_runner = _execute_run_task_stream(args, cfg, cm)
-                        final_result = None
-                        try:
-                            while True:
-                                workflow_event = await stream_runner.__anext__()
-                                if workflow_event.get("type") == "workflow_started":
-                                    run_task_state["workflow_started"] = True
-                                if workflow_event.get("type") in {"workflow_finished", "workflow_failed"}:
-                                    payload = workflow_event.get("payload", {}) or {}
-                                    if isinstance(payload.get("result"), dict):
-                                        final_result = payload["result"]
-                                yield {
-                                    "event": workflow_event.get("type", "workflow_warning"),
-                                    "data": json.dumps({
-                                        key: value for key, value in workflow_event.items() if key != "type"
-                                    }, ensure_ascii=False),
-                                }
-                        except StopAsyncIteration:
-                            final_result = final_result or {
-                                "success": False,
-                                "mode": "execute",
-                                "message": "run_task stream ended without a final result.",
-                            }
-                            run_task_state["status"] = "completed" if final_result.get("success") else "failed"
-                            if final_result.get("mode") == "plan" and not final_result.get("success"):
-                                run_task_state["status"] = "missing_info"
-                            if final_result.get("message") == "run_task stream ended without a final result.":
-                                run_task_state["status"] = "no_final"
-                            result = _build_tool_envelope("run_task", final_result)
-                elif collected_tc_name == "init_project" and _is_active_project_context(project):
-                    result = _build_tool_envelope("init_project", _build_active_project_init_block_result(project, args))
-                else:
-                    result = await _execute_tool_with_timeout(collected_tc_name, args, cfg, cm)
+                result = await _execute_tool_with_timeout(collected_tc_name, args, cfg, cm)
             except AgentToolTimeoutError as e:
                 yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                yield {
+                    "event": "escalation_triggered",
+                    "data": json.dumps({"reason": "tool_timeout", "tool": collected_tc_name}, ensure_ascii=False),
+                }
                 return
             if _is_tool_result_failure(result):
                 consecutive_failures += 1
@@ -1963,6 +1571,10 @@ async def _run_agent_loop_stream(
                     yield {
                         "event": "error",
                         "data": json.dumps({"error": _build_consecutive_failure_limit_message(consecutive_failures)}),
+                    }
+                    yield {
+                        "event": "escalation_triggered",
+                        "data": json.dumps({"reason": "consecutive_tool_failures", "count": consecutive_failures}, ensure_ascii=False),
                     }
                     return
             else:
@@ -1984,6 +1596,21 @@ async def _run_agent_loop_stream(
                 "event": "tool_result",
                 "data": json.dumps({"tool": collected_tc_name, "result": _serialize_tool_data(result.data)}, ensure_ascii=False),
             }
+            if collected_tc_name in {"skills_list", "skill_view", "skill_execute"}:
+                yield {
+                    "event": "skill_loaded",
+                    "data": json.dumps({"tool": collected_tc_name, "result": result.data}, ensure_ascii=False),
+                }
+            if collected_tc_name == "lesson_record":
+                yield {
+                    "event": "lesson_recorded",
+                    "data": json.dumps(result.data, ensure_ascii=False),
+                }
+            if collected_tc_name in {"skill_promote", "lesson_promote"}:
+                yield {
+                    "event": "promotion_applied",
+                    "data": json.dumps({"tool": collected_tc_name, "result": result.data}, ensure_ascii=False),
+                }
             ok, summary = _format_tool_result_summary(collected_tc_name, args, result)
             _agent_log.info("%s → %s", collected_tc_name, summary) if ok else _agent_log.warning("%s → %s", collected_tc_name, summary)
             yield {
@@ -2298,53 +1925,111 @@ def create_app(config_path: str | None = None) -> FastAPI:
         data["status"] = _project_status(ws / name)
         return data
 
-    @app.get("/api/toolchains")
-    def get_toolchains():
-        tm = ToolchainManager(cfg, project_root=str(cm.project_root()))
-        return tm.status()
+    @app.post("/api/runtime/run")
+    def api_runtime_run(body: dict):
+        task = str(body.get("task", "") or body.get("message", "")).strip()
+        return run_runtime(task=task, project=str(body.get("project", "")))
+
+    @app.get("/api/runtime/explain")
+    def api_runtime_explain():
+        return explain_runtime_tool()
+
+    @app.get("/api/memory")
+    def api_memory(target: str = Query("memory")):
+        return memory_read(target=target)
+
+    @app.post("/api/memory")
+    def api_memory_write(body: dict):
+        return memory_write(
+            content=str(body.get("content", "")),
+            target=str(body.get("target", "memory")),
+            append=bool(body.get("append", True)),
+        )
+
+    @app.get("/api/memory/lessons")
+    def api_memory_lessons(query: str = Query(""), limit: int = Query(5)):
+        return memory_lessons(query=query, limit=limit)
+
+    @app.post("/api/memory/lessons")
+    def api_memory_record_lesson(body: dict):
+        return memory_lesson_record(payload=body, promoted=bool(body.get("promoted", False)))
+
+    @app.post("/api/memory/lessons/promote")
+    def api_memory_promote_lesson(body: dict):
+        return memory_lesson_promote(
+            slug=str(body.get("slug", "")),
+            evidence_count=int(body.get("evidence_count", 1)),
+        )
+
+    @app.get("/api/session-search")
+    def api_session_search(query: str = Query(...)):
+        return memory_search(query=query)
+
+    @app.get("/api/workspace")
+    def api_workspace_inspect():
+        return workspace_inspect()
+
+    @app.post("/api/workspace/build")
+    def api_workspace_build(body: dict):
+        result = workspace_build(project=str(body.get("project", "")), clean=bool(body.get("clean", False)))
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/flash")
+    def api_workspace_flash(body: dict):
+        result = workspace_flash(project=str(body.get("project", "")), probe=str(body.get("probe", "")))
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/monitor")
+    def api_workspace_monitor(body: dict):
+        result = workspace_monitor(
+            project=str(body.get("project", "")),
+            port=str(body.get("port", "")),
+            baudrate=int(body.get("baudrate", 115200)),
+        )
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/probe")
+    def api_workspace_probe(body: dict):
+        return workspace_probe(project=str(body.get("project", "")), probe_type=str(body.get("probe_type", "i2c")))
 
     @app.get("/api/skills")
-    def list_skills(protocol: str | None = Query(None)):
-        sm = SkillManager(cfg, project_root=str(cm.project_root()))
-        return {"skills": sm.list_skills(protocol=protocol)}
+    def api_skills(category: str | None = Query(None)):
+        return vnext_skills_list(category=category)
 
-    @app.get("/api/drivers")
-    def search_drivers(
-        keyword: str = Query(""),
-        protocol: str | None = Query(None),
-        vendor: str | None = Query(None),
-        limit: int = Query(20),
-    ):
-        dl = DriverLibrary(str(cm.driver_library_root()))
-        results = dl.search_drivers(keyword=keyword, protocol=protocol or "", vendor=vendor or "", limit=limit)
-        return {"drivers": results}
+    @app.get("/api/skills/{name}")
+    def api_skill_view(name: str):
+        result = skill_view(name=name)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+        return result
 
-    @app.get("/api/knowledge-base")
-    def search_knowledge_base(query: str = Query(""), limit: int = Query(10)):
-        kb_root = cm.driver_library_root() / "knowledge_base"
-        if not query.strip():
-            kb = KnowledgeBase(str(kb_root))
-            stats = kb.stats()
-            return {"stats": stats}
-        kb = KnowledgeBase(str(kb_root))
-        results = kb.search(query=query, limit=limit)
-        return {"results": results}
+    @app.post("/api/skills/manage")
+    def api_skill_manage(body: dict):
+        return skill_manage(
+            action=str(body.get("action", "")),
+            name=str(body.get("name", "")),
+            category=str(body.get("category", "workflows")),
+            content=str(body.get("content", "")),
+            old_string=str(body.get("old_string", "")),
+            new_string=str(body.get("new_string", "")),
+        )
 
-    @app.post("/api/run-task")
-    async def api_run_task(body: dict):
-        return run_task(
-            config=cfg,
-            project_root=str(cm.project_root()),
-            workspace_root=str(cm.workspace_root()),
-            driver_library_root=str(cm.driver_library_root()),
-            task=body.get("task", "") or body.get("message", ""),
-            project_name=body.get("project", ""),
-            docs=body.get("docs", []) or [],
-            dry_run=body.get("dry_run", False),
-            plan_only=body.get("plan_only", False),
-            no_build=body.get("no_build", False),
-            no_flash=body.get("no_flash", False),
-            no_monitor=body.get("no_monitor", False),
+    @app.post("/api/skills/{name}/promote")
+    def api_skill_promote(name: str, body: dict):
+        return skill_promote(
+            name=name,
+            category=str(body.get("category", "")),
+            promotion_level=str(body.get("promotion_level", "validated")),
+        )
+
+    @app.post("/api/skills/{name}/execute")
+    def api_skill_execute(name: str, body: dict):
+        return skill_execute(
+            name=name,
+            category=str(body.get("category", "")),
+            project=str(body.get("project", "")),
+            port=str(body.get("port", "")),
+            baudrate=int(body.get("baudrate", 115200)),
         )
 
     @app.post("/api/analyze-docs")
@@ -2353,28 +2038,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
         analyzer = DocumentEngineeringAnalyzer(cm.driver_library_root() / "knowledge_base")
         context = analyzer.analyze(docs=docs, query=body.get("query", ""))
         return {"engineering_context": context.model_dump(mode="json")}
-
-    @app.get("/api/project-context/{name}")
-    def get_project_context(name: str):
-        ws = cm.workspace_root()
-        project_path = ws / name
-        if not project_path.exists():
-            raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-        project = ProjectManager(str(ws)).load_project(name)
-        gm = GitManager(str(project_path))
-        tm = ToolchainManager(cfg, project_root=str(cm.project_root()))
-        sm = SkillManager(cfg, project_root=str(cm.project_root()))
-        return {
-            "project": project.model_dump(mode="json"),
-            "status": _project_status(project_path),
-            "git": {
-                "branch": gm.repo.active_branch.name,
-                "changes": gm.changed_files(),
-                "diff": gm.get_diff_since_last_human_commit(),
-            },
-            "toolchains": tm.status(),
-            "skills": sm.list_skills(),
-        }
 
     @app.get("/api/firmware-library")
     def get_firmware_library():
@@ -2392,93 +2055,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 pass
             _conv_store = None
 
-    @app.get("/api/git/{project}")
-    def get_git_status(project: str):
-        ws = cm.workspace_root()
-        meta_file = ws / project / ".agent_project.json"
-        if not meta_file.exists():
-            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
-        gm = GitManager(str(ws / project))
-        return {
-            "diff": gm.get_diff_since_last_human_commit(),
-            "changes": gm.changed_files(),
-            "branch": gm.repo.active_branch.name,
-        }
-
-    @app.post("/api/review/{project}")
-    def review_project(project: str, file: str | None = Query(None)):
-        ws = cm.workspace_root()
-        project_path = ws / project
-        if not project_path.exists():
-            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
-        engine = ReviewEngine(str(project_path))
-        if file:
-            report = engine.review_file(str(project_path / file))
-        else:
-            report = engine.review_project()
-        return {"report": report.model_dump(mode="json")}
-
-    @app.post("/api/generate-driver")
-    def generate_driver(
-        chip: str = Query(...),
-        interface: str = Query(...),
-        doc_summary: str = Query(""),
-        register_summary: str = Query(""),
-        vendor: str = Query(""),
-        device: str = Query(""),
-        output_dir: str = Query(""),
-    ):
-        resolved_output = output_dir or str(cm.project_root() / "generated")
-        generator = DriverGenerator(cfg, project_root=str(cm.project_root()))
-        result = generator.generate_driver(
-            chip=chip,
-            interface=interface,
-            protocol_summary=doc_summary,
-            register_summary=register_summary,
-            output_dir=resolved_output,
-            vendor=vendor,
-            device=device,
-        )
-        return result.model_dump(mode="json")
-
-    @app.post("/api/generate-driver-loop")
-    async def generate_driver_loop(
-        chip: str = Query(...),
-        interface: str = Query(...),
-        doc_summary: str = Query(""),
-        register_summary: str = Query(""),
-        vendor: str = Query(""),
-        device: str = Query(""),
-        output_dir: str = Query(""),
-        max_fix_iterations: int = Query(3),
-    ):
-        resolved_output = output_dir or str(cm.project_root() / "generated")
-
-        async def event_generator():
-            pipeline = DriverPipeline(cfg, project_root=str(cm.project_root()))
-            yield {"event": "log", "data": json.dumps({"message": "Starting driver pipeline...", "phase": "init"})}
-
-            def callback(phase: str, data: dict[str, Any]):
-                return None
-
-            result = pipeline.generate_review_fix(
-                chip=chip,
-                interface=interface,
-                protocol_summary=doc_summary,
-                register_summary=register_summary,
-                output_dir=resolved_output,
-                vendor=vendor,
-                device=device,
-                max_fix_iterations=max_fix_iterations,
-                progress_callback=callback,
-            )
-
-            yield {
-                "event": "result",
-                "data": json.dumps(result.model_dump(mode="json") if hasattr(result, "model_dump") else result),
-            }
-
-        return EventSourceResponse(event_generator())
 
     return app
 

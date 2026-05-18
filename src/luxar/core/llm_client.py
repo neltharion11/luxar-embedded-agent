@@ -181,6 +181,7 @@ _OPENAI_PROVIDERS: dict[str, dict] = {
 
 
 class LLMClient:
+    _system_cache: str | None = None
     _soul_cache: str | None = None
     _manual_cache: str | None = None
 
@@ -198,6 +199,7 @@ class LLMClient:
         self.retry_attempts = config.llm.retry_attempts
         self.retry_min_delay = config.llm.retry_min_delay
         self.retry_max_delay = config.llm.retry_max_delay
+        self.prompt_stack_mode = str(getattr(config.llm, "prompt_stack_mode", "vnext") or "vnext").strip().lower()
 
     def _resolve_provider(self) -> tuple[str, str, str]:
         """Returns (provider_type, endpoint, api_key).
@@ -226,6 +228,8 @@ class LLMClient:
 
     @classmethod
     def _read_text_file(cls, path: Path) -> str | None:
+        if cls._system_cache is not None and path.name == "system.md":
+            return cls._system_cache
         if cls._soul_cache is not None and path.name == "soul.md":
             return cls._soul_cache
         if cls._manual_cache is not None and path.name == "agent.md":
@@ -236,6 +240,8 @@ class LLMClient:
             content = path.read_text(encoding="utf-8").strip()
         except Exception:
             return None
+        if path.name == "system.md":
+            cls._system_cache = content
         if path.name == "soul.md":
             cls._soul_cache = content
         if path.name == "agent.md":
@@ -255,14 +261,21 @@ class LLMClient:
         return cls._read_text_file(cls._find_project_root() / "workspace" / "agent.md")
 
     @classmethod
-    def build_system_prompt(cls, task_prompt: str = "") -> str:
+    def load_runtime_system_prompt(cls) -> str | None:
+        return cls._read_text_file(cls._find_project_root() / "workspace" / "prompts" / "system.md")
+
+    def build_system_prompt(self, task_prompt: str = "") -> str:
         parts: list[str] = []
-        soul = cls.load_soul()
-        manual = cls.load_agent_manual()
-        if soul:
-            parts.append(soul)
-        if manual:
-            parts.append(manual)
+        runtime_system = self.load_runtime_system_prompt()
+        if runtime_system:
+            parts.append(runtime_system)
+        if self.prompt_stack_mode == "legacy":
+            soul = self.load_soul()
+            manual = self.load_agent_manual()
+            if soul:
+                parts.append(soul)
+            if manual:
+                parts.append(manual)
         if task_prompt:
             parts.append(task_prompt)
         return "\n\n---\n\n".join(parts)

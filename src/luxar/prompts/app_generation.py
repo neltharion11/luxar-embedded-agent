@@ -1,36 +1,15 @@
 from luxar.core.mcu_reference import format_app_generation_mcu_ref
 from luxar.models.schemas import ProjectPlan
-from luxar.prompts.gates import ANTI_RATIONALIZATION, VERIFICATION_GATE_APP, UART_DIAGNOSTIC_REQUIREMENT
 
 
-APP_GENERATION_SYSTEM_PROMPT = f"""You are a senior embedded firmware engineer.
+APP_GENERATION_SYSTEM_PROMPT = """You are the LUXAR v0.2.0 application-generation worker.
 
-Generate concise, compilable C code for the application layer of an embedded project.
-Follow these rules:
-- Only generate application-layer code for `app_main.h` and `app_main.c`
-- Do not modify CubeMX-generated files directly
-- Do not perform low-level peripheral initialization in App code for firmware-mode projects. Use `luxar_hardware.h` scaffold/glue functions or existing HAL handles documented in the plan.
-- Treat `internal_peripherals` as already owned by the firmware scaffold. App code should implement behavior/state machines and call integration helpers such as `luxar_uart_write`, `luxar_rgb_pwm_set`, `luxar_delay_ms`, `luxar_spi_transfer`, or `luxar_i2c_txrx` when applicable.
-- PINS AND PERIPHERALS: Use ONLY the MCU pin reference provided in the prompt. Do NOT hallucinate pin numbers, GPIO ports, or peripheral instances. If the prompt says USART2 is on PA2/PA3, use PA2/PA3. If the prompt says the LED is on PC13, use PC13.
-- USE THE STM32 HAL LIBRARY (stm32f1xx_hal.h) for ALL peripheral access:
-  * GPIO: HAL_GPIO_WritePin, HAL_GPIO_TogglePin, HAL_GPIO_Init
-  * UART: HAL_UART_Transmit (never use bare-metal USART register writes)
-  * SysTick: use HAL_Delay for timing, HAL_GetTick for elapsed time
-  * Clock: use HAL_RCC_OscConfig / HAL_RCC_ClockConfig
-  * Do NOT write to registers directly (no USART2->SR, GPIOA->BSRR, etc.)
-  * Do NOT include stm32f10x.h (use stm32f1xx_hal.h instead)
-- Prefer simple polling/state-machine logic over complex abstractions
-- Avoid malloc, free, and printf unless the requirement explicitly needs UART output
-- Include Doxygen comments for exported functions
-- Return exactly two fenced code blocks:
-  1. ```c header
-  2. ```c source
-
-{VERIFICATION_GATE_APP}
-
-{UART_DIAGNOSTIC_REQUIREMENT}
-
-{ANTI_RATIONALIZATION}
+Generate concise, compilable application-layer C code.
+Treat bring-up and transport ownership as upstream concerns; application code should integrate behavior only after the selected harness path is satisfied.
+Do not invent hardware bindings or hidden initialization flows.
+Return exactly two fenced code blocks:
+1. ```c header
+2. ```c source
 """
 
 
@@ -114,7 +93,8 @@ def build_app_generation_prompt(
 - Firmware-mode app code may include `luxar_hardware.h` and call its glue functions; do not recreate peripheral initialization.
 - Use clear comments where hardware integration is still project-specific
 - If the requirement mentions blinking or GPIO but pin configuration is unknown, keep the logic as a clear TODO inside the application layer
-- If the requirement mentions UART output, prefer a weakly-coupled helper function or documented HAL integration points rather than hardcoding unsupported handles
+- If the requirement mentions UART output, prefer a weakly-coupled helper function or documented integration points rather than hardcoding unsupported handles
 - Do not add generated driver files or new peripheral init code under App/Drivers.
 - Keep the output minimal but compilable
+- If the task implies hardware validation that has not happened yet, keep the app side conservative and assume the harness will validate runtime behavior separately.
 """
