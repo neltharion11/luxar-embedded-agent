@@ -1,6 +1,29 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+
+
+_TASK_PROGRESS_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bcurrent progress\b",
+        r"\btask progress\b",
+        r"\bnext step\b",
+        r"\bremaining\b",
+        r"\btodo\b",
+        r"\bin progress\b",
+        r"\bcompleted\b",
+        r"\bstatus update\b",
+        r"\bbuild passed\b",
+        r"\bbuild failed\b",
+        r"\bflash failed\b",
+        r"\bmonitor failed\b",
+        r"\bdebug loop\b",
+        r"\bworkflow step\b",
+        r"\bplan-only\b",
+    )
+]
 
 
 class MemoryManager:
@@ -18,6 +41,16 @@ class MemoryManager:
         return {"target": target, "content": path.read_text(encoding="utf-8")}
 
     def write(self, content: str, target: str = "memory", append: bool = True) -> dict[str, object]:
+        blocked_reason = self._blocked_reason(content)
+        if blocked_reason:
+            path = self.memory_path if target != "user" else self.user_path
+            return {
+                "success": False,
+                "blocked": True,
+                "target": target,
+                "path": str(path),
+                "error": blocked_reason,
+            }
         path = self.memory_path if target != "user" else self.user_path
         if append and path.read_text(encoding="utf-8").strip():
             updated = path.read_text(encoding="utf-8") + "\n" + content.strip() + "\n"
@@ -34,3 +67,15 @@ class MemoryManager:
             if query_norm and query_norm in content.lower():
                 results.append({"target": target, "path": str(path), "content": content})
         return results
+
+    def _blocked_reason(self, content: str) -> str:
+        normalized = content.strip()
+        if not normalized:
+            return ""
+        for pattern in _TASK_PROGRESS_PATTERNS:
+            if pattern.search(normalized):
+                return (
+                    "Refused to write transient task progress into durable memory. "
+                    "Store stable facts such as user preferences, board conventions, or toolchain facts instead."
+                )
+        return ""

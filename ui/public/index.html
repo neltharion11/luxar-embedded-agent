@@ -43,7 +43,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .nav-item:hover{background:#f0f0f3;color:#1c2024}
 .nav-item.active{background:#1c2024;color:#fff}
 .nav-item .nav-icon{width:18px;text-align:center;flex-shrink:0;font-size:14px}
-#sidebar-bottom{padding:12px;border-top:1px solid #e0e1e6;display:flex;align-items:center;justify-content:space-between}
+#sidebar-bottom{padding:12px;border-top:1px solid #e0e1e6;display:flex;flex-direction:column;gap:8px}
+.hw-status-row{display:flex;align-items:center;justify-content:space-between;width:100%}
+.hw-status{display:flex;align-items:center;gap:6px;font-size:11px;color:#60646c}
+.hw-status .led{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.hw-status .led.on{background:#22c55e}
+.hw-status .led.off{background:#d1d5db}
+.hw-detail{font-size:10px;color:#9ca3af;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .api-status{display:flex;align-items:center;gap:6px;font-size:12px;color:#60646c}
 .api-status .led{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0}
 #lang-btn{cursor:pointer;padding:4px 10px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;font-size:11px;font-weight:600;color:#1c2024;transition:background .15s}
@@ -208,8 +214,18 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
     <div class="nav-item" data-page-link="model-config" onclick="navigate('model-config')"><span class="nav-icon">&#x2699;</span><span data-i18n="nav.modelConfig">Model Config</span></div>
   </div>
   <div id="sidebar-bottom">
-    <div class="api-status"><span class="led"></span><span data-i18n="nav.apiConnected">Connected</span></div>
-    <button id="lang-btn" onclick="toggleLang()">&#x4E2D;</button>
+    <div class="hw-status-row">
+      <div class="api-status"><span class="led" id="api-led"></span><span data-i18n="nav.apiConnected">Connected</span></div>
+      <button id="lang-btn" onclick="toggleLang()">&#x4E2D;</button>
+    </div>
+    <div class="hw-status-row">
+      <div class="hw-status"><span class="led off" id="stlink-led"></span><span>ST-Link</span></div>
+      <span class="hw-detail" id="stlink-info">-</span>
+    </div>
+    <div class="hw-status-row">
+      <div class="hw-status"><span class="led off" id="serial-led"></span><span>Serial</span></div>
+      <span class="hw-detail" id="serial-info">-</span>
+    </div>
   </div>
 </div>
 
@@ -826,7 +842,7 @@ function formatToolRunningLine(chunk) {
 async function loadSidebarProjects() {
   var container = document.getElementById('sidebar-projects');
   try {
-    var data = await apiGet('/api/projects');
+    var data = await apiGet('/api/workspace/projects');
     var projs = data.projects || [];
     projectMetaByName = {};
     projs.forEach(function(p) { if (p && p.name) projectMetaByName[p.name] = p; });
@@ -925,7 +941,7 @@ async function submitNewProject() {
   };
   if (!payload.name) { status.textContent = 'Project name is required.'; return; }
   try {
-    var res = await fetch('/api/projects', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    var res = await fetch('/api/workspace/create-project', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
     var data = await res.json();
     if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
     await loadSidebarProjects();
@@ -948,7 +964,7 @@ async function loadOpenProjectList() {
   var list = document.getElementById('open-project-list');
   list.innerHTML = 'Loading...';
   try {
-    var data = await apiGet('/api/projects');
+    var data = await apiGet('/api/workspace/projects');
     var projs = data.projects || [];
     if (!projs.length) { list.innerHTML = '<div class="empty-state">No projects found</div>'; return; }
     list.innerHTML = projs.map(function(p) {
@@ -1384,7 +1400,7 @@ async function sendMessage() {
 
 async function loadDashboard() {
   try {
-    var results = await Promise.all([apiGet('/api/config'), apiGet('/api/projects'), apiGet('/api/skills'), apiGet('/api/workspace')]);
+    var results = await Promise.all([apiGet('/api/config'), apiGet('/api/workspace/projects'), apiGet('/api/skills'), apiGet('/api/workspace')]);
     var config = results[0], pdata = results[1], sdata = results[2], wsdata = results[3];
     var projList = pdata.projects || [];
     var skillList = sdata.skills || [];
@@ -1483,7 +1499,7 @@ function loadKeyForProvider(provider) {
 }
 
 var providerDefaults = {
-  deepseek:   {url: 'https://api.deepseek.com/chat/completions',      key: 'DEEPSEEK_API_KEY', thinking: {supported:true, effortOptions:['high','max'], note:'modelConfig.thinkingDeepSeek'}, models: [{id:'deepseek-v4-flash',name:'DeepSeek V4 Flash',ctx:393216},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro',ctx:393216}]},
+  deepseek:   {url: 'https://api.deepseek.com/chat/completions',      key: 'DEEPSEEK_API_KEY', thinking: {supported:true, effortOptions:['high','max'], note:'modelConfig.thinkingDeepSeek'}, models: [{id:'deepseek-v4-flash',name:'DeepSeek V4 Flash',ctx:1048576},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro',ctx:1048576}]},
   openai:     {url: 'https://api.openai.com/v1/chat/completions',     key: 'OPENAI_API_KEY', thinking: {supported:true, effortOptions:['minimal','low','medium','high','xhigh'], note:'modelConfig.thinkingOpenAI'}, models: [{id:'gpt-5.5',name:'GPT-5.5',ctx:131072},{id:'gpt-5.4',name:'GPT-5.4',ctx:131072},{id:'gpt-5.4-mini',name:'GPT-5.4 Mini',ctx:131072},{id:'gpt-5.4-nano',name:'GPT-5.4 Nano',ctx:131072}]},
   claude:     {url: 'https://api.anthropic.com/v1/messages',          key: 'ANTHROPIC_API_KEY', thinking: {supported:true, budget:true, minBudget:1024, note:'modelConfig.thinkingClaude'}, models: [{id:'claude-opus-4-7',name:'Claude Opus 4.7',ctx:131072},{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6',ctx:65536},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5',ctx:65536}]},
   groq:       {url: 'https://api.groq.com/openai/v1/chat/completions',key: 'GROQ_API_KEY', thinking: {supported:false, note:'modelConfig.thinkingUnsupported'}, models: [{id:'llama-3.1-8b-instant',name:'Llama 3.1 8B',ctx:131072},{id:'llama-3.3-70b-versatile',name:'Llama 3.3 70B',ctx:32768},{id:'openai/gpt-oss-120b',name:'GPT-OSS 120B',ctx:65536},{id:'openai/gpt-oss-20b',name:'GPT-OSS 20B',ctx:65536}]},
@@ -1695,7 +1711,36 @@ async function resetModelConfig() {
 applyI18n();
 loadSidebarProjects();
 loadDashboard();
+
+  // ── Hardware Status Polling ──
+  async function refreshHwStatus() {
+    try {
+      var r = await fetch('/api/workspace/status');
+      var d = await r.json();
+      var stLed = document.getElementById('stlink-led');
+      var stInfo = document.getElementById('stlink-info');
+      var serLed = document.getElementById('serial-led');
+      var serInfo = document.getElementById('serial-info');
+      if (!stLed || !serLed) return;
+      if (d.stlink && d.stlink.connected) {
+        stLed.className = 'led on';
+        stInfo.textContent = d.stlink.info || 'Connected';
+      } else {
+        stLed.className = 'led off';
+        stInfo.textContent = 'Not found';
+      }
+      if (d.serial && d.serial.connected) {
+        serLed.className = 'led on';
+        serInfo.textContent = d.serial.port || 'Connected';
+      } else {
+        serLed.className = 'led off';
+        serInfo.textContent = 'Not found';
+      }
+    } catch(e) {}
+  }
+  setInterval(refreshHwStatus, 15000);
+  refreshHwStatus();
+
 </script>
 </body>
 </html>
-

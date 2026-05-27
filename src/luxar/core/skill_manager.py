@@ -1,23 +1,61 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from luxar.core.config_manager import AgentConfig
 from luxar.core.llm_client import LLMClient, LLMClientError
 from luxar.models.schemas import SkillArtifact
-from luxar.prompts.skill_evolution import (
-    SKILL_EVOLUTION_PROMPT,
-    SKILL_EVOLUTION_SYSTEM_PROMPT,
-)
+SKILL_EVOLUTION_SYSTEM_PROMPT = """
+你是 LUXAR v0.2.0 runtime 中的 skill-evolution worker。
+负责把项目经验沉淀成可复用的 skill 草稿。
+输出必须务实、可复用、避免项目私货，优先总结接口模式、约束、调试经验和边界条件。
+不要把一次性失败噪声写进正式 skill；更适合的内容应进入 lesson 或 harness。
+""".strip()
+
+
+SKILL_EVOLUTION_PROMPT = """
+任务：根据以下验证通过的项目经验，生成一个协议通用 skill 文档。
+
+【协议】
+{protocol}
+
+【器件】
+{device_name}
+
+【平台】
+{platforms}
+
+【运行时】
+{runtimes}
+
+【来源项目】
+{source_project}
+
+【摘要】
+{summary}
+
+【经验教训】
+{lessons_learned}
+
+【要求】
+1. 只沉淀协议级和驱动级通用经验，不写项目路径、私有板卡细节或一次性调试噪声
+2. 必须包含：适用范围、接口模式、常见错误、调试检查表、边界条件
+3. 内容面向后续 ESP、Linux、FreeRTOS 等平台扩展，避免只写 STM32 私有表述
+4. 输出为单个 Markdown 文档，不要加解释
+""".strip()
+
 
 
 class SkillManager:
     def __init__(self, config: AgentConfig, project_root: str):
         self.config = config
         self.project_root = Path(project_root).resolve()
-        self.skill_root = (self.project_root / self.config.agent.skill_library / "protocols").resolve()
+        self.skill_root = (self.project_root / self.config.agent.skills_root / "protocols").resolve()
+        self.legacy_skill_root = (self.project_root / self.config.agent.skill_library / "protocols").resolve()
         self.skill_root.mkdir(parents=True, exist_ok=True)
+        self._sync_legacy_protocol_skills()
 
     def should_update_protocol_skill(
         self,
@@ -44,6 +82,7 @@ class SkillManager:
         source_project: str,
     ) -> SkillArtifact:
         normalized_protocol = (protocol or "generic").strip().lower()
+        self._ensure_protocol_migrated(normalized_protocol)
         protocol_dir = self.skill_root / normalized_protocol
         protocol_dir.mkdir(parents=True, exist_ok=True)
         skill_path = protocol_dir / "SKILL.md"
@@ -196,27 +235,38 @@ This skill captures reusable guidance for building and reviewing {protocol.upper
         return merged
 
     def list_skills(self, protocol: str | None = None) -> list[dict]:
+        self._sync_legacy_protocol_skills()
         skills: list[dict] = []
-        for protocol_dir in sorted(self.skill_root.iterdir()):
-            if not protocol_dir.is_dir():
+        seen_protocols: set[str] = set()
+        roots = [self.skill_root]
+        if self.legacy_skill_root != self.skill_root and self.legacy_skill_root.exists():
+            roots.append(self.legacy_skill_root)
+        for root in roots:
+            if not root.exists():
                 continue
-            metadata_path = protocol_dir / "metadata.json"
-            skill_path = protocol_dir / "SKILL.md"
-            if not metadata_path.exists():
-                continue
-            meta = self._load_existing_metadata(metadata_path)
-            proto = meta.get("protocol", "").lower()
-            if protocol and proto != protocol.lower().strip():
-                continue
-            skills.append({
-                "protocol": proto,
-                "path": str(skill_path) if skill_path.exists() else "",
-                "platforms": meta.get("platforms", []),
-                "runtimes": meta.get("runtimes", []),
-                "source_projects": meta.get("source_projects", []),
-                "validation_count": meta.get("validation_count", 0),
-                "updated_at": meta.get("updated_at", ""),
-            })
+            for protocol_dir in sorted(root.iterdir()):
+                if not protocol_dir.is_dir():
+                    continue
+                metadata_path = protocol_dir / "metadata.json"
+                skill_path = protocol_dir / "SKILL.md"
+                if not metadata_path.exists():
+                    continue
+                meta = self._load_existing_metadata(metadata_path)
+                proto = meta.get("protocol", "").lower()
+                if not proto or proto in seen_protocols:
+                    continue
+                if protocol and proto != protocol.lower().strip():
+                    continue
+                seen_protocols.add(proto)
+                skills.append({
+                    "protocol": proto,
+                    "path": str(skill_path) if skill_path.exists() else "",
+                    "platforms": meta.get("platforms", []),
+                    "runtimes": meta.get("runtimes", []),
+                    "source_projects": meta.get("source_projects", []),
+                    "validation_count": meta.get("validation_count", 0),
+                    "updated_at": meta.get("updated_at", ""),
+                })
         return skills
 
     def _load_existing_metadata(self, metadata_path: Path) -> dict:
@@ -226,4 +276,38 @@ This skill captures reusable guidance for building and reviewing {protocol.upper
             return json.loads(metadata_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
+
+    def _sync_legacy_protocol_skills(self) -> None:
+        if self.legacy_skill_root == self.skill_root or not self.legacy_skill_root.exists():
+            return
+        for legacy_protocol_dir in self.legacy_skill_root.iterdir():
+            if not legacy_protocol_dir.is_dir():
+                continue
+            self._ensure_protocol_migrated(legacy_protocol_dir.name)
+
+    def _ensure_protocol_migrated(self, protocol: str) -> None:
+        normalized_protocol = str(protocol).strip().lower()
+        if not normalized_protocol:
+            return
+        legacy_dir = self.legacy_skill_root / normalized_protocol
+        if not legacy_dir.exists() or not legacy_dir.is_dir():
+            return
+        target_dir = self.skill_root / normalized_protocol
+        if target_dir.exists():
+            return
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for child in legacy_dir.iterdir():
+            if child.is_dir():
+                shutil.copytree(child, target_dir / child.name, dirs_exist_ok=True)
+            else:
+                shutil.copy2(child, target_dir / child.name)
+        metadata_path = target_dir / "metadata.json"
+        if metadata_path.exists():
+            metadata = self._load_existing_metadata(metadata_path)
+            if metadata:
+                metadata["path"] = str(target_dir / "SKILL.md")
+                metadata_path.write_text(
+                    json.dumps(metadata, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
 

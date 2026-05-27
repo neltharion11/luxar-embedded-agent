@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from luxar.core.config_manager import AgentConfig
-from luxar.core.debug_loop import DebugLoop
+from luxar.agent.workers._debug_loop import DebugLoop
 
 
 def run_debug_loop_project(

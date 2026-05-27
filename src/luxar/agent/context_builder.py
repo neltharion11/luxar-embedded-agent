@@ -23,7 +23,7 @@ class RuntimeWorkspace:
             project_root=manager.project_root(),
             projects_root=manager.workspace_root(),
             driver_library_root=manager.driver_library_root(),
-            legacy_skill_root=manager.skill_library_root(),
+            legacy_skill_root=manager.legacy_skill_library_root(),
             skills_root=manager.skills_root(),
             lesson_root=manager.lesson_library_root(),
             memory_root=manager.memory_root(),

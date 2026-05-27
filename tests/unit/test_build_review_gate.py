@@ -106,8 +106,8 @@ class BuildReviewGateTests(unittest.TestCase):
                 side_effect=[initial_report, fixed_report],
             ), \
             mock.patch(
-                "luxar.tools.build_project.run_fix_code",
-                return_value=mock.Mock(success=True, applied=True),
+                "luxar.tools.build_project.RepairWorker.repair_file",
+                return_value={"success": True, "applied": True, "error": ""},
             ) as fix_mock, \
             mock.patch(
                 "luxar.tools.build_project.BuildSystem.build_project",
@@ -123,9 +123,6 @@ class BuildReviewGateTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             fix_mock.assert_called_once()
-            fix_kwargs = fix_mock.call_args.kwargs
-            self.assertIn("review_report", fix_kwargs)
-            self.assertEqual(2, fix_kwargs["review_report"].total_issues)
             build_project_mock.assert_called_once()
 
     def test_build_respects_empty_auto_fix_whitelist(self) -> None:
@@ -152,7 +149,7 @@ class BuildReviewGateTests(unittest.TestCase):
                 "luxar.tools.build_project.ReviewEngine.review_project",
                 return_value=review_report,
             ), \
-            mock.patch("luxar.tools.build_project.run_fix_code") as fix_mock:
+            mock.patch("luxar.tools.build_project.RepairWorker.repair_file") as fix_mock:
                 result = run_build_project(
                     project_path=str(project_dir),
                     config=config,
@@ -188,7 +185,7 @@ class BuildReviewGateTests(unittest.TestCase):
                 "luxar.tools.build_project.ReviewEngine.review_project",
                 return_value=review_report,
             ), \
-            mock.patch("luxar.tools.build_project.run_fix_code") as fix_mock:
+            mock.patch("luxar.tools.build_project.RepairWorker.repair_file") as fix_mock:
                 result = run_build_project(
                     project_path=str(project_dir),
                     config=config,

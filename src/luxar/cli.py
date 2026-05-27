@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 
 import rich_click as click
@@ -22,6 +23,16 @@ from luxar.tools.workspace_tool import (
     workspace_probe,
 )
 
+class _StatusFilter(logging.Filter):
+    """Suppress access logs for /api/workspace/status polling."""
+    def filter(self, record):
+        msg = record.getMessage()
+        if "/api/workspace/status" in msg:
+            return False
+        return True
+
+
+
 
 def _echo_json(data: object) -> None:
     try:
@@ -33,6 +44,39 @@ def _echo_json(data: object) -> None:
 @click.group()
 def main() -> None:
     """LUXAR 0.2.0 CLI."""
+
+
+
+
+@main.command("start")
+@click.option("--host", default="127.0.0.1", help="Bind address")
+@click.option("--port", default=8000, type=int, help="Bind port")
+@click.option("--no-reload", is_flag=True, default=False, help="Disable auto-reload")
+def start_command(host: str, port: int, no_reload: bool) -> None:
+    """Start the LUXAR web UI and API server."""
+    import os
+    os.environ.setdefault("LUXAR_ENABLE_LEGACY_HTTP_SURFACE", "1")
+    import uvicorn
+    click.echo(f"LUXAR server starting on http://{host}:{port}")
+
+    _log_config = uvicorn.config.LOGGING_CONFIG
+    _log_config["filters"] = {"status_filter": {"()": "luxar.cli._StatusFilter"}}
+    _log_config["formatters"]["access"]["fmt"] = '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    for _logger_name in ("uvicorn.access", "uvicorn.asgi"):
+        _handlers = _log_config["loggers"].get(_logger_name, {}).get("handlers", [])
+        for _h in _handlers:
+            _filters = _log_config["handlers"].setdefault(_h, {}).setdefault("filters", [])
+            if "status_filter" not in _filters:
+                _filters.append("status_filter")
+
+    uvicorn.run(
+        "luxar.server.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=not no_reload,
+        log_config=_log_config,
+    )
 
 
 @main.command("run")
@@ -198,7 +242,8 @@ def workspace_monitor_command(project_name: str, port: str, baudrate: int) -> No
 @click.option("--project", "project_name", required=True)
 @click.option("--probe-type", default="i2c")
 def workspace_probe_command(project_name: str, probe_type: str) -> None:
-    _echo_json(workspace_probe(project=project_name, probe_type=probe_type))
+    result = workspace_probe(project=project_name, probe_type=probe_type)
+    _echo_json(result.model_dump(mode="json") if hasattr(result, "model_dump") else result)
 
 
 if __name__ == "__main__":

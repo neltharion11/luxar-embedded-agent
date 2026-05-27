@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from luxar.core.config_manager import AgentConfig
-from luxar.core.debug_loop import DebugLoop
+from luxar.agent.workers._debug_loop import DebugLoop
 from luxar.models.schemas import BuildResult, FlashResult, MonitorResult
 
 WINDOWS_PREFIX = "C:"

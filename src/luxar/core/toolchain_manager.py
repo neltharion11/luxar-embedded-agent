@@ -50,6 +50,23 @@ class ToolchainManager:
             fallback_name="STM32_Programmer_CLI",
         )
 
+    def resolve_probe_rs(self) -> str | None:
+        return self._resolve_binary(
+            explicit=self.config.toolchains.probe_rs,
+            bundled_relatives=[
+                "probe-rs/bin/probe-rs.exe",
+                "probe-rs/bin/probe-rs",
+            ],
+            fallback_name="probe-rs",
+        )
+
+    def resolve_platformio(self) -> str | None:
+        return self._resolve_binary(
+            explicit=self.config.toolchains.platformio,
+            bundled_relatives=["platformio/platformio.exe","platformio/platformio"],
+            fallback_name="platformio",
+        )
+
     def resolve_arm_gcc(self) -> str | None:
         return self._resolve_arm_tool("gcc", explicit=self.config.toolchains.arm_gcc)
 
@@ -74,6 +91,8 @@ class ToolchainManager:
             "arm_gcc": self.resolve_arm_gcc() or "",
             "ninja": self.resolve_ninja() or "",
             "programmer_cli": self.resolve_programmer_cli() or "",
+        "probe_rs": self.resolve_probe_rs() or "",
+        "platformio": self.resolve_platformio() or "",
         }
 
     def _resolve_binary(

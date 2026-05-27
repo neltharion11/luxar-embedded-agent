@@ -41,7 +41,9 @@ class VNextRuntimeTests(unittest.TestCase):
                     "topic": "oled_dark_screen",
                     "symptom": "screen stays dark",
                     "hypothesis": "bring-up not validated",
+                    "evidence": "UART output showed no I2C ACK",
                     "resolution": "run minimal executable skill first",
+                    "outcome": "Screen initialized correctly after skill execution",
                 }
             )
             matches = store.search("dark")
@@ -61,7 +63,8 @@ class VNextRuntimeTests(unittest.TestCase):
                 cm.project_root.return_value = root
                 cm.workspace_root.return_value = root / "workspace" / "projects"
                 cm.driver_library_root.return_value = root / "workspace" / "driver_library"
-                cm.skill_library_root.return_value = root / "workspace" / "skill_library"
+                cm.skill_library_root.return_value = root / "workspace" / "skills"
+                cm.legacy_skill_library_root.return_value = root / "workspace" / "skill_library"
                 cm.skills_root.return_value = Path("workspace") / "skills"
                 cm.lesson_library_root.return_value = root / "workspace" / "lessons"
                 cm.memory_root.return_value = root / "workspace" / "memory"
@@ -101,7 +104,8 @@ class VNextApiTests(unittest.TestCase):
                 cm.project_root.return_value = Path(tmpdir)
                 cm.workspace_root.return_value = Path(tmpdir) / "workspace" / "projects"
                 cm.driver_library_root.return_value = Path(tmpdir) / "workspace" / "driver_library"
-                cm.skill_library_root.return_value = Path(tmpdir) / "workspace" / "skill_library"
+                cm.skill_library_root.return_value = Path(tmpdir) / "workspace" / "skills"
+                cm.legacy_skill_library_root.return_value = Path(tmpdir) / "workspace" / "skill_library"
                 cm.skills_root.return_value = Path("workspace") / "skills"
                 cm.lesson_library_root.return_value = Path(tmpdir) / "workspace" / "lessons"
                 cm.memory_root.return_value = Path(tmpdir) / "workspace" / "memory"
@@ -120,7 +124,8 @@ class VNextApiTests(unittest.TestCase):
                 cm.project_root.return_value = Path(tmpdir)
                 cm.workspace_root.return_value = Path(tmpdir) / "workspace" / "projects"
                 cm.driver_library_root.return_value = Path(tmpdir) / "workspace" / "driver_library"
-                cm.skill_library_root.return_value = Path(tmpdir) / "workspace" / "skill_library"
+                cm.skill_library_root.return_value = Path(tmpdir) / "workspace" / "skills"
+                cm.legacy_skill_library_root.return_value = Path(tmpdir) / "workspace" / "skill_library"
                 cm.skills_root.return_value = Path("workspace") / "skills"
                 cm.lesson_library_root.return_value = Path(tmpdir) / "workspace" / "lessons"
                 cm.memory_root.return_value = Path(tmpdir) / "workspace" / "memory"
@@ -140,7 +145,8 @@ class VNextApiTests(unittest.TestCase):
                 cm.project_root.return_value = Path(tmpdir)
                 cm.workspace_root.return_value = Path(tmpdir) / "workspace" / "projects"
                 cm.driver_library_root.return_value = Path(tmpdir) / "workspace" / "driver_library"
-                cm.skill_library_root.return_value = Path(tmpdir) / "workspace" / "skill_library"
+                cm.skill_library_root.return_value = Path(tmpdir) / "workspace" / "skills"
+                cm.legacy_skill_library_root.return_value = Path(tmpdir) / "workspace" / "skill_library"
                 cm.skills_root.return_value = Path("workspace") / "skills"
                 cm.lesson_library_root.return_value = Path(tmpdir) / "workspace" / "lessons"
                 cm.memory_root.return_value = Path(tmpdir) / "workspace" / "memory"
@@ -152,7 +158,9 @@ class VNextApiTests(unittest.TestCase):
                         "topic": "oled_dark_screen",
                         "symptom": "screen stays dark",
                         "hypothesis": "bringup incomplete",
+                        "evidence": "No I2C ACK seen on logic analyser",
                         "resolution": "run executable skill first",
+                        "outcome": "OLED came up after following executable skill steps",
                     }
                 )
                 with TestClient(create_app()) as client:

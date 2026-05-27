@@ -177,6 +177,29 @@ class AssetReuseAdvisorTests(unittest.TestCase):
             self.assertIn("confidence", context)
             self.assertGreater(context["confidence"], 0.0)
 
+    def test_build_context_falls_back_to_legacy_skill_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            driver_root = root / "driver_library"
+            new_skill_root = root / "skills"
+            legacy_skill_root = root / "skill_library"
+            (legacy_skill_root / "protocols" / "spi").mkdir(parents=True, exist_ok=True)
+            (legacy_skill_root / "protocols" / "spi" / "SKILL.md").write_text(
+                "# SPI Legacy Skill\nUse callback injection.\n",
+                encoding="utf-8",
+            )
+
+            advisor = AssetReuseAdvisor(
+                project_root=root,
+                driver_library_root=driver_root,
+                skill_library_root=new_skill_root,
+                legacy_skill_library_root=legacy_skill_root,
+            )
+            context = advisor.build_context(chip="BMI270", interface="SPI")
+
+            self.assertIn("协议技能摘要", context["summary"])
+            self.assertIn("skill_library", context["skill_path"])
+
     def test_select_reuse_candidate_uses_reuse_count_bonus(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

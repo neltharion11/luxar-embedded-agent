@@ -1,6 +1,7 @@
 agent: {driver_library: ./workspace/driver_library, firmware_library: 
     ./workspace/firmware_library, name: Luxar, skill_library: 
-    ./workspace/skill_library, version: 0.1.0, workspace: ./workspace/projects}
+    ./workspace/skill_library, skills_root: ./workspace/skills, version: 0.2.0, 
+    workspace: ./workspace/projects}
 api_keys: {}
 build: {cmake_generator: Ninja, jobs: 4, toolchain_prefix: arm-none-eabi-}
 evolution: {auto_update_protocol_skill: true, enabled: true, min_review_passes: 
@@ -28,4 +29,4 @@ review:
   max_fix_iterations: 3
 stm32: {firmware_package: '', project_mode: cubemx, use_cubemx: true}
 toolchains: {arm_gcc: '', cmake: '', ninja: '', openocd: '', programmer_cli: '', 
-    root: ./workspace/toolchains}
+    root: ./workspace/toolchains, probe_rs: '', platformio: ''}

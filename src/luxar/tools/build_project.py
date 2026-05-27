@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from luxar.core.build_system import BuildSystem
-from luxar.core.code_fixer import parse_build_error_lines
+from luxar.core.build_system import BuildSystem, parse_build_error_lines
 from luxar.core.config_manager import AgentConfig
 from luxar.core.review_engine import ReviewEngine
 from luxar.core.toolchain_manager import ToolchainManager
 from luxar.models.schemas import BuildResult, ReviewIssue, ReviewReport
 from luxar.platforms.stm32_adapter import STM32CubeMXAdapter
-from luxar.tools.fix_code import run_fix_code
+from luxar.agent.workers.repair import RepairWorker
+import json
 
 
 def run_build_project(
@@ -126,25 +126,26 @@ def _auto_fix_review_issues(
             for issue in review_report.issues
             if str(Path(issue.file)) == file_path
         ]
-        result = run_fix_code(
-            config=config,
-            project_path=project_path,
+        worker = RepairWorker(config)
+        report_json = json.dumps({
+            "passed": False,
+            "total_issues": len(scoped_issues),
+            "critical_count": sum(1 for issue in scoped_issues if issue["severity"] == "critical"),
+            "error_count": sum(1 for issue in scoped_issues if issue["severity"] == "error"),
+            "warning_count": sum(1 for issue in scoped_issues if issue["severity"] == "warning"),
+            "issues": scoped_issues,
+            "raw_logs": _raw_logs_dict(getattr(review_report, "raw_logs", {})),
+        }, ensure_ascii=False)
+        result = worker.repair_file(
             file_path=file_path,
+            context_report=report_json,
+            skill_instructions="Only fix the issues listed in the report. Provide complete source file.",
             apply_changes=True,
-            review_report=ReviewReport(
-                passed=False,
-                total_issues=len(scoped_issues),
-                critical_count=sum(1 for issue in scoped_issues if issue["severity"] == "critical"),
-                error_count=sum(1 for issue in scoped_issues if issue["severity"] == "error"),
-                warning_count=sum(1 for issue in scoped_issues if issue["severity"] == "warning"),
-                issues=scoped_issues,
-                raw_logs=_raw_logs_dict(getattr(review_report, "raw_logs", {})),
-            ),
         )
-        if not result.success:
-            fix_failures.append(f"{Path(file_path).name}: {result.error or 'auto-fix failed verification'}")
+        if not result.get("success"):
+            fix_failures.append(f"{Path(file_path).name}: {result.get('error') or 'auto-fix failed verification'}")
             continue
-        if result.applied:
+        if result.get("applied"):
             applied_files.append(str(Path(file_path)))
 
     re_review = ReviewEngine(project_path).review_project()

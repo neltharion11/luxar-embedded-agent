@@ -14,11 +14,18 @@ REUSE_CONFIDENCE_THRESHOLD = 0.5
 
 
 class AssetReuseAdvisor:
-    def __init__(self, project_root: str | Path, driver_library_root: str | Path, skill_library_root: str | Path):
+    def __init__(
+        self,
+        project_root: str | Path,
+        driver_library_root: str | Path,
+        skill_library_root: str | Path,
+        legacy_skill_library_root: str | Path | None = None,
+    ):
         self.project_root = Path(project_root).resolve()
         self.driver_library = DriverLibrary(driver_library_root)
         self.knowledge_base = KnowledgeBase(Path(driver_library_root).resolve() / "knowledge_base")
         self.skill_root = Path(skill_library_root).resolve()
+        self.legacy_skill_root = Path(legacy_skill_library_root).resolve() if legacy_skill_library_root else None
 
     def build_context(
         self,
@@ -39,7 +46,7 @@ class AssetReuseAdvisor:
             vendor=vendor,
         )
         knowledge_matches = self.knowledge_base.search(query=query, limit=3) if query else []
-        skill_path = self.skill_root / "protocols" / interface.strip().lower() / "SKILL.md"
+        skill_path = self._resolve_skill_path(interface)
         skill_content = skill_path.read_text(encoding="utf-8") if skill_path.exists() else ""
 
         lines: list[str] = []
@@ -82,6 +89,17 @@ class AssetReuseAdvisor:
             "reuse_candidate": reuse_candidate.model_dump(mode="json") if reuse_candidate else None,
             "confidence": confidence,
         }
+
+    def _resolve_skill_path(self, interface: str) -> Path:
+        relative = Path("protocols") / interface.strip().lower() / "SKILL.md"
+        primary = self.skill_root / relative
+        if primary.exists():
+            return primary
+        if self.legacy_skill_root is not None:
+            legacy = self.legacy_skill_root / relative
+            if legacy.exists():
+                return legacy
+        return primary
 
     def select_reuse_candidate(
         self,

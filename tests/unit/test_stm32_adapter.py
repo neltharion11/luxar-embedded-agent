@@ -241,5 +241,51 @@ class STM32AdapterMonitorTests(unittest.TestCase):
         serial_instance.close.assert_called_once()
 
 
+class STM32AdapterProbeTests(unittest.TestCase):
+    def test_probe_detects_i2c_configuration_from_ioc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Demo"
+            project.mkdir(parents=True, exist_ok=True)
+            (project / "board.ioc").write_text(
+                "\n".join(
+                    [
+                        "ProjectManager.DeviceId=STM32F103C8T6",
+                        "Mcu.IP0=I2C1",
+                        "PA9.Signal=USART1_TX",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            adapter = STM32CubeMXAdapter()
+
+            result = adapter.probe(str(project), probe_type="i2c")
+
+        self.assertTrue(result.success)
+        self.assertEqual("i2c", result.interface)
+        self.assertEqual(["I2C1"], result.detected_instances)
+        self.assertTrue(any(item["kind"] == "config_match" for item in result.evidence))
+
+    def test_probe_reports_missing_uart_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Demo"
+            project.mkdir(parents=True, exist_ok=True)
+            (project / "board.ioc").write_text(
+                "\n".join(
+                    [
+                        "ProjectManager.DeviceId=STM32F103C8T6",
+                        "Mcu.IP0=I2C1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            adapter = STM32CubeMXAdapter()
+
+            result = adapter.probe(str(project), probe_type="uart")
+
+        self.assertFalse(result.success)
+        self.assertEqual("uart", result.interface)
+        self.assertIn("No UART configuration evidence", result.error)
+
+
 if __name__ == "__main__":
     unittest.main()

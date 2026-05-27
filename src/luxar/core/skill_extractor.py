@@ -34,8 +34,8 @@ Return ONLY the JSON, no other text."""
 
 
 class SkillExtractor:
-    def __init__(self, skill_library_root: str | Path):
-        self.skill_root = Path(skill_library_root) / "protocols"
+    def __init__(self, skill_root: str | Path):
+        self.skill_root = Path(skill_root) / "protocols"
 
     def should_extract(self, workflow_result: dict) -> bool:
         """Check if the workflow succeeded and had enough meaningful steps."""

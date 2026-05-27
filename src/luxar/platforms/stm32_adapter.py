@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from luxar.core.toolchain_manager import ToolchainManager
-from luxar.models.schemas import BuildResult, FlashResult, MonitorResult
+from luxar.models.schemas import BuildResult, FlashResult, MonitorResult, ProbeResult
 from luxar.core.platform_adapter import PlatformAdapter
 
 NINJA_FATAL_RE = re.compile(r"ninja:\s*fatal:")
@@ -50,7 +50,20 @@ class STM32CubeMXAdapter(PlatformAdapter):
 
     def build(self, project_path: str, clean: bool = False) -> BuildResult:
         project = Path(project_path)
+
+        # ── Makefile fallback: if Makefile exists (no CMakeLists.txt), run make ──
+        makefile = project / "Makefile"
         cmake_lists = project / "CMakeLists.txt"
+        # PlatformIO: try if platformio.ini exists
+        pio_ini = project / 'platformio.ini'
+        if pio_ini.exists():
+            pio_result = self._build_with_platformio(project, clean)
+            if pio_result is not None:
+                return pio_result
+
+        if not cmake_lists.exists() and makefile.exists():
+            return self._build_with_make(project, makefile, clean)
+
         if not cmake_lists.exists():
             return BuildResult(
                 success=False,
@@ -122,7 +135,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
         configure = subprocess.run(
             configure_cmd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=project,
             env=env,
         )
@@ -136,7 +149,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
                 configure = subprocess.run(
                     fallback_cmd,
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     cwd=project,
                     env=env,
                 )
@@ -154,7 +167,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
         build = subprocess.run(
             build_cmd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=project,
             env=env,
         )
@@ -168,10 +181,10 @@ class STM32CubeMXAdapter(PlatformAdapter):
                 env=env,
             )
         warnings = [
-            line for line in (build.stdout + "\n" + build.stderr).splitlines()
+            line for line in ((build.stdout or "") + "\n" + (build.stderr or "")).splitlines()
             if "warning" in line.lower()
         ]
-        combined_build_output = build.stdout + "\n" + build.stderr
+        combined_build_output = (build.stdout or "") + "\n" + (build.stderr or "")
         errors = [
             line for line in combined_build_output.splitlines()
             if "error" in line.lower() or "fatal:" in line.lower() or "failed:" in line.lower()
@@ -355,6 +368,13 @@ class STM32CubeMXAdapter(PlatformAdapter):
             )
 
         artifact = candidates[0]
+        # 1) Try probe-rs first (modern, cross-platform, no external deps)
+        chip = self._detect_chip_from_build(project)
+        probe_rs_result = self._flash_with_probe_rs(project, artifact, chip)
+        if probe_rs_result is not None:
+            return probe_rs_result
+
+        # 2) Fallback: STM32_Programmer_CLI
         if programmer_cli is not None:
             probe_inventory = self._list_stlink_probes(programmer_cli, project)
             flash_artifact = artifact
@@ -364,7 +384,10 @@ class STM32CubeMXAdapter(PlatformAdapter):
                 shutil.copy2(artifact, temp_artifact)
                 flash_artifact = temp_artifact
             connect_arg = self._build_programmer_connect_arg(probe)
-            command = [programmer_cli, "-c", connect_arg, "-w", str(flash_artifact), "-v", "-rst"]
+            command = [programmer_cli, "-c", connect_arg, "-w", str(flash_artifact)]
+            if flash_artifact.suffix.lower() == ".bin":
+                command.append("0x08000000")
+            command.extend(["-v", "-rst"])
             try:
                 result = subprocess.run(
                     command,
@@ -388,15 +411,47 @@ class STM32CubeMXAdapter(PlatformAdapter):
             finally:
                 if temp_artifact is not None:
                     temp_artifact.unlink(missing_ok=True)
-        else:
-            command = [openocd_bin, "-f", self.openocd_interface, "-f", self.openocd_target]
-            return FlashResult(
-                success=False,
-                command=command,
-                return_code=-1,
-                stderr="OpenOCD found, but programming command is not implemented yet.",
-                artifact_path=str(artifact),
-            )
+        # 3) Last resort: OpenOCD
+        if openocd_bin is not None:
+            command = [
+                openocd_bin,
+                "-f", self.openocd_interface,
+                "-f", self.openocd_target,
+                "-c", f"program {{{artifact}}} verify reset exit",
+            ]
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=project,
+                )
+                return FlashResult(
+                    success=(result.returncode == 0),
+                    command=command,
+                    return_code=result.returncode,
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                    artifact_path=str(artifact),
+                )
+            except Exception as exc:
+                return FlashResult(
+                    success=False,
+                    command=command,
+                    return_code=-1,
+                    stderr=str(exc),
+                    artifact_path=str(artifact),
+                )
+
+        return FlashResult(
+            success=False,
+            command=[],
+            return_code=-1,
+            stderr="No flash tool available (probe-rs, STM32_Programmer_CLI, or OpenOCD).",
+            artifact_path=str(artifact),
+        )
 
     def monitor(self, project_path: str, **kwargs) -> MonitorResult:
         port = str(kwargs.get("port", ""))
@@ -472,6 +527,189 @@ class STM32CubeMXAdapter(PlatformAdapter):
             if ser is not None and getattr(ser, "is_open", False):
                 ser.close()
 
+    def probe(self, project_path: str, probe_type: str = "i2c") -> ProbeResult:
+        project = Path(project_path)
+        project_info = self.check_project_config(project_path)
+        normalized = probe_type.strip().lower() or "i2c"
+        alias_map = {
+            "i2c": "i2c",
+            "iic": "i2c",
+            "spi": "spi",
+            "uart": "uart",
+            "usart": "uart",
+        }
+        interface = alias_map.get(normalized, normalized)
+        if not project.exists():
+            return ProbeResult(
+                success=False,
+                probe_type=probe_type,
+                interface=interface,
+                project_path=str(project),
+                error=f"Project path does not exist: {project}",
+            )
+        if not project_info.get("valid", False):
+            return ProbeResult(
+                success=False,
+                probe_type=probe_type,
+                interface=interface,
+                project_path=str(project),
+                error="STM32 project configuration is incomplete. Expected a .ioc file or firmware marker.",
+            )
+
+        ioc_files = [Path(path) for path in project_info.get("ioc_files", [])]
+        main_sources = [project / "Core" / "Src" / "main.c", project / "App" / "Src" / "app_main.c"]
+        text_sources: list[tuple[str, str]] = []
+        for path in ioc_files + main_sources:
+            if not path.exists():
+                continue
+            try:
+                text_sources.append((str(path), path.read_text(encoding="utf-8", errors="ignore")))
+            except Exception:
+                continue
+
+        pattern_map = {
+            "i2c": re.compile(r"\b(I2C\d+)\b", re.IGNORECASE),
+            "spi": re.compile(r"\b(SPI\d+)\b", re.IGNORECASE),
+            "uart": re.compile(r"\b((?:USART|UART)\d+)\b", re.IGNORECASE),
+        }
+        pattern = pattern_map.get(interface)
+        if pattern is None:
+            return ProbeResult(
+                success=False,
+                probe_type=probe_type,
+                interface=interface,
+                project_path=str(project),
+                error=f"Unsupported probe type: {probe_type}",
+            )
+
+        detected_instances: list[str] = []
+        evidence: list[dict[str, object]] = []
+        for source_path, text in text_sources:
+            matches = sorted({match.upper() for match in pattern.findall(text)})
+            if not matches:
+                continue
+            detected_instances.extend(matches)
+            evidence.append(
+                {
+                    "kind": "config_match",
+                    "source": source_path,
+                    "matches": matches,
+                }
+            )
+
+        unique_instances = sorted(set(detected_instances))
+        if not unique_instances:
+            return ProbeResult(
+                success=False,
+                probe_type=probe_type,
+                interface=interface,
+                project_path=str(project),
+                evidence=evidence,
+                error=f"No {interface.upper()} configuration evidence was detected in the current STM32 project files.",
+                summary=f"No {interface.upper()} configuration evidence found.",
+            )
+
+        return ProbeResult(
+            success=True,
+            probe_type=probe_type,
+            interface=interface,
+            project_path=str(project),
+            detected_instances=unique_instances,
+            evidence=evidence,
+            summary=f"Detected {interface.upper()} configuration for {', '.join(unique_instances)}.",
+        )
+
+
+    def _flash_with_probe_rs(self, project: Path, artifact: Path, chip: str) -> FlashResult | None:
+        import subprocess, shutil
+        if self.toolchain_manager is None:
+            return None
+        probe_rs_bin = self.toolchain_manager.resolve_probe_rs()
+        if probe_rs_bin is None:
+            probe_rs_bin = shutil.which('probe-rs')
+        if probe_rs_bin is None:
+            return None
+        cmd = [probe_rs_bin, 'run', '--chip', chip, str(artifact)]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace', cwd=project)
+            return FlashResult(
+                success=(result.returncode == 0),
+                command=cmd,
+                return_code=result.returncode,
+                stdout=result.stdout or '',
+                stderr=result.stderr or '',
+                artifact_path=str(artifact),
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger('luxar').debug('probe-rs flash attempt failed: %s', exc)
+            return None
+
+    def _build_with_make(self, project: Path, makefile: Path, clean: bool) -> BuildResult:
+        import shutil
+        make_bin = shutil.which("make")
+        if make_bin is None:
+            # Try bundled toolchain
+            if self.toolchain_manager is not None:
+                toolchain_bin = self.toolchain_manager.resolve_arm_gcc_bin_dir()
+                if toolchain_bin:
+                    candidates = [
+                        Path(toolchain_bin).parent / "bin" / "make.exe",
+                        Path(toolchain_bin).parent / "make.exe",
+                    ]
+                    for c in candidates:
+                        if c.exists():
+                            make_bin = str(c)
+                            break
+        if make_bin is None:
+            return BuildResult(
+                success=False,
+                command=[],
+                return_code=-1,
+                stderr="make not found in PATH or bundled toolchains.",
+                errors=["make_not_found"],
+            )
+
+        env = os.environ.copy()
+        if self.toolchain_manager is not None:
+            arm_gcc_bin = self.toolchain_manager.resolve_arm_gcc_bin_dir()
+            if arm_gcc_bin:
+                env["PATH"] = arm_gcc_bin + os.pathsep + env.get("PATH", "")
+
+        cmd = [make_bin, "-C", str(project)]
+        if clean:
+            cmd.append("clean")
+        cmd.append("-j4")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(project),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            )
+            success = result.returncode == 0
+            return BuildResult(
+                success=success,
+                command=cmd,
+                return_code=result.returncode,
+                stdout=result.stdout.strip(),
+                stderr=result.stderr.strip() if not success else "",
+                errors=[] if success else ["make_failed"],
+            )
+        except Exception as exc:
+            return BuildResult(
+                success=False,
+                command=cmd,
+                return_code=-1,
+                stderr=str(exc),
+                errors=["make_exception"],
+            )
+
     def _auto_detect_serial_port(self, ports) -> str:
         candidates = list(ports or [])
         if not candidates:
@@ -504,7 +742,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
             if "CMakeFiles" not in path.parts and ".cmake" not in path.parts
         ]
         if candidates:
-            return sorted(candidates)
+            return sorted(candidates, key=lambda p: (0 if p.suffix == '.elf' else 1, p.name))
 
         fallback: list[Path] = []
         ignored_names = {
@@ -652,6 +890,69 @@ class STM32CubeMXAdapter(PlatformAdapter):
         if normalized.isdigit():
             return f"port=SWD index={normalized}"
         return f"port=SWD sn={normalized}"
+
+    def _detect_chip_from_build(self, project: Path) -> str:
+        import json
+        meta = project.parent / project.name / '.agent_project.json'
+        if meta.exists():
+            try:
+                data = json.loads(meta.read_text(encoding='utf-8'))
+                mcu = data.get('mcu', '')
+                if mcu:
+                    return mcu
+            except Exception:
+                pass
+        compile_commands = project / 'build' / 'compile_commands.json'
+        if compile_commands.exists():
+            try:
+                data = json.loads(compile_commands.read_text(encoding='utf-8'))
+                for entry in data:
+                    cmd = entry.get('command', '')
+                    if '-mcpu=' in cmd:
+                        cpu = cmd.split('-mcpu=')[1].split()[0]
+                        return 'STM32F103C8' if 'cortex-m3' in cpu else cpu
+            except Exception:
+                pass
+        return 'STM32F103C8'
+
+    def _build_with_platformio(self, project: Path, clean: bool) -> BuildResult | None:
+        import subprocess, shutil
+        if self.toolchain_manager is None:
+            return None
+        pio_bin = self.toolchain_manager.resolve_platformio()
+        if pio_bin is None:
+            pio_bin = shutil.which('platformio')
+        if pio_bin is None:
+            return None
+        ini = project / 'platformio.ini'
+        if not ini.exists():
+            return None
+        env = os.environ.copy()
+        env = os.environ.copy()
+        if clean:
+            # Clean first
+            clean_cmd = [pio_bin, 'run', '--project-dir', str(project), '--target', 'clean']
+            try:
+                subprocess.run(clean_cmd, capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', cwd=project, env=env)
+            except Exception:
+                pass
+        # Build
+        cmd = [pio_bin, 'run', '--project-dir', str(project)]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace', cwd=project, env=env)
+            return BuildResult(
+                success=(result.returncode == 0),
+                command=cmd,
+                return_code=result.returncode,
+                stdout=result.stdout or '',
+                stderr=result.stderr or '',
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger('luxar').debug('platformio build attempt failed: %s', exc)
+            return None
 
     def _list_stlink_probes(self, programmer_cli: str, project: Path) -> str:
         try:

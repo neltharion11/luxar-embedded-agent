@@ -1,0 +1,7 @@
+{evidence: User explicitly stated PA6/PA7; PB0/PB6/PB7 was my incorrect override,
+hypothesis: Skills that contain specific peripheral pin mappings are not reusable
+across different boards, outcome: Lesson recorded, resolution: "Skills should only
+fix build/runtime issues, never hardcode peripheral pins. Pin config is the user's
+domain. Only fixed pins (crystal, ST-Link/SWD) may appear in skills.", symptom: "RGB
+LED pins PB6/PB7 were hardcoded in app_main.c, conflicting with user's original PA6/PA7
+assignment", topic: skill should not hardcode peripheral pins}

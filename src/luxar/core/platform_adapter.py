@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from luxar.models.schemas import BuildResult, FlashResult, MonitorResult
+from luxar.models.schemas import BuildResult, FlashResult, MonitorResult, ProbeResult
 
 
 class PlatformAdapter(ABC):
@@ -20,6 +20,10 @@ class PlatformAdapter(ABC):
 
     @abstractmethod
     def monitor(self, project_path: str, **kwargs) -> MonitorResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def probe(self, project_path: str, probe_type: str = "i2c") -> ProbeResult:
         raise NotImplementedError
 
 

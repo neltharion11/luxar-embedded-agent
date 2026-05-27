@@ -13,6 +13,7 @@ class AgentSection(BaseModel):
     version: str = "0.2.0"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
+    # Legacy-only compatibility root. New skills live under `skills_root`.
     skill_library: str = "./workspace/skill_library"
     firmware_library: str = "./workspace/firmware_library"
     skills_root: str = "./workspace/skills"
@@ -75,6 +76,8 @@ class ToolchainsSection(BaseModel):
     arm_gcc: str = ""
     ninja: str = ""
     programmer_cli: str = ""
+    probe_rs: str = ""
+    platformio: str = ""
 
 
 class STM32Section(BaseModel):
@@ -193,8 +196,14 @@ class ConfigManager:
         return self.resolve_path(config.agent.driver_library)
 
     def skill_library_root(self) -> Path:
+        return self.skills_root()
+
+    def legacy_skill_library_root(self) -> Path:
         config = self.ensure_default_config()
         return self.resolve_path(config.agent.skill_library)
+
+    def legacy_protocol_skills_root(self) -> Path:
+        return self.legacy_skill_library_root() / "protocols"
 
     def firmware_library_root(self) -> Path:
         config = self.ensure_default_config()
@@ -203,6 +212,9 @@ class ConfigManager:
     def skills_root(self) -> Path:
         config = self.ensure_default_config()
         return self.resolve_path(config.agent.skills_root)
+
+    def protocol_skills_root(self) -> Path:
+        return self.skills_root() / "protocols"
 
     def lesson_library_root(self) -> Path:
         config = self.ensure_default_config()

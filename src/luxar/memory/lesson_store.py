@@ -28,7 +28,14 @@ class LessonStore:
         payload["state"] = "promoted" if path.parent == self.promoted_root else "draft"
         return payload
 
+    def _validate_lesson_schema(self, payload: dict[str, Any]) -> None:
+        required_fields = ["topic", "symptom", "hypothesis", "evidence", "resolution", "outcome"]
+        missing = [f for f in required_fields if not str(payload.get(f) or "").strip()]
+        if missing:
+            raise ValueError(f"Invalid lesson schema. Missing required fields: {', '.join(missing)}")
+
     def record(self, payload: dict[str, Any], promoted: bool = False) -> dict[str, Any]:
+        self._validate_lesson_schema(payload)
         slug = str(payload.get("slug") or payload.get("topic") or "lesson").strip().replace(" ", "-").lower()
         target_root = self.promoted_root if promoted else self.draft_root
         path = target_root / f"{slug}.yaml"
@@ -51,6 +58,12 @@ class LessonStore:
             return {"success": False, "error": f"Lesson '{slug}' not found in draft state."}
         payload = self._load(source)
         payload["evidence_count"] = evidence_count
+        
+        try:
+            self._validate_lesson_schema(payload)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
         target = self.promoted_root / source.name
         target.write_text(self._dump_yaml(payload), encoding="utf-8")
         source.unlink()

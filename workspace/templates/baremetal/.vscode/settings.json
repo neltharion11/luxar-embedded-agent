@@ -1,0 +1,8 @@
+{
+    "cmake.cmakePath": "C:/Users/Gugugu/Documents/Codex/LUXAR/workspace/toolchains/cmake/bin/cmake.exe",
+    "cmake.preferredGenerators": ["Ninja"],
+    "cmake.configureOnSave": false,
+    "cmake.environment": {
+        "PATH": "C:/Users/Gugugu/Documents/Codex/LUXAR/workspace/toolchains/gcc-arm/bin;C:/Users/Gugugu/Documents/Codex/LUXAR/workspace/toolchains/ninja;C:/Users/Gugugu/Documents/Codex/LUXAR/workspace/toolchains/cmake/bin;${env:PATH}"
+    }
+}

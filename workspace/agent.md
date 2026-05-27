@@ -19,7 +19,7 @@
 │   │   └── .agent_backups/         # Auto-generated snapshots
 │   ├── driver_library/             # Global driver repository (SQLite-backed)
 │       └── knowledge_base/         # Document chunk store (SQLite + dense vectors)
-│   ├── skill_library/protocols/    # Protocol skills (SKILL.md + metadata.json)
+│   ├── skills/protocols/           # Protocol skills (SKILL.md + metadata.json)
 │   ├── firmware_library/           # Vendor firmware packages
 │   └── toolchains/                 # Local toolchain installations
 ├── config/luxar.yaml               # Central configuration

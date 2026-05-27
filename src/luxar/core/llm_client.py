@@ -61,8 +61,8 @@ _OPENAI_PROVIDERS: dict[str, dict] = {
         "endpoint": "https://api.deepseek.com/chat/completions",
         "key_env": "DEEPSEEK_API_KEY",
         "models": [
-            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "context": 393216},
-            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "context": 393216},
+            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "context": 1048576},
+            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "context": 1048576},
         ],
     },
     "openai": {

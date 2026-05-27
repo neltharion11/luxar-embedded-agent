@@ -10,16 +10,21 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from luxar.models.schemas import EngineeringContext
+from luxar.server.chat_support import repair_messages_for_reasoning_handoff as _repair_messages_for_reasoning_handoff
 from luxar.server.app import (
-    AgentToolTimeoutError,
-    _build_tool_envelope,
-    _format_tool_result_summary,
-    _is_tool_result_failure,
-    _repair_messages_for_reasoning_handoff,
+    LEGACY_HTTP_SURFACE_ENV,
+    PUBLIC_TOOL_NAMES,
+    _execute_tool,
     _run_agent_loop,
-    _serialize_tool_content_for_llm,
     create_app,
 )
+from luxar.server.tool_execution import (
+    build_tool_envelope as _build_tool_envelope,
+    format_tool_result_summary as _format_tool_result_summary,
+    is_tool_result_failure as _is_tool_result_failure,
+    serialize_tool_content_for_llm as _serialize_tool_content_for_llm,
+)
+from luxar.server.tool_runtime import AgentToolTimeoutError
 
 
 class ServerAppTests(unittest.TestCase):
@@ -60,11 +65,36 @@ class ServerAppTests(unittest.TestCase):
         cfg.api_keys = {"deepseek": "test-key"}
         return cfg
 
-    def test_analyze_docs_endpoint_returns_engineering_context(self) -> None:
+    def test_legacy_http_surface_is_disabled_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
-                "luxar.server.app.DocumentEngineeringAnalyzer"
-            ) as analyzer_cls:
+            with patch("luxar.server.app.ConfigManager") as cm_cls:
+                cm = cm_cls.return_value
+                cm.ensure_default_config.return_value = object()
+                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
+                cm.workspace_root.return_value = Path(tmpdir) / "projects"
+                cm.project_root.return_value = Path(tmpdir)
+                with TestClient(create_app()) as client:
+                    for method, path in [
+                        ("get", "/api/conversations/Demo"),
+                        ("post", "/api/conversations/Demo"),
+                        ("post", "/api/conversations/Demo/reset"),
+                        ("post", "/api/conversations/Demo/import"),
+                        ("post", "/api/analyze-docs"),
+                        ("get", "/api/firmware-library"),
+                        ("get", "/api/projects"),
+                        ("post", "/api/projects"),
+                        ("post", "/api/projects/import"),
+                        ("get", "/api/pick-directory"),
+                        ("get", "/api/pick-files"),
+                    ]:
+                        response = getattr(client, method)(path)
+                        self.assertEqual(404, response.status_code, path)
+
+    def test_analyze_docs_endpoint_returns_engineering_context_when_legacy_http_surface_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls, patch("luxar.core.document_engineering.DocumentEngineeringAnalyzer") as analyzer_cls:
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = object()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
@@ -103,11 +133,29 @@ class ServerAppTests(unittest.TestCase):
                         response = getattr(client, method)(path)
                         self.assertEqual(404, response.status_code, path)
 
+    def test_agent_tool_surface_excludes_legacy_control_plane_names(self) -> None:
+        self.assertNotIn("init_project", PUBLIC_TOOL_NAMES)
+        self.assertNotIn("forge_project", PUBLIC_TOOL_NAMES)
+        self.assertNotIn("run_task", PUBLIC_TOOL_NAMES)
+        self.assertNotIn("run_workflow", PUBLIC_TOOL_NAMES)
+
+    def test_execute_tool_rejects_legacy_tool_name(self) -> None:
+        cfg = self._cfg_stub()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cm = type("CM", (), {})()
+            cm.workspace_root = lambda: Path(tmpdir) / "projects"
+            cm.driver_library_root = lambda: Path(tmpdir) / "driver_library"
+
+            result = _execute_tool("init_project", {}, cfg, cm)
+
+        self.assertFalse(result.ok)
+        self.assertIn("not part of the LUXAR 0.2.0 public control plane", result.error or "")
+
     def test_conversation_endpoint_uses_vnext_agent_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
-                "luxar.server.app._run_agent_loop"
-            ) as run_loop_mock:
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls, patch("luxar.server.app._run_agent_loop") as run_loop_mock:
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = self._cfg_stub()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
@@ -123,11 +171,48 @@ class ServerAppTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertTrue(run_loop_mock.called)
 
+    def test_streaming_project_creation_does_not_emit_legacy_init_project_tool_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls, patch("luxar.server.legacy_surface.run_init_project") as init_project_mock:
+                cm = cm_cls.return_value
+                cm.ensure_default_config.return_value = self._cfg_stub()
+                cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
+                cm.workspace_root.return_value = Path(tmpdir) / "projects"
+                cm.project_root.return_value = Path(tmpdir)
+                init_project_mock.return_value = type(
+                    "Project",
+                    (),
+                    {
+                        "model_dump": lambda self, mode="json": {
+                            "name": "Demo",
+                            "mcu": "STM32F103C8T6",
+                            "platform": "stm32cubemx",
+                            "runtime": "baremetal",
+                        }
+                    },
+                )()
+                with TestClient(create_app()) as client:
+                    response = client.post(
+                        "/api/conversations/__global__",
+                        json={
+                            "message": "项目名: Demo\nMCU: STM32F103C8T6\n平台: stm32cubemx\n运行时: baremetal",
+                            "stream": True,
+                        },
+                        headers={"Accept": "text/event-stream"},
+                    )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn("event: project_created", response.text)
+        self.assertNotIn('"tool_call": "init_project"', response.text)
+        self.assertNotIn('"tool": "init_project"', response.text)
+
     def test_streaming_conversation_emits_vnext_phase_and_skill_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
-                "luxar.core.llm_client.LLMClient.complete_stream"
-            ) as complete_stream_mock, patch(
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls, patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, patch(
                 "luxar.server.app._execute_tool_with_timeout",
                 return_value=_build_tool_envelope("skills_list", {"skills": [{"name": "oled-ch1116"}]}),
             ):
@@ -162,9 +247,9 @@ class ServerAppTests(unittest.TestCase):
 
     def test_streaming_conversation_emits_lesson_and_promotion_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
-                "luxar.core.llm_client.LLMClient.complete_stream"
-            ) as complete_stream_mock, patch(
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls, patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, patch(
                 "luxar.server.app._execute_tool_with_timeout"
             ) as execute_mock:
                 cm = cm_cls.return_value
@@ -202,9 +287,9 @@ class ServerAppTests(unittest.TestCase):
 
     def test_streaming_conversation_emits_escalation_on_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
-                "luxar.core.llm_client.LLMClient.complete_stream"
-            ) as complete_stream_mock, patch(
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls, patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, patch(
                 "luxar.server.app._execute_tool_with_timeout",
                 side_effect=AgentToolTimeoutError("sentinel"),
             ):
@@ -248,7 +333,7 @@ class ServerAppTests(unittest.TestCase):
                 (),
                 {"id": f"call-{index}", "function_name": "runtime_run", "arguments": {"task": f"task-{index}"}},
             )()
-            for index in range(21)
+            for index in range(51)
         ]
         client = type("Client", (), {})()
         client.has_valid_api_key = lambda: True
@@ -264,7 +349,7 @@ class ServerAppTests(unittest.TestCase):
             reply = asyncio.run(_run_agent_loop([], "run many tools", "Demo", cfg, cm, client))
 
         self.assertIn("Tool call limit exceeded", reply["content"])
-        self.assertIn("attempted call 21", reply["content"])
+        self.assertIn("attempted call 51", reply["content"])
 
     def test_streaming_tool_result_payloads_stay_parseable_for_large_results(self) -> None:
         large_tools = {
@@ -277,9 +362,9 @@ class ServerAppTests(unittest.TestCase):
         for tool_name, payload in large_tools.items():
             with self.subTest(tool=tool_name):
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    with patch("luxar.server.app.ConfigManager") as cm_cls, patch(
-                        "luxar.core.llm_client.LLMClient.complete_stream"
-                    ) as complete_stream_mock, patch(
+                    with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "1"}, clear=False), patch(
+                        "luxar.server.app.ConfigManager"
+                    ) as cm_cls, patch("luxar.core.llm_client.LLMClient.complete_stream") as complete_stream_mock, patch(
                         "luxar.server.app._execute_tool", return_value=_build_tool_envelope(tool_name, payload)
                     ):
                         cm = cm_cls.return_value

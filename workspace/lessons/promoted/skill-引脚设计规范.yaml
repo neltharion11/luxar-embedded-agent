@@ -1,0 +1,4 @@
+{evidence: 用户明确要求：除了外部晶振和 STLink 引脚，skill 不要涉及具体外设引脚, hypothesis: Skill 应当只包含固定系统引脚，外设引脚映射放在项目级代码中,
+outcome: Skill 可跨板复用，用户项目引脚变更时无需修改 skill, resolution: Skill 中使用抽象接口名或配置参数，引脚定义放在
+app_main.c 或 board_config.h 中, symptom: Skill 中硬编码了具体外设引脚，导致不同板子无法复用, topic: Skill
+引脚设计规范}

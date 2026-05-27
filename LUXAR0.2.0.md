@@ -124,9 +124,10 @@ Harness 是围绕 agent 的运行时行为约束系统，至少包含六层：
 2. **Context Governance Layer**
    - 管理上下文注入、压缩、重置、handoff
    - 控制信息分层披露，而不是一次性灌满 prompt
+   - **前缀稳定性 (Prefix Stability)**：锁定系统规则与基础工具声明于 Context 头部，动态状态和 evidence 采用追加模式，最大化命中 LLM 的 Prompt Caching
 
 3. **Tool Primitive Layer**
-   - 提供少量强原语
+   - 提供少量强原语，逐步向 MCP (Model Context Protocol) 兼容演进
    - 规定权限边界与可执行动作
 
 4. **Observability and Evidence Layer**
@@ -429,6 +430,7 @@ workspace/skills/<category>/<name>/
 - `executable`
   - 带可执行验证路径的 skill
   - 取代此前错误设计的 harness artifact
+  - **安全防御**：晋升或应用前必须通过受限环境预演 (Sandboxed Dry-run) 或触发一次性的人类审查门控
 
 - `recovery`
   - 故障恢复策略
@@ -504,7 +506,7 @@ historical execution trace
 
 ## Tooling and Public Interfaces
 
-LUXAR 0.2.0 只保留 4 组顶层工具原语。
+LUXAR 0.2.0 只保留 4 组顶层工具原语。未来这 4 组原语建议作为标准的 MCP Server 暴露给模型层，实现更彻底的关注点分离与调用隔离。
 
 ### 1. `runtime`
 
@@ -700,6 +702,7 @@ API 只保留：
 - promotion prechecks
 - runtime evidence checks
 - escalation rules
+- **Sandboxed dry-run (执行逻辑安全隔离预演)**
 
 而不是：
 
@@ -830,6 +833,12 @@ Agent 的完成不是“自认为完成”，而是“满足 evidence 验收”�
 - `luxar run` 只依赖薄 prompt + skill 加载
 - 重复失败不会变成盲重试
 - 升级给人类时包含上下文、选项、风险、推荐
+
+### Agent Evaluation (Evaluation Harness) 验收
+
+- 必须存在独立的自动化评估控制面
+- 验证基准：Agent 是否正确识别失败、是否正确请求 evidence、是否加载了正确的 skill
+- 作用：防止系统自身框架升级或 LLM 模型更迭造成的“隐性能力退化”
 
 ### Embedded 验收
 

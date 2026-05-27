@@ -12,6 +12,23 @@ PROJECT_IMPLEMENTATION_SIGNALS = (
     "project", "工程", "app", "application", "led", "rgb", "gpio", "uart", "blink",
     "pwm", "tim3", "cmakelists", "startup", "linker", "文件", "file", "skeleton", "代码",
 )
+LEGACY_TASK_ROUTER_COMPATIBILITY_MODE = "legacy-task-router"
+LEGACY_INTENT_PUBLIC_MAP = {
+    "explain": "runtime_explain",
+    "forge_project": "runtime_run",
+    "generate_driver": "runtime_run",
+    "review_or_fix": "runtime_run",
+    "debug_project": "runtime_run",
+    "project_status": "workspace_inspect",
+}
+LEGACY_WORKFLOW_PUBLIC_MAP = {
+    "explain": "runtime_explain",
+    "forge": "runtime_run",
+    "status": "workspace_inspect",
+    "workflow_debug": "runtime_run",
+    "review": "runtime_run",
+    "workflow_driver": "runtime_run",
+}
 
 
 class TaskRouter:
@@ -27,9 +44,9 @@ class TaskRouter:
         docs = docs or []
         lowered = task.lower()
         intent = self._classify(task=lowered, has_project=bool(project), has_docs=bool(docs), dry_run=dry_run, plan_only=plan_only)
-        steps = self._build_steps(intent_type=intent.intent_type, has_docs=bool(docs))
+        steps = self._build_steps(intent_type=intent.legacy_intent_type or intent.intent_type, has_docs=bool(docs))
         missing: list[str] = []
-        if intent.intent_type in {"forge_project", "debug_project", "review_or_fix", "project_status"} and not project:
+        if (intent.legacy_intent_type or intent.intent_type) in {"forge_project", "debug_project", "review_or_fix", "project_status"} and not project:
             missing.append("Select a project before executing project-scoped actions.")
         return ExecutionPlan(
             intent=intent,
@@ -37,6 +54,7 @@ class TaskRouter:
             docs=docs,
             steps=steps,
             missing_info_questions=missing,
+            compatibility_mode=LEGACY_TASK_ROUTER_COMPATIBILITY_MODE,
             dry_run=dry_run,
             plan_only=plan_only,
         )
@@ -51,7 +69,7 @@ class TaskRouter:
         plan_only: bool,
     ) -> TaskIntent:
         if self._looks_like_project_execution_request(task):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="forge_project",
                 execution_mode="plan" if plan_only or dry_run else "execute",
                 required_capabilities=["planning", "forge"],
@@ -60,7 +78,7 @@ class TaskRouter:
                 reason="Task combines project implementation intent with concrete engineering/code-generation signals.",
             )
         if any(token in task for token in EXPLAIN_HINT_TOKENS):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="explain",
                 execution_mode="explain",
                 required_capabilities=["document_analysis"],
@@ -69,7 +87,7 @@ class TaskRouter:
                 reason="Task is asking for explanation or engineering guidance rather than direct execution.",
             )
         if any(token in task for token in ("status", "toolchain", "git", "driver library", "skill", "workspace")):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="project_status",
                 execution_mode="explain",
                 required_capabilities=["status"],
@@ -78,7 +96,7 @@ class TaskRouter:
                 reason="Task asks for project or environment status information.",
             )
         if any(token in task for token in ("build", "flash", "monitor", "debug", "编译", "烧录", "串口", "重建", "rebuild")):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="debug_project",
                 execution_mode="execute" if has_project and not dry_run else "plan",
                 required_capabilities=["build", "flash", "monitor", "debug"],
@@ -87,7 +105,7 @@ class TaskRouter:
                 reason="Task is centered on build/flash/monitor/debug activity.",
             )
         if any(token in task for token in ("review", "fix", "lint", "warning", "error in file", "修复", "审查")):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="review_or_fix",
                 execution_mode="execute" if not dry_run else "plan",
                 required_capabilities=["review", "fix"],
@@ -96,7 +114,7 @@ class TaskRouter:
                 reason="Task asks to review or repair source code.",
             )
         if any(token in task for token in ("driver", "protocol", "寄存器", "驱动")) and not any(token in task for token in ("project", "工程", "assemble", "forge")):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="generate_driver",
                 execution_mode="execute" if not dry_run and not plan_only else "plan",
                 required_capabilities=["driver_generation"],
@@ -110,7 +128,7 @@ class TaskRouter:
             "create app", "make a", "build a", "setup", "初始化",
             "生成项目", "做工程",
         )):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="forge_project",
                 execution_mode="plan" if plan_only or dry_run else "execute",
                 required_capabilities=["document_analysis", "planning", "driver_resolution", "forge"],
@@ -120,7 +138,7 @@ class TaskRouter:
             )
         # Default: if task mentions project/app, route to forge; otherwise explain
         if any(token in task for token in ("project", "app", "application", "工程", "程序")):
-            return TaskIntent(
+            return self._build_intent(
                 intent_type="forge_project",
                 execution_mode="plan" if plan_only or dry_run else "execute",
                 required_capabilities=["planning", "forge"],
@@ -128,13 +146,37 @@ class TaskRouter:
                 confidence=0.72,
                 reason="Task describes a project-level outcome that fits the forge workflow.",
             )
-        return TaskIntent(
+        return self._build_intent(
             intent_type="explain",
             execution_mode="explain",
             required_capabilities=["document_analysis"],
             recommended_workflow="explain",
             confidence=0.6,
             reason="Defaulted to explanatory mode because the request is better answered before execution.",
+        )
+
+    def _build_intent(
+        self,
+        *,
+        intent_type: str,
+        execution_mode: str,
+        required_capabilities: list[str],
+        recommended_workflow: str,
+        confidence: float,
+        reason: str,
+    ) -> TaskIntent:
+        return TaskIntent(
+            intent_type=LEGACY_INTENT_PUBLIC_MAP.get(intent_type, "runtime_run"),
+            execution_mode=execution_mode,
+            required_capabilities=required_capabilities,
+            recommended_workflow=LEGACY_WORKFLOW_PUBLIC_MAP.get(recommended_workflow, "runtime_run"),
+            legacy_intent_type=intent_type,
+            legacy_workflow=recommended_workflow,
+            public_intent=LEGACY_INTENT_PUBLIC_MAP.get(intent_type, "runtime_run"),
+            public_path=LEGACY_WORKFLOW_PUBLIC_MAP.get(recommended_workflow, "runtime_run"),
+            compatibility_mode=LEGACY_TASK_ROUTER_COMPATIBILITY_MODE,
+            confidence=confidence,
+            reason=reason,
         )
 
     def _build_steps(self, *, intent_type: str, has_docs: bool) -> list[str]:
