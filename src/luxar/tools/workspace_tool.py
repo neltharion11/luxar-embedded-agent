@@ -13,6 +13,7 @@ def _get_cm() -> ConfigManager:
 from luxar.core.project_manager import ProjectManager
 from luxar.tools.build_project import run_build_project
 from luxar.tools.flash_project import run_flash_project
+from luxar.core.monitor_manager import MonitorManager
 from luxar.tools.monitor_project import run_monitor_project
 from luxar.tools.probe_project import run_probe_project
 
@@ -288,6 +289,41 @@ def workspace_monitor(project: str, port: str, baudrate: int = 115200) -> object
     )
 
 
+
+def workspace_monitor_start(project: str, port: str, baudrate: int = 115200) -> dict:
+    """Start persistent background serial monitoring. Output streams to frontend via SSE."""
+    mgr = MonitorManager.instance()
+    ok = mgr.start(port=port, baudrate=baudrate)
+    return {
+        "success": ok,
+        "state": mgr.state,
+        "port": mgr.port,
+        "baudrate": mgr.baudrate,
+        "message": f"Monitor {"started" if ok else "failed to start"} on {port}",
+    }
+
+
+def workspace_monitor_stop(project: str) -> dict:
+    """Stop persistent background serial monitoring and release the port."""
+    mgr = MonitorManager.instance()
+    was_running = mgr.stop()
+    return {
+        "success": True,
+        "state": mgr.state,
+        "was_running": was_running,
+        "message": "Monitor stopped" if was_running else "Monitor was not running",
+    }
+
+
+def workspace_monitor_status(project: str) -> dict:
+    """Get current state of background serial monitor."""
+    mgr = MonitorManager.instance()
+    result = mgr.status_dict()
+    recent = mgr.read_buffer(max_lines=20)
+    if recent:
+        result["recent_lines"] = recent
+    result["success"] = True
+    return result
 def workspace_probe(project: str, probe_type: str = "i2c") -> dict[str, object]:
     cfg_manager = _get_cm()
     cfg = cfg_manager.ensure_default_config()
@@ -312,3 +348,69 @@ def workspace_write_file(project: str, path: str, content: str) -> dict:
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return {"success": True, "path": str(full_path), "size": len(content)}
+
+# -- Safe shell commands --
+_ALLOWED_COMMANDS = frozenset({"cat", "grep", "rg", "head", "tail", "wc", "find", "ls", "dir", "type", "echo", "mkdir", "md", "rmdir", "rd", "copy", "move", "del", "cp", "mv", "rm", "findstr", "xcopy"})
+_FORBIDDEN_PATTERNS = (";", "&&", "$(", "`", "&")
+_SHELL_TIMEOUT_SEC = 10
+_SHELL_MAX_OUTPUT = 16000
+
+
+def workspace_shell(project: str, command: str) -> dict[str, object]:
+    """Execute a safe shell command in the project directory."""
+    if not project or not project.strip():
+        return {"success": False, "error": "No project selected."}
+    if not command or not command.strip():
+        return {"success": False, "error": "No command specified."}
+
+    for pattern in _FORBIDDEN_PATTERNS:
+        if pattern in command:
+            return {
+                "success": False,
+                "error": f"Forbidden pattern '{pattern}' in command. Use single safe commands only.",
+            }
+
+    cmd_parts = command.strip().split()
+    base_cmd = cmd_parts[0].lower().replace(".exe", "")
+    if base_cmd not in _ALLOWED_COMMANDS:
+        return {
+            "success": False,
+            "error": f"Command '{base_cmd}' not allowed. Allowed: {', '.join(sorted(_ALLOWED_COMMANDS))}.",
+        }
+
+    cfg_manager = _get_cm()
+    ws = cfg_manager.workspace_root()
+    cwd = (ws / project).resolve()
+
+    if not cwd.is_relative_to(ws):
+        return {"success": False, "error": "Access denied: project outside workspace"}
+
+    import subprocess
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=_SHELL_TIMEOUT_SEC,
+            encoding="utf-8",
+            errors="replace",
+        )
+        stdout = proc.stdout
+        if len(stdout) > _SHELL_MAX_OUTPUT:
+            stdout = stdout[:_SHELL_MAX_OUTPUT] + f"\n... [truncated from {len(proc.stdout)} chars]"
+        stderr = proc.stderr
+        if len(stderr) > 2000:
+            stderr = stderr[:2000] + "\n... [stderr truncated]"
+        return {
+            "success": proc.returncode == 0,
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": proc.returncode,
+            "cwd": str(cwd),
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": f"Command timed out after {_SHELL_TIMEOUT_SEC}s"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}

@@ -46,6 +46,7 @@ class DocumentEngineeringAnalyzer:
             )
 
         summaries: list[str] = []
+        full_texts: list[str] = []
         sources: list[str] = []
         parse_errors: list[str] = []
         for doc in docs:
@@ -53,6 +54,7 @@ class DocumentEngineeringAnalyzer:
             sources.append(str(Path(doc).resolve()))
             if result.success:
                 summaries.append(result.summary)
+                full_texts.append(result.extracted_text)
                 if store:
                     self.kb.store_document(result)
             else:
@@ -61,7 +63,7 @@ class DocumentEngineeringAnalyzer:
         effective_query = query.strip()
         matches = self.kb.search(effective_query, limit=limit) if effective_query else []
         joined_text = "\n".join(
-            [text for text in summaries if text] + [item.content for item in matches]
+            full_texts + [text for text in summaries if text] + [item.content for item in matches]
         ).strip()
         if not joined_text:
             joined_text = "\n".join(summaries).strip()

@@ -336,6 +336,66 @@ TOOLS: list[dict] = [
         }
     },
 
+
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_shell",
+            "description": "Execute a safe shell command in the project directory to read or search files. Use cat/type to read files, rg/grep to search, ls/dir to list, find to locate files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name"},
+                    "command": {"type": "string", "description": "Shell command (cat, type, rg, grep, head, tail, ls, dir, find, wc, mkdir, rmdir, copy, move, del, echo)"}
+                },
+                "required": ["project", "command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_monitor_start",
+            "description": "Start persistent background serial port monitoring. Output streams to frontend in real-time via SSE. Use before flashing to capture boot logs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name"},
+                    "port": {"type": "string", "description": "Serial port, e.g. COM3"},
+                    "baudrate": {"type": "integer", "description": "Baudrate, default 115200"}
+                },
+                "required": ["project", "port"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_monitor_stop",
+            "description": "Stop persistent background serial port monitoring and release the port.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name"}
+                },
+                "required": ["project"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_monitor_status",
+            "description": "Get current state and recent output of the background serial monitor.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name"}
+                },
+                "required": ["project"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {

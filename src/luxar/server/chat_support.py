@@ -22,6 +22,7 @@ You are LUXAR v0.2.0 operating inside project '{project}'.
 - Keep explanations concise and action-oriented.
 - When calling workspace_read_file or workspace_write_file, always pass the project name (currently "{project}") as the "project" parameter. Never pass an empty string or omit this parameter.
 - Never call workspace_read_file on build artifacts (build/**, CMakeFiles/**, *.o, *.elf) unless you have already confirmed via workspace_build that the file was produced. If workspace_read_file returns "File not found", treat it as evidence the file does not exist — do not retry.
+- Prefer workspace_shell with "type" (Windows) or "cat" (Unix) to read files — it returns full content without truncation. Use workspace_read_file only as a fallback.
 """
 
 GLOBAL_SYSTEM_PROMPT = """\
@@ -36,6 +37,7 @@ You are LUXAR v0.2.0.
 - For concrete actions, use the smallest appropriate primitive and summarize the evidence-backed result.
 - When calling workspace_read_file or workspace_write_file, always pass the project name (currently "{project}") as the "project" parameter. Never pass an empty string or omit this parameter.
 - Never call workspace_read_file on build artifacts (build/**, CMakeFiles/**, *.o, *.elf) unless you have already confirmed via workspace_build that the file was produced. If workspace_read_file returns "File not found", treat it as evidence the file does not exist — do not retry.
+- Prefer workspace_shell with "type" (Windows) or "cat" (Unix) to read files — it returns full content without truncation. Use workspace_read_file only as a fallback.
 """
 
 
@@ -83,9 +85,10 @@ def enrich_system_prompt(
 ) -> str:
     enriched = base_prompt
     if docs:
+        doc_paths = [d if isinstance(d, str) else d.get("path", str(d)) for d in docs]
         enriched += (
-            f"\n\nThe user has attached documents: {', '.join(docs)}.\n"
-            "Use analyze_document_engineering to extract facts from them if needed.\n"
+            f"\n\nThe user has attached documents: {", ".join(doc_paths)}.\n"
+            "Call analyze_document_engineering exactly once. If the call returns success, do NOT call it again — one call extracts all facts.\n"
         )
     if not conv_store or not project:
         return enriched
@@ -150,28 +153,40 @@ def validate_api_messages(msgs: list[dict]) -> list[dict]:
     clean: list[dict] = []
     for message in msgs:
         if message["role"] == "tool" and message.get("tool_call_id"):
-            if not clean or clean[-1]["role"] != "assistant":
-                clean.append(
-                    {
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [
-                            {
-                                "id": message["tool_call_id"],
-                                "type": "function",
-                                "function": {"name": message.get("tool_name", "unknown"), "arguments": "{}"},
-                            }
-                        ],
-                    }
-                )
-            elif "tool_calls" not in clean[-1]:
-                clean[-1]["tool_calls"] = [
-                    {
-                        "id": message["tool_call_id"],
-                        "type": "function",
-                        "function": {"name": message.get("tool_name", "unknown"), "arguments": "{}"},
-                    }
-                ]
+            # Look backwards to find the most recent assistant with tool_calls
+            prev_assistant = None
+            for m in reversed(clean):
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    prev_assistant = m
+                    break
+            has_tc = prev_assistant and any(
+                tc.get("id") == message["tool_call_id"]
+                for tc in prev_assistant["tool_calls"]
+            )
+            if not has_tc:
+                # Only inject if this tool_call_id isn't already covered by a previous assistant
+                if not clean or clean[-1]["role"] != "assistant":
+                    clean.append(
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": message["tool_call_id"],
+                                    "type": "function",
+                                    "function": {"name": message.get("tool_name", "unknown"), "arguments": "{}"},
+                                }
+                            ],
+                        }
+                    )
+                elif "tool_calls" not in clean[-1]:
+                    clean[-1]["tool_calls"] = [
+                        {
+                            "id": message["tool_call_id"],
+                            "type": "function",
+                            "function": {"name": message.get("tool_name", "unknown"), "arguments": "{}"},
+                        }
+                    ]
         clean.append(message)
     return strip_orphan_tool_calls(clean)
 
@@ -268,24 +283,18 @@ def prepare_agent_context(
                     "function": {"name": message.get("tool_name", "unknown"), "arguments": "{}"},
                 }
             ]
-            # Ensure the tool message has a preceding assistant with matching tool_calls
-            prev = api_messages[-1] if api_messages else None
-            prev_is_assistant = prev and prev["role"] == "assistant"
-            prev_has_this_tc = prev_is_assistant and any(
+            # Look backwards to find the most recent assistant with tool_calls
+            prev_assistant = None
+            for m in reversed(api_messages):
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    prev_assistant = m
+                    break
+            has_tc = prev_assistant and any(
                 tc.get("id") == message["tool_call_id"]
-                for tc in (prev.get("tool_calls") or [])
+                for tc in prev_assistant["tool_calls"]
             )
-            if not prev_has_this_tc:
-                if prev and prev["role"] != "tool":
-                    if prev_is_assistant and "tool_calls" not in prev:
-                        prev["tool_calls"] = tc_fix
-                    elif not prev_is_assistant:
-                        api_messages.append({"role": "assistant", "tool_calls": tc_fix})
-                else:
-                    api_messages.insert(
-                        len(api_messages) - 1 if prev and prev["role"] == "tool" else len(api_messages),
-                        {"role": "assistant", "tool_calls": tc_fix},
-                    )
+            if not has_tc:
+                api_messages.append({"role": "assistant", "tool_calls": tc_fix})
         if message.get("tool_calls"):
             entry["tool_calls"] = message["tool_calls"]
         if message.get("reasoning_content"):

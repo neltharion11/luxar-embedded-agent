@@ -366,7 +366,8 @@ class LLMClient:
         tools: list[dict] | None = None,
     ) -> LLMResponse:
         msgs: list[dict[str, str]] = []
-        if system_prompt:
+        has_system = messages and messages[0].get("role") == "system"
+        if system_prompt and not has_system:
             msgs.append({"role": "system", "content": system_prompt})
         if messages:
             msgs.extend(messages)
@@ -404,7 +405,12 @@ class LLMClient:
                 try:
                     args = json.loads(tc["function"]["arguments"])
                 except (json.JSONDecodeError, KeyError):
-                    args = {}
+                    # DeepSeek may concatenate multiple JSON objects; extract the first valid one
+                    try:
+                        decoder = json.JSONDecoder()
+                        args, _ = decoder.raw_decode(tc["function"]["arguments"])
+                    except Exception:
+                        args = {}
                 tool_calls.append(ToolCall(
                     id=tc.get("id", ""),
                     function_name=tc["function"]["name"],
@@ -430,7 +436,8 @@ class LLMClient:
         tools: list[dict] | None = None,
     ):
         msgs: list[dict[str, str]] = []
-        if system_prompt:
+        has_system = messages and messages[0].get("role") == "system"
+        if system_prompt and not has_system:
             msgs.append({"role": "system", "content": system_prompt})
         if messages:
             msgs.extend(messages)

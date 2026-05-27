@@ -34,6 +34,9 @@ from luxar.tools.workspace_tool import (
     workspace_inspect,
     workspace_list_projects,
     workspace_monitor,
+    workspace_monitor_start,
+    workspace_monitor_stop,
+    workspace_monitor_status,
     workspace_probe,
     workspace_status,
 )
@@ -231,9 +234,11 @@ async def _run_agent_loop_stream(
 def create_app(config_path: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        from luxar.core.monitor_manager import MonitorManager
         try:
             yield
         finally:
+            MonitorManager.instance().stop()
             _conversation_state.close()
 
     app = FastAPI(title="Luxar API", version="0.1.0", lifespan=lifespan)
@@ -273,6 +278,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         workspace_build=workspace_build,
         workspace_flash=workspace_flash,
         workspace_monitor=workspace_monitor,
+        workspace_monitor_start=workspace_monitor_start,
+        workspace_monitor_stop=workspace_monitor_stop,
+        workspace_monitor_status=workspace_monitor_status,
         workspace_probe=workspace_probe,
         workspace_status=workspace_status,
         skills_list=vnext_skills_list,

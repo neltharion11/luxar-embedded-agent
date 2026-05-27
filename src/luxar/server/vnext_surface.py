@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
+from sse_starlette.sse import EventSourceResponse
+import asyncio
+import json
 
 
 def register_vnext_http_surface(
@@ -24,6 +27,9 @@ def register_vnext_http_surface(
     workspace_build,
     workspace_flash,
     workspace_monitor,
+    workspace_monitor_start,
+    workspace_monitor_stop,
+    workspace_monitor_status,
     workspace_probe,
     skills_list,
     skill_view,
@@ -121,6 +127,41 @@ def register_vnext_http_surface(
             baudrate=int(body.get("baudrate", 115200)),
         )
         return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/monitor/start")
+    def api_workspace_monitor_start(body: dict):
+        from luxar.tools.workspace_tool import workspace_monitor_start
+        result = workspace_monitor_start(
+            project=str(body.get("project", "")),
+            port=str(body.get("port", "")),
+            baudrate=int(body.get("baudrate", 115200)),
+        )
+        return result if isinstance(result, dict) else result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/monitor/stop")
+    def api_workspace_monitor_stop(body: dict):
+        from luxar.tools.workspace_tool import workspace_monitor_stop
+        result = workspace_monitor_stop(
+            project=str(body.get("project", "")),
+        )
+        return result if isinstance(result, dict) else result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.get("/api/workspace/monitor/stream")
+    async def api_workspace_monitor_stream(project: str = Query("")):
+        from luxar.core.monitor_manager import MonitorManager
+        mgr = MonitorManager.instance()
+
+        async def event_stream():
+            while True:
+                lines = mgr.read_buffer(max_lines=20)
+                for line in lines:
+                    yield {"event": "serial_line", "data": line}
+                if mgr.state == "stopped":
+                    yield {"event": "serial_status", "data": json.dumps({"state": "stopped"})}
+                    break
+                await asyncio.sleep(0.2)
+
+        return EventSourceResponse(event_stream())
 
     
     @app.delete("/api/projects/{name}")

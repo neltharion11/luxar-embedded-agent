@@ -11,8 +11,43 @@ from luxar.server.agent_loop_support import (
     append_tool_result_message,
     build_reasoning_handoff_retry_events,
     build_stream_tool_result_events,
+    check_same_call_loop,
+    extract_referenced_portions,
     update_consecutive_failures,
 )
+
+
+def _infer_recent_file_path(conv: list[dict]) -> str:
+    """Scan recent messages for the last file path used in read/write."""
+    # First pass: scan tool result messages (path is in the result JSON)
+    for msg in reversed(conv):
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content", "")
+        if not content or '"path"' not in content:
+            continue
+        try:
+            data = json.loads(content)
+            path = data.get("path", "")
+            if path:
+                return path
+        except (json.JSONDecodeError, TypeError):
+            continue
+    # Second pass: scan assistant tool_calls for workspace_read_file / workspace_write_file args
+    for msg in reversed(conv):
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            if fn.get("name") in ("workspace_read_file", "workspace_write_file"):
+                try:
+                    args = json.loads(fn.get("arguments", "{}"))
+                    path = args.get("path", "")
+                    if path:
+                        return path
+                except (json.JSONDecodeError, TypeError):
+                    continue
+    return ""
 
 
 async def run_agent_loop(
@@ -107,20 +142,58 @@ async def run_agent_loop(
                         "reasoning_content": "",
                     }
                 try:
-                    if tc.function_name in ("workspace_read_file", "workspace_write_file") and not tc.arguments.get("project"):
+                    if tc.function_name in ("workspace_read_file", "workspace_write_file", "workspace_shell") and not tc.arguments.get("project"):
                         tc.arguments["project"] = project
-                    result, state.tool_calls_used = await execute_tool_with_limits(
-                        tc.function_name,
-                        tc.arguments,
-                        cfg,
-                        cm,
-                        used_calls=state.tool_calls_used,
-                    )
+                    if tc.function_name in ("workspace_read_file", "workspace_write_file") and not tc.arguments.get("path"):
+                        inferred = _infer_recent_file_path(conv)
+                        if inferred:
+                            tc.arguments["path"] = inferred
+                    # Intercept calls with missing required params before tool execution
+                    if tc.function_name == "workspace_shell" and not tc.arguments.get("command"):
+                        result = type("_SkipResult", (), {
+                            "ok": False, "tool": tc.function_name,
+                            "data": {"error": "Missing required parameter 'command'. Provide a shell command like 'type Core/Src/main.c' or 'dir'."},
+                            "error": "", "summary_source": {}, "truncated": False,
+                        })()
+                    elif tc.function_name in ("workspace_read_file", "workspace_write_file") and not tc.arguments.get("path"):
+                        result = type("_SkipResult", (), {
+                            "ok": False, "tool": tc.function_name,
+                            "data": {"error": "Missing required parameter 'path'. Provide a relative file path like Core/Src/main.c."},
+                            "error": "", "summary_source": {}, "truncated": False,
+                        })()
+                    else:
+                        result, state.tool_calls_used = await execute_tool_with_limits(
+                            tc.function_name,
+                            tc.arguments,
+                            cfg,
+                            cm,
+                            used_calls=state.tool_calls_used,
+                        )
                 except Exception as e:
+                    result = type("_ErrorResult", (), {"ok": False, "tool": tc.function_name, "data": {"error": str(e)}, "error": str(e), "summary_source": {}, "truncated": False})()
+                # Always append tool result BEFORE any early return, to keep conversation valid
+                append_tool_result_message(
+                    api_messages,
+                    conv,
+                    tool_call_id=tc.id,
+                    serialized_content=serialize_tool_content_for_llm(result, max_chars=16000 if tc.function_name == "workspace_shell" else 40000 if tc.function_name == "analyze_document_engineering" else 3000),
+                )
+
+                # If tool execution raised, stop the loop
+                if isinstance(result, type("_", (), {})) and hasattr(result, "ok") and not result.ok:
                     return {
-                        "content": str(e),
+                        "content": str(getattr(result, "error", "Tool execution failed")),
                         "reasoning_content": "",
                     }
+
+                # Guard: detect same-tool-with-same-args infinite loop
+                loop_error = check_same_call_loop(state, tc.function_name, tc.arguments)
+                if loop_error:
+                    return {
+                        "content": loop_error,
+                        "reasoning_content": "",
+                    }
+
                 state.consecutive_failures, limit_message = update_consecutive_failures(
                     state.consecutive_failures,
                     result,
@@ -134,12 +207,6 @@ async def run_agent_loop(
                         "reasoning_content": "",
                     }
                 ok, summary = format_tool_result_summary(tc.function_name, tc.arguments, result)
-                append_tool_result_message(
-                    api_messages,
-                    conv,
-                    tool_call_id=tc.id,
-                    serialized_content=serialize_tool_content_for_llm(result),
-                )
                 yield_like_log = (ok, summary, tc.function_name)
                 # This dummy assignment keeps the summary evaluation close to the append path.
                 _ = yield_like_log
@@ -201,6 +268,7 @@ async def run_agent_loop_stream(
     state = AgentLoopState()
     final_content = ""
     final_reasoning = ""
+    pending_outputs: dict[str, dict] = {}
     for _ in range(50):
         round_content = ""
         round_reasoning = ""
@@ -259,7 +327,12 @@ async def run_agent_loop_stream(
             try:
                 args = json.loads(collected_args) if collected_args.strip() else {}
             except json.JSONDecodeError:
-                args = {}
+                # DeepSeek may concatenate multiple JSON objects; extract the first valid one
+                try:
+                    decoder = json.JSONDecoder()
+                    args, _ = decoder.raw_decode(collected_args)
+                except Exception:
+                    args = {}
             append_assistant_tool_call_message(
                 api_messages,
                 conv,
@@ -301,17 +374,72 @@ async def run_agent_loop_stream(
                 "event": "phase_changed",
                 "data": json.dumps({"phase": "tool_running", "tool": collected_tc_name}, ensure_ascii=False),
             }
+            tool_failed = False
+            tool_error_msg = ""
             try:
-                if collected_tc_name in ("workspace_read_file", "workspace_write_file") and not args.get("project"):
+                if collected_tc_name in ("workspace_read_file", "workspace_write_file", "workspace_shell") and not args.get("project"):
                     args["project"] = project
-                result = await execute_tool_with_timeout(collected_tc_name, args, cfg, cm)
+                if collected_tc_name in ("workspace_read_file", "workspace_write_file") and not args.get("path"):
+                    inferred = _infer_recent_file_path(conv)
+                    if inferred:
+                        args["path"] = inferred
+                # Intercept calls with missing required params before tool execution
+                if collected_tc_name == "workspace_shell" and not args.get("command"):
+                    from luxar.server.tool_execution import ToolExecutionEnvelope as _TE
+                    result = _TE(
+                        ok=False, tool=collected_tc_name,
+                        data={"error": "Missing required parameter 'command'. Provide a shell command like 'type Core/Src/main.c' or 'dir'."},
+                        error="", summary_source={}, truncated=False,
+                    )
+                elif collected_tc_name in ("workspace_read_file", "workspace_write_file") and not args.get("path"):
+                    from luxar.server.tool_execution import ToolExecutionEnvelope as _TE
+                    result = _TE(
+                        ok=False, tool=collected_tc_name,
+                        data={"error": "Missing required parameter 'path'. Provide a relative file path like Core/Src/main.c."},
+                        error="", summary_source={}, truncated=False,
+                    )
+                else:
+                    result = await execute_tool_with_timeout(collected_tc_name, args, cfg, cm)
             except Exception as e:
-                yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                tool_failed = True
+                tool_error_msg = str(e)
+                from luxar.server.tool_execution import ToolExecutionEnvelope
+                result = ToolExecutionEnvelope(
+                    ok=False, tool=collected_tc_name,
+                    data={"error": tool_error_msg},
+                    error=tool_error_msg,
+                    summary_source={}, truncated=False,
+                )
+
+            # Always append tool result BEFORE any early return, to keep conversation valid
+            append_tool_result_message(
+                api_messages,
+                conv,
+                tool_call_id=collected_tc_id,
+                serialized_content=serialize_tool_content_for_llm(result, max_chars=16000 if collected_tc_name == "workspace_shell" else 40000 if collected_tc_name == "analyze_document_engineering" else 3000),
+            )
+
+            if tool_failed:
+                yield {"event": "error", "data": json.dumps({"error": tool_error_msg})}
                 yield {
                     "event": "escalation_triggered",
                     "data": json.dumps({"reason": "tool_timeout", "tool": collected_tc_name}, ensure_ascii=False),
                 }
                 return
+
+            # Guard: detect same-tool-with-same-args infinite loop
+            loop_error = check_same_call_loop(state, collected_tc_name, args)
+            if loop_error:
+                yield {"event": "error", "data": json.dumps({"error": loop_error})}
+                yield {
+                    "event": "escalation_triggered",
+                    "data": json.dumps(
+                        {"reason": "same_tool_loop", "tool": collected_tc_name, "count": state.same_call_streak},
+                        ensure_ascii=False,
+                    ),
+                }
+                return
+
             state.consecutive_failures, limit_message = update_consecutive_failures(
                 state.consecutive_failures,
                 result,
@@ -329,21 +457,45 @@ async def run_agent_loop_stream(
                     ),
                 }
                 return
-            append_tool_result_message(
-                api_messages,
-                conv,
-                tool_call_id=collected_tc_id,
-                serialized_content=serialize_tool_content_for_llm(result),
-            )
             for event_payload in build_stream_tool_result_events(
                 collected_tc_name,
                 args,
                 result,
+                tool_call_id=collected_tc_id,
                 serialize_tool_data=serialize_tool_data,
                 format_summary=format_tool_result_summary,
             ):
                 yield event_payload
+            # Store verbose tool output for later refinement
+            if collected_tc_name in ("workspace_shell", "workspace_read_file", "workspace_write_file") and result.ok:
+                file_content = ""
+                if collected_tc_name == "workspace_shell":
+                    file_content = getattr(result, "data", {}).get("stdout", "")
+                elif collected_tc_name == "workspace_read_file":
+                    file_content = getattr(result, "data", {}).get("content", "")
+                elif collected_tc_name == "workspace_write_file":
+                    file_content = args.get("content", "")
+                if file_content:
+                    summary = f"{args.get('command', args.get('path', '?'))} ({len(file_content)} chars)"
+                    if collected_tc_name == "workspace_write_file":
+                        summary = f"Wrote {args.get('path', '?')} ({len(file_content)} chars)"
+                    pending_outputs[collected_tc_id] = {
+                        "summary": summary,
+                        "file_content": file_content,
+                    }
         else:
+            # After LLM responds, refine tool outputs based on what LLM referenced
+            for tc_id, pout in pending_outputs.items():
+                refined = extract_referenced_portions(round_content, pout["file_content"])
+                if refined:
+                    yield {
+                        "event": "tool_output_refine",
+                        "data": json.dumps(
+                            {"tool_call_id": tc_id, "summary": pout["summary"], "content": refined},
+                            ensure_ascii=False,
+                        ),
+                    }
+            pending_outputs.clear()
             final_content = round_content
             final_reasoning = round_reasoning
             break

@@ -30,9 +30,13 @@ from luxar.tools.workspace_tool import (
     workspace_inspect,
     workspace_list_projects,
     workspace_monitor,
+    workspace_monitor_start,
+    workspace_monitor_stop,
+    workspace_monitor_status,
     workspace_probe,
     workspace_read_file,
     workspace_write_file,
+    workspace_shell,
 )
 from luxar.tools.analyze_doc import analyze_document_engineering
 
@@ -286,7 +290,9 @@ def format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool
     if name == "workspace_read_file":
         if is_ok:
             sz = data.get("size", 0)
-            return True, data.get("content", "")
+            path = args.get("path", "?")
+            sz = data.get("size", 0)
+            return True, f"Read {path} ({sz} chars)"
         return False, f"文件读取失败: {data.get('error','')}"
 
     if name == "workspace_build":
@@ -307,6 +313,14 @@ def format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool
         return is_ok, "烧录成功" if is_ok else f"烧录失败: {data.get('error','')}"
     if name == "workspace_monitor":
         return True, "串口监控已启动"
+    if name == "workspace_monitor_start":
+        return is_ok, "串口监听已启动" if is_ok else f"启动失败: {data.get('error','')}"
+    if name == "workspace_monitor_stop":
+        return True, "串口监听已停止"
+    if name == "workspace_monitor_status":
+        state = data.get("state", "unknown")
+        port = data.get("port", "")
+        return True, f"监听状态: {state} @ {port}"
     if name == "workspace_probe":
         probe_type = data.get("probe_type") or args.get("probe_type", "")
         return is_ok, f"{probe_type or 'workspace'} 探测已执行"
@@ -474,6 +488,37 @@ def execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager, public_tool
                     project=args.get("project", ""),
                     port=args.get("port", ""),
                     baudrate=int(args.get("baudrate", 115200)),
+                ),
+            )
+        if name == "workspace_monitor_start":
+            return build_tool_envelope(
+                name,
+                workspace_monitor_start(
+                    project=args.get("project", ""),
+                    port=args.get("port", ""),
+                    baudrate=int(args.get("baudrate", 115200)),
+                ),
+            )
+        if name == "workspace_monitor_stop":
+            return build_tool_envelope(
+                name,
+                workspace_monitor_stop(
+                    project=args.get("project", ""),
+                ),
+            )
+        if name == "workspace_monitor_status":
+            return build_tool_envelope(
+                name,
+                workspace_monitor_status(
+                    project=args.get("project", ""),
+                ),
+            )
+        if name == "workspace_shell":
+            return build_tool_envelope(
+                name,
+                workspace_shell(
+                    project=str(args.get("project", "")),
+                    command=str(args.get("command", "")),
                 ),
             )
         if name == "workspace_probe":

@@ -8,6 +8,7 @@ MAX_AGENT_TOOL_TIMEOUT_SEC = 180
 TOOL_TIMEOUT_OVERRIDES: dict[str, int] = {
     "workspace_build": 300,
     "workspace_flash": 300,
+    "analyze_document_engineering": 300,
 }
 
 

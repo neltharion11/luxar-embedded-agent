@@ -121,6 +121,14 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .chat-bubble.assistant .md h1{font-size:16px}
 .chat-bubble.assistant .md h2{font-size:14px}
 .chat-bubble.assistant .md h3{font-size:13px}
+/* Tool output collapsible blocks */
+.tool-output{margin:8px 0;border:1px solid #e0e1e6;border-radius:8px;font-size:13px}
+.tool-output summary{cursor:pointer;padding:8px 14px;background:#f6f8fa;color:#60646c;font-weight:600;font-size:12px;user-select:none;transition:background .15s}
+.tool-output summary:hover{background:#ebeef2;color:#1c2024}
+.tool-output summary .tl-icon{font-size:14px;margin-right:6px}
+.tool-output summary::marker{font-size:10px;color:#b0b4ba}
+.tool-output .tool-output-body{padding:0;max-height:400px;overflow:auto}
+.tool-output .tool-output-body pre{margin:0;border-radius:0;border:none;border-top:1px solid #e0e1e6}
 .chat-bubble.assistant .md table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
 .chat-bubble.assistant .md th,.chat-bubble.assistant .md td{border:1px solid #e0e1e6;padding:6px 10px;text-align:left}
 .chat-bubble.assistant .md th{background:#f6f8fa;font-weight:600}
@@ -225,6 +233,13 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
     <div class="hw-status-row">
       <div class="hw-status"><span class="led off" id="serial-led"></span><span>Serial</span></div>
       <span class="hw-detail" id="serial-info">-</span>
+    </div>
+    <div id="serial-output-panel" style="display:none; max-height:200px; overflow-y:auto; background:#1a1a2e; color:#0f0; font-family:monospace; font-size:12px; padding:8px; margin-top:4px; border-radius:4px; border:1px solid #333;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span style="color:#888;">SERIAL OUTPUT</span>
+        <button onclick="clearSerialOutput()" style="background:#333;color:#aaa;border:none;cursor:pointer;font-size:10px;">clear</button>
+      </div>
+      <pre id="serial-output-lines" style="margin:0; white-space:pre-wrap; word-break:break-all;"></pre>
     </div>
   </div>
 </div>
@@ -839,6 +854,94 @@ function formatToolRunningLine(chunk) {
   return '_' + t('chat.toolRunning') + ': ' + suffix + '..._';
 }
 
+var TOOL_ICONS = {
+  'workspace_shell': '\u2328\ufe0f',
+  'workspace_read_file': '\U0001f4c4',
+  'workspace_write_file': '\u270f\ufe0f',
+  'workspace_build': '\U0001f528',
+  'workspace_flash': '\u26a1',
+  'workspace_monitor': '\U0001f5a5\ufe0f'
+};
+
+function renderToolOutput(bubbleDiv, eventData, container) {
+  var tool = eventData.tool || '';
+  var summary = eventData.summary || '';
+  var contentText = eventData.content || '';
+  var icon = TOOL_ICONS[tool] || '\U0001f527';
+
+  var wrapper = document.createElement('details');
+  wrapper.className = 'tool-output';
+  wrapper.removeAttribute('open');
+  if (eventData.tool_call_id) {
+    wrapper.setAttribute('data-tool-call-id', eventData.tool_call_id);
+  }
+
+  var sum = document.createElement('summary');
+  var iconSpan = document.createElement('span');
+  iconSpan.className = 'tl-icon';
+  iconSpan.textContent = icon;
+  sum.appendChild(iconSpan);
+  sum.appendChild(document.createTextNode((tool ? tool + ': ' : '') + summary));
+  wrapper.appendChild(sum);
+
+  if (contentText) {
+    var body = document.createElement('div');
+    body.className = 'tool-output-body';
+    var pre = document.createElement('pre');
+    var code = document.createElement('code');
+    code.textContent = contentText;
+    pre.appendChild(code);
+    body.appendChild(pre);
+    wrapper.appendChild(body);
+  }
+
+  wrapper.open = false;
+  bubbleDiv.appendChild(wrapper);
+
+  if (typeof hljs !== 'undefined' && contentText) {
+    try { hljs.highlightElement(code); } catch(e) {}
+  }
+
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+function renderToolOutputRefine(eventData) {
+  var toolCallId = eventData.tool_call_id || '';
+  var summary = eventData.summary || '';
+  var contentText = eventData.content || '';
+  // Find existing tool-output wrapper by tool_call_id
+  var wrapper = document.querySelector('.tool-output[data-tool-call-id="' + toolCallId + '"]');
+  if (!wrapper) return;
+  // Update summary
+  var sum = wrapper.querySelector('summary');
+  if (sum && summary) {
+    sum.textContent = summary;
+  }
+  // Update body content
+  var body = wrapper.querySelector('.tool-output-body');
+  if (body) {
+    if (contentText) {
+      var pre = body.querySelector('pre');
+      var code = pre ? pre.querySelector('code') : null;
+      if (!pre) {
+        pre = document.createElement('pre');
+        code = document.createElement('code');
+        pre.appendChild(code);
+        body.innerHTML = '';
+        body.appendChild(pre);
+      }
+      if (code) {
+        code.textContent = contentText;
+        if (typeof hljs !== 'undefined') {
+          try { hljs.highlightElement(code); } catch(e) {}
+        }
+      }
+    } else {
+      body.innerHTML = '';
+    }
+  }
+}
+
 async function loadSidebarProjects() {
   var container = document.getElementById('sidebar-projects');
   try {
@@ -1287,6 +1390,35 @@ async function sendMessage() {
               var toolChunk = JSON.parse(dataStr);
               var createdProjectName = extractProjectNameFromToolResult(toolChunk.tool, toolChunk.result);
               if (createdProjectName) pendingProjectSelection = createdProjectName;
+            } catch(e) {}
+          } else if (currentEvent === 'tool_output') {
+            try {
+              var outputData = JSON.parse(dataStr);
+              renderToolOutput(bubbleDiv, outputData, container);
+            } catch(e) {}
+          } else if (currentEvent === 'serial_line') {
+            try {
+              var serialLine = dataStr || '';
+              showSerialOutput();
+              var linesEl = document.getElementById('serial-output-lines');
+              if (linesEl) {
+                linesEl.textContent += serialLine + '\n';
+                var panel = document.getElementById('serial-output-panel');
+                if (panel) panel.scrollTop = panel.scrollHeight;
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'serial_status') {
+            try {
+              var status = JSON.parse(dataStr);
+              if (status.state === 'stopped') {
+                var led = document.getElementById('serial-led');
+                if (led) led.className = 'led off';
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'tool_output_refine') {
+            try {
+              var refineData = JSON.parse(dataStr);
+              renderToolOutputRefine(refineData);
             } catch(e) {}
           } else if (currentEvent === 'tool_call') {
             try {
