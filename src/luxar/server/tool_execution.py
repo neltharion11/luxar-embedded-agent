@@ -37,6 +37,7 @@ from luxar.tools.workspace_tool import (
     workspace_read_file,
     workspace_write_file,
     workspace_shell,
+    workspace_publish_driver,
 )
 from luxar.tools.analyze_doc import analyze_document_engineering
 
@@ -324,21 +325,18 @@ def format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool
     if name == "workspace_probe":
         probe_type = data.get("probe_type") or args.get("probe_type", "")
         return is_ok, f"{probe_type or 'workspace'} 探测已执行"
-        if name == "workspace_list_projects":
-            return build_tool_envelope(name, workspace_list_projects())
-        if name == "workspace_create_project":
-            return build_tool_envelope(name, workspace_create_project(
-                name=str(args.get("name", "")),
-                mcu=str(args.get("mcu", "STM32F103C8")),
-                platform=str(args.get("platform", "stm32cubemx")),
-                runtime=str(args.get("runtime", "baremetal")),
-                firmware_package=str(args.get("firmware_package", "")),
-            ))
-        if name == "workspace_read_file":
-            return build_tool_envelope(name, workspace_read_file(
-                project=str(args.get("project", "")),
-                path=str(args.get("path", "")),
-            ))
+    if name == "workspace_publish_driver":
+        if is_ok:
+            chip = data.get("chip", "")
+            variant = data.get("variant", "")
+            target = data.get("target_path", "")
+            return True, f"Driver published: {chip}/{variant}"
+        msg = data.get("message", "")
+        if data.get("existing"):
+            return False, f"Already exists: {msg}"
+        if data.get("needs_variant"):
+            return False, f"Variant needed: {msg}"
+        return False, f"Publish failed: {msg or data.get('error', '')}"
 
     if name == "analyze_document_engineering":
         pin_count = len(data.get("pin_requirements") or [])
@@ -559,6 +557,18 @@ def execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager, public_tool
             return build_tool_envelope(
                 name,
                 workspace_probe(project=args.get("project", ""), probe_type=args.get("probe_type", "i2c")),
+            )
+
+        if name == "workspace_publish_driver":
+            return build_tool_envelope(
+                name,
+                workspace_publish_driver(
+                    project=str(args.get("project", "")),
+                    header_path=str(args.get("header_path", "")),
+                    source_path=str(args.get("source_path", "")),
+                    variant=str(args.get("variant", "")),
+                    force=bool(args.get("force", False)),
+                ),
             )
 
         if name == "analyze_document_engineering":

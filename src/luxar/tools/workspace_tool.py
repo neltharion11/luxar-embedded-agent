@@ -436,3 +436,38 @@ def workspace_shell(project: str, command: str) -> dict[str, object]:
         return {"success": False, "error": f"Command timed out after {_SHELL_TIMEOUT_SEC}s"}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
+
+def workspace_publish_driver(
+    project: str,
+    header_path: str,
+    source_path: str,
+    variant: str = "",
+    force: bool = False,
+) -> dict[str, object]:
+    """Publish a manually-written driver from a project to the shared driver library.
+
+    Copies .h/.c files from workspace/projects/{project}/{header_path} into
+    workspace/driver_library/{vendor}/{chip}/{variant}/ with content dedup.
+    """
+    cm = _get_cm()
+    ws = cm.workspace_root()
+    project_dir = ws / project
+    h_src = (project_dir / header_path).resolve()
+    c_src = (project_dir / source_path).resolve() if source_path else None
+    lib_path = cm.project_root() / "workspace" / "driver_library"
+
+    if not h_src.exists():
+        return {"success": False, "error": f"Header file not found: {h_src}"}
+    if c_src and not c_src.exists():
+        return {"success": False, "error": f"Source file not found: {c_src}"}
+
+    from luxar.tools.driver_indexer import publish_driver_to_library
+
+    result = publish_driver_to_library(
+        library_path=str(lib_path),
+        header_path=str(h_src),
+        source_path=str(c_src) if c_src else "",
+        variant=variant,
+        force=force,
+    )
+    return result

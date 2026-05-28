@@ -429,5 +429,24 @@ TOOLS: list[dict] = [
         }
     },
 
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_publish_driver",
+            "description": "Publish a manually-written driver from a project to the shared driver library. Copies .h/.c files with content dedup and variant support. Use after writing and testing a driver via workspace_write_file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Source project name"},
+                    "header_path": {"type": "string", "description": "Relative path to .h file within project (e.g., Drivers/ch1116/ch1116.h)"},
+                    "source_path": {"type": "string", "description": "Relative path to .c file within project (e.g., Drivers/ch1116/ch1116.c)"},
+                    "variant": {"type": "string", "description": "Optional variant name for same-chip different implementations (e.g., 128x64, 128x32)"},
+                    "force": {"type": "boolean", "description": "Skip dedup check and force publish"}
+                },
+                "required": ["project", "header_path", "source_path"]
+            }
+        }
+    },
+
 ]
 PUBLIC_TOOL_NAMES = frozenset(tool["function"]["name"] for tool in TOOLS)
