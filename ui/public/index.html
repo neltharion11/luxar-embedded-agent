@@ -1634,20 +1634,16 @@ async function sendMessage() {
 
 async function loadDashboard() {
   try {
-    var results = await Promise.all([apiGet('/api/config'), apiGet('/api/workspace/projects'), apiGet('/api/skills'), apiGet('/api/workspace')]);
-    var config = results[0], pdata = results[1], sdata = results[2], wsdata = results[3];
+    var results = await Promise.all([apiGet('/api/workspace/projects'), apiGet('/api/skills'), apiGet('/api/drivers'), apiGet('/api/workspace/status')]);
+    var pdata = results[0], sdata = results[1], ddata = results[2], wsdata = results[3];
     var projList = pdata.projects || [];
     var skillList = sdata.skills || [];
-    var workspace = wsdata.workspace || {};
-    var tc = [];
+    var driverList = ddata.drivers || [];
+    var tc = (wsdata && wsdata.toolchains) ? wsdata.toolchains.available : '-';
     document.getElementById('stat-projects').textContent = projList.length;
+    document.getElementById('stat-drivers').textContent = driverList.length;
     document.getElementById('stat-skills').textContent = skillList.length;
-    document.getElementById('stat-toolchains').textContent = tc.length || (workspace.projects || []).length;
-    document.getElementById('cfg-provider').textContent = (config.llm && config.llm.provider) || '-';
-    document.getElementById('cfg-model').textContent = (config.llm && config.llm.model) || '-';
-    document.getElementById('cfg-platform').textContent = (config.platform && config.platform.default_platform) || '-';
-    document.getElementById('cfg-runtime').textContent = (config.platform && config.platform.default_runtime) || '-';
-    document.getElementById('cfg-workspace').textContent = workspace.workspace_root || '-';
+    document.getElementById('stat-toolchains').textContent = tc;
     var dashList = document.getElementById('dash-project-list');
     if (!projList.length) { dashList.innerHTML = '<div class="empty-state">' + t('sidebar.noProjects') + '</div>'; }
     else {
@@ -1656,13 +1652,10 @@ async function loadDashboard() {
         return '<div class="driver-item" onclick="selectProject(\'' + name + '\')"><div class="item-title">' + escapeHtml(p.name) + '</div></div>';
       }).join('');
     }
-    document.getElementById('stat-drivers').textContent = skillList.length;
   } catch(e) {
-    document.getElementById('dash-project-list').innerHTML = '<div class="empty-state">' + t('drivers.failed') + '</div>';
+    document.getElementById('dash-project-list').innerHTML = '<div class="empty-state">' + t('drivers.failed') + ': ' + e.message + '</div>';
   }
-}
-
-function loadDrivers() { searchDrivers(); }
+}function loadDrivers() { searchDrivers(); }
 
 function searchDrivers() {
   clearTimeout(driverSearchTimeout);

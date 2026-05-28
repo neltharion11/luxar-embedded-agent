@@ -63,6 +63,7 @@ async def run_agent_loop(
     prepare_agent_context,
     is_reasoning_handoff_error,
     retry_after_reasoning_handoff_repair,
+    correct_tool_name,
     validate_public_tool_name,
     execute_tool_with_limits,
     is_tool_result_failure,
@@ -135,7 +136,9 @@ async def run_agent_loop(
                 reasoning_content=resp.reasoning_content or "",
             )
             for tc in resp.tool_calls:
-                invalid_tool = validate_public_tool_name(tc.function_name)
+                corrected_name = correct_tool_name(tc.function_name)
+                tc.function_name = corrected_name
+                invalid_tool = validate_public_tool_name(corrected_name)
                 if invalid_tool is not None:
                     return {
                         "content": invalid_tool.error or "Tool is not part of the public control plane.",
@@ -238,6 +241,7 @@ async def run_agent_loop_stream(
     prepare_agent_context,
     is_reasoning_handoff_error,
     repair_messages_for_reasoning_handoff,
+    correct_tool_name,
     validate_public_tool_name,
     enforce_tool_call_budget,
     execute_tool_with_timeout,
@@ -346,7 +350,9 @@ async def run_agent_loop_stream(
                 content=None,
                 reasoning_content=round_reasoning,
             )
-            invalid_tool = validate_public_tool_name(collected_tc_name)
+            corrected_name = correct_tool_name(collected_tc_name)
+            collected_tc_name = corrected_name
+            invalid_tool = validate_public_tool_name(corrected_name)
             if invalid_tool is not None:
                 yield {"event": "error", "data": json.dumps({"error": invalid_tool.error})}
                 yield {

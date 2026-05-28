@@ -108,29 +108,6 @@ def workspace_status() -> dict[str, object]:
     import shutil
     import platform
 
-    # Method 0: Windows PnP device manager (catches ST-Link without COM port)
-    if not stlink_connected and platform.system() == "Windows":
-        try:
-            ps_cmd = 'Get-PnpDevice | Where-Object { $_.FriendlyName -like "*stlink*" -or $_.FriendlyName -like "*ST-Link*" -or $_.InstanceId -like "USB\\\\VID_0483*" } | Select-Object -First 1 FriendlyName, InstanceId, Status | ConvertTo-Json'
-            result = subprocess.run(
-                ["powershell", "-Command", ps_cmd],
-                capture_output=True, text=True, timeout=8
-            )
-            if result.stdout.strip():
-                import json as _json
-                try:
-                    dev = _json.loads(result.stdout.strip())
-                    name = dev.get("FriendlyName", "") or "ST-Link"
-                    status = dev.get("Status", "")
-                    stlink_connected = status.upper() == "OK" or status == ""
-                    stlink_info = f"{name} (PnP)"
-                except Exception:
-                    if "STLink" in result.stdout or "ST-Link" in result.stdout:
-                        stlink_connected = True
-                        stlink_info = "ST-Link (PnP)"
-        except Exception:
-            pass
-
     # Method 1: USB descriptor detection via serial ports (no CLI needed)
     stlink_vids = {"0483:374b", "0483:3748", "0483:3744", "0483:374f"}
     try:
@@ -151,9 +128,14 @@ def workspace_status() -> dict[str, object]:
 
     # Method 2: STM32_Programmer_CLI or openocd
     if not stlink_connected:
-        programmer_cli = shutil.which("STM32_Programmer_CLI") or shutil.which("STM32CubeProgrammer")
-        if not programmer_cli:
-            programmer_cli = shutil.which("openocd")
+        try:
+            from luxar.core.toolchain_manager import ToolchainManager
+            _st_cm = _get_cm()
+            _st_cfg = _st_cm.ensure_default_config()
+            _st_tm = ToolchainManager(config=_st_cfg, project_root=str(_st_cm.project_root()))
+            programmer_cli = _st_tm.resolve_programmer_cli() or _st_tm.resolve_openocd()
+        except Exception:
+            programmer_cli = None
         if programmer_cli:
             try:
                 if "openocd" in programmer_cli.lower():
@@ -171,9 +153,11 @@ def workspace_status() -> dict[str, object]:
                     output = (result.stdout + result.stderr).lower()
                     stlink_connected = "st-link" in output or "stlink" in output
                     if stlink_connected:
-                        for line in (result.stdout + result.stderr).split("\n"):
-                            if "st-link" in line.lower() or "stlink" in line.lower():
-                                stlink_info = line.strip()[:80]
+                        stlink_info = "ST-Link detected"
+                        for ln in (result.stdout + result.stderr).split("\n"):
+                            if "ST-LINK SN" in ln or "ST-LINK FW" in ln:
+                                stlink_info = ln.strip()[:80]
+                                break
                                 break
             except Exception:
                 pass
@@ -213,6 +197,29 @@ def workspace_status() -> dict[str, object]:
         except Exception:
             pass
 
+    # Method 5: Windows PnP (slow fallback) device manager (catches ST-Link without COM port)
+    if not stlink_connected and platform.system() == "Windows":
+        try:
+            ps_cmd = 'Get-PnpDevice | Where-Object { $_.FriendlyName -like "*stlink*" -or $_.FriendlyName -like "*ST-Link*" -or $_.InstanceId -like "USB\\\\VID_0483*" } | Select-Object -First 1 FriendlyName, InstanceId, Status | ConvertTo-Json'
+            result = subprocess.run(
+                ["powershell", "-Command", ps_cmd],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.stdout.strip():
+                import json as _json
+                try:
+                    dev = _json.loads(result.stdout.strip())
+                    name = dev.get("FriendlyName", "") or "ST-Link"
+                    status = dev.get("Status", "")
+                    stlink_connected = status.upper() == "OK" or status == ""
+                    stlink_info = f"{name} (PnP)"
+                except Exception:
+                    if "STLink" in result.stdout or "ST-Link" in result.stdout:
+                        stlink_connected = True
+                        stlink_info = "ST-Link (PnP)"
+        except Exception:
+            pass
+
     # --- Serial port detection ---
     try:
         from serial.tools import list_ports
@@ -239,8 +246,23 @@ def workspace_status() -> dict[str, object]:
     except Exception:
         pass
 
+    # Toolchain status
+    tc_available = 0
+    tc_total = 0
+    try:
+        cfg_manager = _get_cm()
+        cfg = cfg_manager.ensure_default_config()
+        from luxar.core.toolchain_manager import ToolchainManager
+        tm = ToolchainManager(config=cfg, project_root=str(cfg_manager.project_root()))
+        ts = tm.status()
+        tc_available = sum(1 for v in ts.values() if v)
+        tc_total = len(ts)
+    except Exception:
+        pass
+
     return {
         "success": True,
+        "toolchains": {"available": tc_available, "total": tc_total},
         "stlink": {
             "connected": stlink_connected,
             "info": stlink_info or ("ST-Link detected" if stlink_connected else "Not found"),

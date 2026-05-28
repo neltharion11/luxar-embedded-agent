@@ -300,6 +300,20 @@ def prepare_agent_context(
         if message.get("reasoning_content"):
             entry["reasoning_content"] = message["reasoning_content"]
         api_messages.append(entry)
+    # Context augmentation: inject matching skills and drivers
+    try:
+        from luxar.server.context_augmenter import match_skills, match_drivers, build_resource_hint
+        from luxar.core.driver_library import DriverLibrary
+        skills = match_skills(msg_content, cm.skills_root())
+        if skills:
+            lib_path = cm.project_root() / cfg.agent.driver_library
+            library = DriverLibrary(lib_path)
+            drivers = match_drivers(msg_content, library)
+            hint = build_resource_hint(skills, drivers)
+            if hint:
+                api_messages[0]['content'] += chr(10) + hint
+    except Exception:
+        pass
     return validate_api_messages(api_messages)
 
 

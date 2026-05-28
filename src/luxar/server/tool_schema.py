@@ -90,6 +90,23 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "search_driver",
+            "description": "Search the driver library for reusable hardware drivers. Use to find existing .h/.c driver files by chip, protocol, vendor, or keyword before writing new driver code.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "Search keyword matching driver name, chip, vendor, device, protocol, or file path"},
+                    "protocol": {"type": "string", "description": "Filter by communication protocol (e.g. I2C, SPI, UART, GPIO)"},
+                    "vendor": {"type": "string", "description": "Filter by chip vendor (e.g. ST, TI, NXP)"},
+                    "limit": {"type": "integer", "description": "Maximum results to return, default 20"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "skill_execute",
             "description": "Execute an executable runtime skill and collect evidence.",
             "parameters": {

@@ -357,10 +357,28 @@ def format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool
 
     if name == "workspace_inspect":
         return is_ok, "工作区状态已读取"
+    if name == "search_driver":
+        count = len(data.get("results", []))
+        total = data.get("stats", {}).get("total_drivers", 0)
+        kw = data.get("keyword", "")
+        if kw:
+            return is_ok, f"Found {count} drivers for '{kw}' (of {total} total)"
+        return is_ok, f"Driver library: {count} results, {total} total"
+
     if is_ok:
         return True, f"工具 '{name}' 已完成"
     error_msg = data.get("error") or data.get("message", "")
     return False, f"工具 '{name}' 返回失败: {str(error_msg)[:80]}"
+
+
+_TOOL_NAME_CORRECTIONS: dict[str, str] = {
+    "workshell": "workspace_shell",
+}
+
+
+def correct_tool_name(name: str) -> str:
+    """Silently correct known LLM typos in tool names."""
+    return _TOOL_NAME_CORRECTIONS.get(name, name)
 
 
 def validate_public_tool_name(name: str, public_tool_names: set[str] | frozenset[str]) -> ToolExecutionEnvelope | None:
@@ -407,6 +425,22 @@ def execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager, public_tool
                     promotion_level=args.get("promotion_level", "validated"),
                 ),
             )
+        if name == "search_driver":
+            from luxar.tools.search_driver import run_search_driver
+            cm = ConfigManager()
+            cfg = cm.ensure_default_config()
+            return build_tool_envelope(
+                name,
+                run_search_driver(
+                    config=cfg,
+                    project_root=str(cm.project_root()),
+                    keyword=str(args.get("keyword", "")),
+                    protocol=str(args.get("protocol", "")),
+                    vendor=str(args.get("vendor", "")),
+                    limit=int(args.get("limit", 20)),
+                ),
+            )
+
         if name == "skill_execute":
             return build_tool_envelope(
                 name,

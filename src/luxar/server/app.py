@@ -66,6 +66,7 @@ from luxar.server.tool_execution import (
     parse_tool_result as _parse_tool_result,
     serialize_tool_content_for_llm as _serialize_tool_content_for_llm,
     serialize_tool_data as _serialize_tool_data,
+    correct_tool_name as _correct_tool_name,
     validate_public_tool_name as _validate_public_tool_name_impl,
 )
 from luxar.server.tool_schema import PUBLIC_TOOL_NAMES, TOOLS
@@ -177,6 +178,7 @@ async def _run_agent_loop(
         prepare_agent_context=_prepare_agent_context,
         is_reasoning_handoff_error=_is_reasoning_handoff_error,
         retry_after_reasoning_handoff_repair=_retry_after_reasoning_handoff_repair,
+        correct_tool_name=_correct_tool_name,
         validate_public_tool_name=_validate_public_tool_name,
         execute_tool_with_limits=_execute_tool_with_limits,
         is_tool_result_failure=_is_tool_result_failure,
@@ -215,6 +217,7 @@ async def _run_agent_loop_stream(
         prepare_agent_context=_prepare_agent_context,
         is_reasoning_handoff_error=_is_reasoning_handoff_error,
         repair_messages_for_reasoning_handoff=_repair_messages_for_reasoning_handoff,
+        correct_tool_name=_correct_tool_name,
         validate_public_tool_name=_validate_public_tool_name,
         enforce_tool_call_budget=_enforce_tool_call_budget,
         execute_tool_with_timeout=_execute_tool_with_timeout,
