@@ -129,6 +129,14 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .tool-output summary::marker{font-size:10px;color:#b0b4ba}
 .tool-output .tool-output-body{padding:0;max-height:400px;overflow:auto}
 .tool-output .tool-output-body pre{margin:0;border-radius:0;border:none;border-top:1px solid #e0e1e6}
+/* Tool output collapsible blocks */
+.tool-output{margin:8px 0;border:1px solid #e0e1e6;border-radius:8px;font-size:13px}
+.tool-output summary{cursor:pointer;padding:8px 14px;background:#f6f8fa;color:#60646c;font-weight:600;font-size:12px;user-select:none;transition:background .15s}
+.tool-output summary:hover{background:#ebeef2;color:#1c2024}
+.tool-output summary .tl-icon{font-size:14px;margin-right:6px}
+.tool-output summary::marker{font-size:10px;color:#b0b4ba}
+.tool-output .tool-output-body{padding:0;max-height:400px;overflow:auto}
+.tool-output .tool-output-body pre{margin:0;border-radius:0;border:none;border-top:1px solid #e0e1e6}
 .chat-bubble.assistant .md table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
 .chat-bubble.assistant .md th,.chat-bubble.assistant .md td{border:1px solid #e0e1e6;padding:6px 10px;text-align:left}
 .chat-bubble.assistant .md th{background:#f6f8fa;font-weight:600}
@@ -241,6 +249,13 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
       </div>
       <pre id="serial-output-lines" style="margin:0; white-space:pre-wrap; word-break:break-all;"></pre>
     </div>
+    <div id="serial-output-panel" style="display:none; max-height:200px; overflow-y:auto; background:#1a1a2e; color:#0f0; font-family:monospace; font-size:12px; padding:8px; margin-top:4px; border-radius:4px; border:1px solid #333;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span style="color:#888;">SERIAL OUTPUT</span>
+        <button onclick="clearSerialOutput()" style="background:#333;color:#aaa;border:none;cursor:pointer;font-size:10px;">clear</button>
+      </div>
+      <pre id="serial-output-lines" style="margin:0; white-space:pre-wrap; word-break:break-all;"></pre>
+    </div>
   </div>
 </div>
 
@@ -273,6 +288,24 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
         <button id="chat-stop-btn" onclick="stopGeneration()" style="display:none" data-i18n="chat.stop">🛑</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Dashboard Page -->
+<div data-page="dashboard">
+  <div class="page-header">
+    <h1 data-i18n="nav.dashboard">Dashboard</h1>
+    <p style="margin:4px 0 0;color:#60646c;font-size:13px" data-i18n="dashboard.subtitle">STM32-first embedded AI engineering toolkit.</p>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin:16px 0">
+    <div class="card" style="text-align:center;padding:16px"><div style="font-size:28px;font-weight:700;color:#1c2024" id="stat-projects">-</div><div style="font-size:12px;color:#888;margin-top:4px" data-i18n="dashboard.statProjects">Projects</div></div>
+    <div class="card" style="text-align:center;padding:16px"><div style="font-size:28px;font-weight:700;color:#1c2024" id="stat-drivers">-</div><div style="font-size:12px;color:#888;margin-top:4px" data-i18n="dashboard.statDrivers">Drivers</div></div>
+    <div class="card" style="text-align:center;padding:16px"><div style="font-size:28px;font-weight:700;color:#1c2024" id="stat-skills">-</div><div style="font-size:12px;color:#888;margin-top:4px" data-i18n="dashboard.statSkills">Skills</div></div>
+    <div class="card" style="text-align:center;padding:16px"><div style="font-size:28px;font-weight:700;color:#1c2024" id="stat-toolchains">-</div><div style="font-size:12px;color:#888;margin-top:4px" data-i18n="dashboard.statToolchains">Toolchains</div></div>
+  </div>
+  <div class="card">
+    <div style="font-weight:600;font-size:14px;color:#1c2024;margin-bottom:8px" data-i18n="dashboard.recentProjects">Projects</div>
+    <div id="dash-project-list"><div class="empty-state" data-i18n="dashboard.loadingProjects">Loading...</div></div>
   </div>
 </div>
 
@@ -846,6 +879,75 @@ function renderStreamMarkdown(target, markdown, container) {
     try { hljs.highlightElement(block); } catch(e) {}
   });
   if (container) container.scrollTop = container.scrollHeight;
+}
+
+var TOOL_ICONS = {
+  'workspace_shell': '\u2328\ufe0f',
+  'workspace_read_file': '\U0001f4c4',
+  'workspace_write_file': '\u270f\ufe0f',
+  'workspace_build': '\U0001f528',
+  'workspace_flash': '\u26a1',
+  'workspace_monitor': '\U0001f5a5\ufe0f'
+};
+
+function renderToolOutput(bubbleDiv, eventData, container) {
+  var tool = eventData.tool || '';
+  var summary = eventData.summary || '';
+  var contentText = eventData.content || '';
+  var icon = TOOL_ICONS[tool] || '\U0001f527';
+  var wrapper = document.createElement('details');
+  wrapper.className = 'tool-output';
+  wrapper.removeAttribute('open');
+  if (eventData.tool_call_id) { wrapper.setAttribute('data-tool-call-id', eventData.tool_call_id); }
+  var sum = document.createElement('summary');
+  var iconSpan = document.createElement('span');
+  iconSpan.className = 'tl-icon';
+  iconSpan.textContent = icon;
+  sum.appendChild(iconSpan);
+  sum.appendChild(document.createTextNode((tool ? tool + ': ' : '') + summary));
+  wrapper.appendChild(sum);
+  if (contentText) {
+    var body = document.createElement('div');
+    body.className = 'tool-output-body';
+    var pre = document.createElement('pre');
+    var code = document.createElement('code');
+    code.textContent = contentText;
+    pre.appendChild(code);
+    body.appendChild(pre);
+    wrapper.appendChild(body);
+  }
+  wrapper.open = false;
+  bubbleDiv.appendChild(wrapper);
+  if (typeof hljs !== 'undefined' && contentText) { try { hljs.highlightElement(code); } catch(e) {} }
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+function renderToolOutputRefine(eventData) {
+  var toolCallId = eventData.tool_call_id || '';
+  var summary = eventData.summary || '';
+  var contentText = eventData.content || '';
+  var wrapper = document.querySelector('.tool-output[data-tool-call-id="' + toolCallId + '"]');
+  if (!wrapper) return;
+  var sum = wrapper.querySelector('summary');
+  if (sum && summary) { sum.textContent = summary; }
+  var body = wrapper.querySelector('.tool-output-body');
+  if (body) {
+    if (contentText) {
+      var pre = body.querySelector('pre');
+      var code = pre ? pre.querySelector('code') : null;
+      if (!pre) { pre = document.createElement('pre'); code = document.createElement('code'); pre.appendChild(code); body.innerHTML = ''; body.appendChild(pre); }
+      if (code) { code.textContent = contentText; if (typeof hljs !== 'undefined') { try { hljs.highlightElement(code); } catch(e) {} } }
+    } else { body.innerHTML = ''; }
+  }
+}
+
+function showSerialOutput() {
+  var panel = document.getElementById('serial-output-panel');
+  if (panel) panel.style.display = 'block';
+}
+function clearSerialOutput() {
+  var linesEl = document.getElementById('serial-output-lines');
+  if (linesEl) linesEl.textContent = '';
 }
 
 function formatToolRunningLine(chunk) {
@@ -1569,24 +1671,21 @@ function searchDrivers() {
     var list = document.getElementById('driver-list');
     list.innerHTML = '<div class="empty-state">' + t('drivers.loading') + '</div>';
     try {
-      var data = await apiGet('/api/skills');
-      var skills = (data.skills || []).filter(function(s) {
-        var haystack = [s.name, s.title, s.category, s.summary, s.metadata && s.metadata.mode].join(' ').toLowerCase();
+      var data = await apiGet('/api/drivers');
+      var drivers = (data.drivers || []).filter(function(d) {
+        var haystack = [d.name, d.peripheral, d.vendor].join(' ').toLowerCase();
         return !q || haystack.indexOf(q.toLowerCase()) !== -1;
       });
-      if (!skills.length) { list.innerHTML = '<div class="empty-state">' + t('drivers.none') + '</div>'; return; }
-      list.innerHTML = skills.map(function(s) {
-        var name = s.title || s.name || t('drivers.unnamed');
-        var tags = '';
-        if (s.category) tags += '<span class="tag tag-cloud">' + escapeHtml(s.category) + '</span> ';
-        if (s.metadata && s.metadata.mode) tags += '<span class="tag tag-green">' + escapeHtml(s.metadata.mode) + '</span>';
-        return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
-          '<span class="tag tag-black">' + escapeHtml((s.metadata && s.metadata.mode) || '?') + '</span>' +
-          '<span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(name) + '</span>' +
+      if (!drivers.length) { list.innerHTML = '<div class="empty-state">' + t('drivers.none') + '</div>'; return; }
+      list.innerHTML = drivers.map(function(d) {
+        var filesHtml = d.files.map(function(f) { return '<span style="font-family:monospace;font-size:11px;color:#888">' + escapeHtml(f.name) + ' (' + (f.size > 1024 ? (f.size/1024).toFixed(1)+'KB' : f.size+'B') + ')</span>'; }).join(', ');
+        return '<div class="card" style="margin-bottom:0">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+          '<span class="tag tag-black">' + escapeHtml(d.peripheral.toUpperCase()) + '</span>' +
+          '<span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(d.name) + '</span>' +
           '</div>' +
-          '<div style="font-size:13px;color:#60646c">' + escapeHtml(s.summary || 'Runtime skill') + '</div>' +
-          '<div style="font-size:11px;color:#b0b4ba;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(s.path || '') + '">' + escapeHtml(s.path || '') + '</div>' +
-          '<div style="margin-top:8px">' + tags + '</div>' +
+          '<div style="font-size:12px;color:#889">' + escapeHtml(d.vendor) + '</div>' +
+          '<div style="margin-top:6px">' + filesHtml + '</div>' +
           '</div>';
       }).join('');
     } catch(e) {
@@ -1603,10 +1702,19 @@ async function loadSkills() {
     var skills = data.skills || [];
     if (!skills.length) { list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.none') + '</div>'; return; }
     list.innerHTML = skills.map(function(s) {
-      var srcHtml = s.path ? '<div style="font-size:11px;color:#b0b4ba;margin-top:8px">' + t('skills.source') + ': ' + escapeHtml(s.path) + '</div>' : '';
-      var mode = (s.metadata && s.metadata.mode) || '?';
+      var mode = (s.metadata && s.metadata.mode) || s.category || 'skill';
+      var modeLabel = mode === 'executable' ? 'EXEC' : mode.toUpperCase();
       var title = s.title || s.name || t('skills.unknownDevice');
-      return '<div class="card" style="margin-bottom:0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span class="tag tag-black">' + escapeHtml(mode) + '</span><span style="font-weight:600;font-size:14px;color:#1c2024">' + escapeHtml(title) + '</span></div><div style="font-size:13px;color:#60646c">' + escapeHtml(s.summary || t('skills.noSummary')) + '</div>' + srcHtml + '</div>';
+      var shortPath = s.path ? s.path.replace(/^.*[\\/]workspace[\\/]skills[\\/]/, '') : '';
+      var summary = s.summary || '';
+      return '<div class="card" style="margin-bottom:0">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+        '<span class="tag tag-black">' + escapeHtml(modeLabel) + '</span>' +
+        '<span style="font-weight:600;font-size:14px;color:#1c2024;flex:1;min-width:0">' + escapeHtml(title) + '</span>' +
+        '</div>' +
+        (summary ? '<div style="font-size:13px;color:#60646c;margin-bottom:4px">' + escapeHtml(summary) + '</div>' : '') +
+        (shortPath ? '<div style="font-size:11px;color:#b0b4ba;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%" title="' + escapeHtml(s.path || '') + '">' + escapeHtml(shortPath) + '</div>' : '') +
+        '</div>';
     }).join('');
   } catch(e) {
     list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + t('skills.failed') + ': ' + e.message + '</div>';

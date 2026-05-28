@@ -74,10 +74,19 @@ class SkillManagerVNext:
         return {"success": True, "action": action, "path": str(skill_path)}
 
     def _serialize(self, record: MarkdownArtifactRecord, score: int | None = None) -> dict[str, Any]:
+        summary = ""
+        for line in record.content.strip().split("\n"):
+            s = line.strip()
+            if s and not s.startswith("#") and not s.startswith("-") and not s.startswith(">"):
+                summary = s[:200]
+                if len(s) > 200:
+                    summary += "..."
+                break
         payload = {
             "name": record.name,
             "category": record.category,
             "title": record.title,
+            "summary": summary or record.title,
             "path": str(record.path),
             "metadata": record.metadata | {"provenance": default_provenance()},
             "content": record.content,

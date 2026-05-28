@@ -5,6 +5,9 @@ from fastapi import FastAPI, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 import asyncio
 import json
+from sse_starlette.sse import EventSourceResponse
+import asyncio
+import json
 
 
 def register_vnext_http_surface(
@@ -141,16 +144,13 @@ def register_vnext_http_surface(
     @app.post("/api/workspace/monitor/stop")
     def api_workspace_monitor_stop(body: dict):
         from luxar.tools.workspace_tool import workspace_monitor_stop
-        result = workspace_monitor_stop(
-            project=str(body.get("project", "")),
-        )
+        result = workspace_monitor_stop(project=str(body.get("project", "")))
         return result if isinstance(result, dict) else result.model_dump(mode="json") if hasattr(result, "model_dump") else result
 
     @app.get("/api/workspace/monitor/stream")
     async def api_workspace_monitor_stream(project: str = Query("")):
         from luxar.core.monitor_manager import MonitorManager
         mgr = MonitorManager.instance()
-
         async def event_stream():
             while True:
                 lines = mgr.read_buffer(max_lines=20)
@@ -160,8 +160,34 @@ def register_vnext_http_surface(
                     yield {"event": "serial_status", "data": json.dumps({"state": "stopped"})}
                     break
                 await asyncio.sleep(0.2)
-
         return EventSourceResponse(event_stream())
+
+    @app.get("/api/drivers")
+    def api_list_drivers():
+        from pathlib import Path as _P
+        _root = _P(__file__).resolve().parent.parent.parent.parent
+        _dr = _root / "workspace" / "driver_library" / "generated"
+        if not _dr.exists():
+            return {"drivers": []}
+        drivers = []
+        for periph_dir in sorted(_dr.iterdir()):
+            if not periph_dir.is_dir():
+                continue
+            peripheral = periph_dir.name
+            for vendor_dir in sorted(periph_dir.iterdir()):
+                if not vendor_dir.is_dir():
+                    continue
+                vendor = vendor_dir.name
+                for drv_dir in sorted(vendor_dir.iterdir()):
+                    if not drv_dir.is_dir():
+                        continue
+                    files = []
+                    for f in sorted(drv_dir.iterdir()):
+                        if f.suffix in (".c", ".h"):
+                            files.append({"name": f.name, "size": f.stat().st_size})
+                    if files:
+                        drivers.append({"name": drv_dir.name, "peripheral": peripheral, "vendor": vendor, "files": files})
+        return {"drivers": drivers}
 
     
     @app.delete("/api/projects/{name}")

@@ -1,0 +1,10 @@
+evidence: [0xC0+2bytes FAIL rc=0x01, 0x40+2bytes OK, 0x40+1byte OK, 'With I2C PE reset:
+    all passes']
+hypothesis: CH1116 needs 0xC0 for multi-byte data
+outcome: All writes pass. Display shows text.
+resolution: CH1116 does NOT accept 0xC0 — returns NACK. Use 0x40 for all data 
+  writes. Also must reset I2C PE before each HAL_I2C_Master_Transmit. Use 8-byte
+  chunks.
+symptom: OLED_Init OK but OLED_Clear/WriteString return HAL_ERROR (0x01). 
+  Commands work.
+topic: CH1116 OLED I2C data writes fail with HAL_ERROR
