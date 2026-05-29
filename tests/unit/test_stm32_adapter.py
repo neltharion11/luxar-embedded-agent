@@ -100,7 +100,7 @@ class STM32AdapterBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             project = root / "Demo"
-            build_dir = project / "build"
+            build_dir = project / "build" / "Debug"
             cmake_dir = project / "cmake"
             project.mkdir(parents=True, exist_ok=True)
             build_dir.mkdir(parents=True, exist_ok=True)
@@ -166,7 +166,7 @@ class STM32AdapterFlashTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             project = root / "Demo"
-            build_dir = project / "build"
+            build_dir = project / "build" / "Debug"
             build_dir.mkdir(parents=True, exist_ok=True)
             artifact = build_dir / "demo.elf"
             artifact.write_text("", encoding="utf-8")

@@ -14,13 +14,16 @@ WINDOWS_PREFIX = "C:"
 
 
 def _make_context(project: Path) -> dict:
+    flash_system = mock.Mock()
+    flash_system.adapter = mock.Mock()
+    flash_system.adapter._auto_detect_serial_port.return_value = ""
     return {
         "project": project,
         "logger": mock.Mock(),
         "snapshot_path": str(project / ".agent_backups" / "snap"),
         "log_dir": str(project / "logs"),
         "build_system": mock.Mock(),
-        "flash_system": mock.Mock(),
+        "flash_system": flash_system,
         "uart_monitor": mock.Mock(),
     }
 
@@ -34,6 +37,14 @@ class DebugLoopRunTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmpdir.cleanup()
+
+    def _mock_monitor(self, lines):
+        """Helper: mock MonitorManager.instance() with given read_buffer lines."""
+        mm = mock.Mock()
+        mm.state = "running"
+        mm.port = "COM3"
+        mm.read_buffer.return_value = lines
+        return mock.patch("luxar.core.monitor_manager.MonitorManager.instance", return_value=mm)
 
     def test_run_build_failure_returns_with_build_diagnosis(self) -> None:
         context = _make_context(self.project)
@@ -66,10 +77,8 @@ class DebugLoopRunTests(unittest.TestCase):
         context = _make_context(self.project)
         context["build_system"].build_project.return_value = BuildResult(success=True, return_code=0)
         context["flash_system"].flash_project.return_value = FlashResult(success=True)
-        context["uart_monitor"].monitor_project.return_value = MonitorResult(
-            success=True, port="COM3", lines=["Hello"], port_released=True
-        )
-        with mock.patch.object(self.loop, "_create_context", return_value=context):
+        with mock.patch.object(self.loop, "_create_context", return_value=context), \
+             self._mock_monitor(["Hello"]):
             result = self.loop.run(project_path=str(self.project), port="COM3")
         self.assertTrue(result.success)
         self.assertEqual("complete", result.stage)
@@ -78,10 +87,8 @@ class DebugLoopRunTests(unittest.TestCase):
         context = _make_context(self.project)
         context["build_system"].build_project.return_value = BuildResult(success=True, return_code=0)
         context["flash_system"].flash_project.return_value = FlashResult(success=True)
-        context["uart_monitor"].monitor_project.return_value = MonitorResult(
-            success=True, port="COM3", lines=[], port_released=True
-        )
-        with mock.patch.object(self.loop, "_create_context", return_value=context):
+        with mock.patch.object(self.loop, "_create_context", return_value=context), \
+             self._mock_monitor([]):
             result = self.loop.run(project_path=str(self.project), port="COM3")
         self.assertFalse(result.success)
         self.assertEqual("monitor", result.stage)
@@ -90,14 +97,10 @@ class DebugLoopRunTests(unittest.TestCase):
         context = _make_context(self.project)
         context["build_system"].build_project.return_value = BuildResult(success=True, return_code=0)
         context["flash_system"].flash_project.return_value = FlashResult(success=True)
-        context["uart_monitor"].monitor_project.return_value = MonitorResult(
-            success=True, port="COM3", lines=["data"], port_released=True
-        )
-        with mock.patch.object(self.loop, "_create_context", return_value=context):
+        with mock.patch.object(self.loop, "_create_context", return_value=context), \
+             self._mock_monitor(["data"]):
             result = self.loop.run(project_path=str(self.project), port="COM3")
         context["logger"].log_event.assert_any_call("DEBUG_LOOP", self.project.name, mock.ANY)
-
-
 class DebugLoopDiagnoseBuildTests(unittest.TestCase):
     def setUp(self):
         self.loop = DebugLoop(config=AgentConfig(), project_root=".")
