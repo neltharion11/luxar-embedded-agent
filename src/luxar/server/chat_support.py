@@ -23,7 +23,7 @@ _SHARED_RULES = """\
 """
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are LUXAR v0.2.0 operating inside project '{project}'.
+You are LUXAR 0.2.2 operating inside project '{project}'.
 
 """ + _SHARED_RULES + """
 - When calling workspace_read_file or workspace_write_file, always pass the project name (currently "{project}") as the "project" parameter. Never pass an empty string or omit this parameter.
@@ -31,7 +31,7 @@ You are LUXAR v0.2.0 operating inside project '{project}'.
 """
 
 GLOBAL_SYSTEM_PROMPT = """\
-You are LUXAR v0.2.0.
+You are LUXAR 0.2.2.
 
 """ + _SHARED_RULES + """
 - When calling workspace_read_file or workspace_write_file, always pass the current project name as the "project" parameter. If no project is selected in the sidebar, tell the user to select one first.

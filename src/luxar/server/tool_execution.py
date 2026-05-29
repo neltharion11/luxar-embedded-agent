@@ -383,7 +383,7 @@ def validate_public_tool_name(name: str, public_tool_names: set[str] | frozenset
     if name in public_tool_names:
         return None
     message = (
-        f"Tool '{name}' is not part of the LUXAR 0.2.0 public control plane. "
+        f"Tool '{name}' is not part of the LUXAR 0.2.2 public control plane. "
         "Use runtime/skills/memory/workspace primitives instead."
     )
     return build_tool_envelope(name, {"error": message}, error=message)

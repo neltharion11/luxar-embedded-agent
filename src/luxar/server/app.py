@@ -244,7 +244,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
             MonitorManager.instance().stop()
             _conversation_state.close()
 
-    app = FastAPI(title="Luxar API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Luxar API", version="0.2.2", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,

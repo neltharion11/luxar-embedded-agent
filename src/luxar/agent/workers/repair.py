@@ -42,7 +42,7 @@ class RepairWorker:
         source = target.read_text(encoding="utf-8")
         
         system_prompt = (
-            "You are a file repair worker in the LUXAR v0.2.0 runtime.\n"
+            "You are a file repair worker in the LUXAR 0.2.2 runtime.\n"
             "Apply minimal, conservative changes based on the provided evidence.\n"
             "Do not refactor unrelated parts. Do not invent missing headers if evidence is insufficient.\n"
             "Output the ENTIRE fixed file inside a markdown code block without any conversational text."

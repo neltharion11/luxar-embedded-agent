@@ -10,7 +10,7 @@ from luxar.core.config_manager import ConfigManager
 from luxar.core.llm_client import LLMClient, LLMClientError
 from luxar.models.schemas import ReviewIssue, ReviewReport
 SEMANTIC_REVIEW_SYSTEM_PROMPT = """
-你是 LUXAR v0.2.0 runtime 中的语义审查 worker。
+你是 LUXAR 0.2.2 runtime 中的语义审查 worker。
 请从逻辑、资源、安全、时序和可移植性角度输出结构化 JSON。
 只根据代码和可见证据提出问题，不要凭空扩展风险。
 """.strip()

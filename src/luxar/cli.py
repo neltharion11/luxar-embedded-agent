@@ -43,7 +43,7 @@ def _echo_json(data: object) -> None:
 
 @click.group()
 def main() -> None:
-    """LUXAR 0.2.0 CLI."""
+    """LUXAR 0.2.2 CLI."""
 
 
 

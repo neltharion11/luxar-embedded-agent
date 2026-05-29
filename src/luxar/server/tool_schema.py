@@ -6,7 +6,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "runtime_run",
-            "description": "Run the LUXAR v0.2.0 runtime for a task inside the current workspace.",
+            "description": "Run the LUXAR 0.2.2 runtime for a task inside the current workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -21,7 +21,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "runtime_explain",
-            "description": "Explain the LUXAR v0.2.0 runtime model and current orchestration approach.",
+            "description": "Explain the LUXAR 0.2.2 runtime model and current orchestration approach.",
             "parameters": {"type": "object", "properties": {}},
         },
     },

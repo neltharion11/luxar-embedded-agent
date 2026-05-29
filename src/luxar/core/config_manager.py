@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class AgentSection(BaseModel):
     name: str = "Luxar"
-    version: str = "0.2.0"
+    version: str = "0.2.2"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
     # Legacy-only compatibility root. New skills live under `skills_root`.
