@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import json
 import re
 from pathlib import Path
@@ -14,6 +15,7 @@ from luxar.core.lock_manager import ProjectLock
 from luxar.core.logger import AgentLogger
 from luxar.core.review_engine import ReviewEngine
 from luxar.core.toolchain_manager import ToolchainManager
+from luxar.core.monitor_manager import MonitorManager
 from luxar.core.uart_monitor import UartMonitor
 from luxar.models.schemas import DebugLoopResult, MonitorResult, ProjectConfig, ReviewIssue, ReviewReport
 from luxar.platforms.stm32_adapter import STM32CubeMXAdapter
@@ -52,29 +54,37 @@ class DebugLoop:
                     log_dir=context["log_dir"],
                 )
 
-            # Start background serial monitor before flashing
+            # --- Serial monitoring via MonitorManager (before + during flash) ---
             resolved_port = port
             if not resolved_port:
-                resolved_port = context["adapter"]._auto_detect_serial_port_for_monitor()
-            resolved_baudrate = baudrate or self.config.monitor.default_baudrate
-            if resolved_port:
                 try:
-                    context["adapter"].start_background_monitor(resolved_port, resolved_baudrate)
+                    from serial.tools import list_ports
+                    resolved_port = context["flash_system"].adapter._auto_detect_serial_port(list_ports.comports())
                 except Exception:
-                    resolved_port = ""  # Port unavailable, proceed without monitor
+                    resolved_port = ""
+            resolved_baudrate = baudrate or self.config.monitor.default_baudrate
+
+            mgr = MonitorManager.instance()
+            was_already_running = mgr.state == "running"
+            if not was_already_running and resolved_port:
+                mgr.start(port=resolved_port, baudrate=resolved_baudrate)
+            elif was_already_running:
+                resolved_port = mgr.port  # Use existing monitor's port
 
             flash_result = self._run_flash(
                 context,
                 probe=probe or self.config.flash.default_probe,
             )
 
-            # Collect serial output captured during flash
+            # Drain serial buffer captured during flash
             monitor_lines: list[str] = []
-            if resolved_port:
-                try:
-                    monitor_lines = context["adapter"].stop_background_monitor()
-                except Exception:
-                    pass
+            if resolved_port and mgr.state in ("running", "paused"):
+                monitor_lines = mgr.read_buffer()
+                # Brief wait for post-flash boot messages
+                time.sleep(1.5)
+                monitor_lines += mgr.read_buffer()
+                if not was_already_running:
+                    mgr.stop()
 
             if not flash_result.success:
                 diagnosis = self._diagnose_flash_failure(
@@ -82,7 +92,7 @@ class DebugLoop:
                     flash_result.stderr,
                 )
                 if monitor_lines:
-                    diagnosis += "\n\n[Serial output captured during flash]\n" + "\n".join(monitor_lines[-20:])
+                    diagnosis += "\n\n[Serial output captured during flash]\n" + "\n".join(monitor_lines[-30:])
                 return DebugLoopResult(
                     success=False,
                     stage="flash",
@@ -98,7 +108,7 @@ class DebugLoop:
                 port=resolved_port,
                 lines=monitor_lines,
                 error="" if monitor_lines else "No serial data captured during/after flash.",
-                port_released=True,
+                port_released=not was_already_running,
             )
 
             diagnosis = self._diagnose_monitor_result(monitor_result)
@@ -141,7 +151,6 @@ class DebugLoop:
         return {
             "project": project,
             "logger": logger,
-            "adapter": adapter,
             "snapshot_path": str(snapshot),
             "log_dir": str(project / "logs"),
             "build_system": BuildSystem(adapter),

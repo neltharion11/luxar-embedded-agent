@@ -6,78 +6,12 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-import threading
-import time
 
 from luxar.core.toolchain_manager import ToolchainManager
 from luxar.models.schemas import BuildResult, FlashResult, MonitorResult, ProbeResult
 from luxar.core.platform_adapter import PlatformAdapter
 
 NINJA_FATAL_RE = re.compile(r"ninja:\s*fatal:")
-
-
-class BackgroundSerialMonitor:
-    """Thread-safe background serial reader for flash-then-monitor flow."""
-
-    def __init__(self, port: str, baudrate: int = 115200):
-        self.port = port
-        self.baudrate = baudrate
-        self._lines: list[str] = []
-        self._lock = threading.Lock()
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._ser = None
-
-    def start(self) -> None:
-        import serial
-        self._ser = serial.Serial(
-            port=self.port,
-            baudrate=self.baudrate,
-            timeout=0.1,
-        )
-        self._thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._thread.start()
-
-    def _read_loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                if self._ser is not None and self._ser.is_open:
-                    raw = self._ser.readline()
-                    if raw:
-                        line = raw.decode(errors="replace").rstrip()
-                        with self._lock:
-                            self._lines.append(line)
-            except Exception:
-                time.sleep(0.05)
-
-    def stop(self, extra_wait: float = 1.5) -> list[str]:
-        """Signal stop, wait for extra data, close port, return all collected lines."""
-        self._stop_event.set()
-        deadline = time.time() + extra_wait
-        while time.time() < deadline:
-            try:
-                if self._ser is not None and self._ser.is_open:
-                    raw = self._ser.readline()
-                    if raw:
-                        line = raw.decode(errors="replace").rstrip()
-                        with self._lock:
-                            self._lines.append(line)
-            except Exception:
-                break
-            time.sleep(0.05)
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-        if self._ser is not None and self._ser.is_open:
-            try:
-                self._ser.close()
-            except Exception:
-                pass
-        with self._lock:
-            return list(self._lines)
-
-    def get_lines_so_far(self) -> list[str]:
-        with self._lock:
-            return list(self._lines)
 
 
 class STM32CubeMXAdapter(PlatformAdapter):
@@ -606,26 +540,6 @@ class STM32CubeMXAdapter(PlatformAdapter):
             if ser is not None and getattr(ser, "is_open", False):
                 ser.close()
 
-    def start_background_monitor(self, port: str, baudrate: int = 115200) -> None:
-        """Open serial port in background thread, continuously reading into buffer."""
-        self._bg_monitor = BackgroundSerialMonitor(port, baudrate)
-        self._bg_monitor.start()
-
-    def stop_background_monitor(self, extra_wait: float = 2.0) -> list[str]:
-        """Stop background monitor, wait for trailing output, return all lines."""
-        if self._bg_monitor is None:
-            return []
-        lines = self._bg_monitor.stop(extra_wait=extra_wait)
-        self._bg_monitor = None
-        return lines
-
-    def _auto_detect_serial_port_for_monitor(self) -> str:
-        """Auto-detect serial port for use with background monitor."""
-        try:
-            from serial.tools import list_ports
-        except ImportError:
-            return ""
-        return self._auto_detect_serial_port(list_ports.comports())
     def probe(self, project_path: str, probe_type: str = "i2c") -> ProbeResult:
 
         project = Path(project_path)
