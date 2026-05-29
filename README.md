@@ -52,6 +52,86 @@ $env:LUXAR_CONFIG="D:\Tools\LUXAR\config\luxar.yaml"
 - Review gate with custom embedded rules, `clang-tidy`, and semantic review
 - Driver generation, reuse, storage, and protocol skill evolution
 
+## Review Auto-Fix
+
+Luxar can automatically apply small, low-risk fixes in `App/` files before or during build-style workflows.
+
+Current default behavior:
+
+- `review.auto_fix_enabled: true` enables automatic review-driven fixes.
+- `review.auto_fix_rule_ids` controls which review rules are allowed to auto-fix.
+- The default whitelist is `EMB-003` and `EMB-004`.
+- Auto-fix is intentionally conservative: it is limited to `App/` files and only runs for configured rules.
+
+Example config in `config/luxar.yaml`:
+
+```yaml
+review:
+  enabled: true
+  auto_fix_enabled: true
+  auto_fix_rule_ids: [EMB-003, EMB-004]
+  fail_on_warning: false
+  max_fix_iterations: 3
+```
+
+What the defaults mean:
+
+- `EMB-003`: missing Doxygen-style comments
+- `EMB-004`: disallowed `printf` usage in review-scoped embedded code
+
+Recommended guidance for custom whitelists:
+
+- Usually safe to auto-fix:
+  `EMB-003` missing Doxygen comments, `EMB-004` disallowed `printf`
+- Usually needs human review first:
+  `EMB-001` direct CubeMX global handle usage, `EMB-005` missing NULL checks,
+  `EMB-006` hardcoded register addresses, `EMB-007` blocking HAL calls in ISR,
+  `EMB-010` missing matching header
+- Usually refactor-level and best kept manual:
+  `EMB-008` dynamic allocation warnings, `EMB-009` complexity warnings
+- Never treat CubeMX structure issues as routine auto-fix:
+  `EMB-002` should normally be resolved by regeneration or careful manual repair
+
+Quick rule reference:
+
+| Rule | Meaning | Auto-fix recommendation |
+| --- | --- | --- |
+| `EMB-003` | Missing Doxygen-style comment | Safe default |
+| `EMB-004` | `printf` in review-scoped embedded code | Safe default |
+| `EMB-005` | Pointer parameter not validated | Manual unless your team wants aggressive fixes |
+| `EMB-006` | Hardcoded peripheral register address | Manual |
+| `EMB-007` | Blocking HAL call in ISR | Manual |
+| `EMB-008` | Dynamic allocation detected | Manual |
+| `EMB-009` | Function complexity too high | Manual |
+| `EMB-010` | Missing matching header file | Manual |
+
+Common adjustments:
+
+- Disable all automatic fixing:
+
+```yaml
+review:
+  auto_fix_enabled: false
+```
+
+- Keep automatic fixing on, but change the whitelist:
+
+```yaml
+review:
+  auto_fix_enabled: true
+  auto_fix_rule_ids: [EMB-003, EMB-004, EMB-005]
+```
+
+- Keep review enabled, but do not auto-fix anything:
+
+```yaml
+review:
+  auto_fix_enabled: true
+  auto_fix_rule_ids: []
+```
+
+When auto-fix is active, Luxar will attempt the fix, re-run review, and then continue with build if the blocking review issues are resolved.
+
 ## Status
 
 See [CURRENT_STATUS.md](CURRENT_STATUS.md) for the current implementation snapshot and remaining roadmap items.

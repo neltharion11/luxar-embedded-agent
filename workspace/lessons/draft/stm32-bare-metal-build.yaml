@@ -1,0 +1,6 @@
+{evidence: Adding .thumb_func before Default_Handler and Reset_Handler resolved the
+linker error in STM32F103C8 build, hypothesis: Default_Handler needs .thumb_func
+directive for Thumb interworking, outcome: Build succeeded with return_code 0, resolution: "Add
+'.thumb_func' and '.type Default_Handler, %function' before the Default_Handler label
+in startup_stm32f103xb.s", symptom: 'Linker error: Unknown destination type (ARM/Thumb)
+when using .thumb_set', topic: STM32 bare-metal build}

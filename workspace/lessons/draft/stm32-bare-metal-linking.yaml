@@ -1,0 +1,6 @@
+{evidence: Adding -nostartfiles -specs=nosys.specs to linker flags resolved the undefined
+_exit reference, hypothesis: libc's exit() calls _exit() syscall which isn't available
+in bare-metal, outcome: Build succeeded after adding nosys.specs, resolution: Use
+'-nostartfiles -specs=nosys.specs' linker flags instead of -nostdlib for bare-metal
+projects that need minimal C stubs, symptom: undefined reference to _exit when linking
+STM32 bare-metal project, topic: STM32 bare-metal linking}

@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 from luxar.core.config_manager import AgentConfig
-from luxar.core.driver_pipeline import DriverPipeline
+from luxar.agent.workers._driver_pipeline import DriverPipeline
 from luxar.models.schemas import DriverGenerationResult, DriverPipelineResult
-from luxar.workflows.driver_graph import LangGraphDriverWorkflow
+from luxar.agent.workers._langgraph_driver import LangGraphDriverWorkflow
 
 
 class DriverGraphTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class DriverGraphTests(unittest.TestCase):
                 stored=True,
             )
 
-            with mock.patch("luxar.workflows.driver_graph.LANGGRAPH_AVAILABLE", False), mock.patch.object(
+            with mock.patch("luxar.agent.workers._langgraph_driver.LANGGRAPH_AVAILABLE", False), mock.patch.object(
                 pipeline,
                 "generate_review_fix",
                 return_value=expected,
@@ -70,7 +70,7 @@ class DriverGraphTests(unittest.TestCase):
                 stored=True,
             )
 
-            with mock.patch("luxar.workflows.driver_graph.LANGGRAPH_AVAILABLE", False), mock.patch.object(
+            with mock.patch("luxar.agent.workers._langgraph_driver.LANGGRAPH_AVAILABLE", False), mock.patch.object(
                 pipeline,
                 "generate_review_fix",
                 return_value=expected,

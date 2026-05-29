@@ -1,0 +1,6 @@
+{evidence: CMake configure error followed by successful build after target name fix,
+hypothesis: Target name mismatch between add_executable (rgb_blink.elf) and target_sources
+(rgb_blink), outcome: Build succeeded after fix, resolution: 'Change add_executable(${CMAKE_PROJECT_NAME}.elf)
+to add_executable(${CMAKE_PROJECT_NAME}) to match target names', symptom: CMake configure
+failed with 'Cannot specify sources for target rgb_blink which is not built by this
+project', topic: rgb_blink build fixed}

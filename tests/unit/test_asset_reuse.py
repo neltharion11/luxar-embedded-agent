@@ -177,6 +177,29 @@ class AssetReuseAdvisorTests(unittest.TestCase):
             self.assertIn("confidence", context)
             self.assertGreater(context["confidence"], 0.0)
 
+    def test_build_context_falls_back_to_legacy_skill_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            driver_root = root / "driver_library"
+            new_skill_root = root / "skills"
+            legacy_skill_root = root / "skill_library"
+            (legacy_skill_root / "protocols" / "spi").mkdir(parents=True, exist_ok=True)
+            (legacy_skill_root / "protocols" / "spi" / "SKILL.md").write_text(
+                "# SPI Legacy Skill\nUse callback injection.\n",
+                encoding="utf-8",
+            )
+
+            advisor = AssetReuseAdvisor(
+                project_root=root,
+                driver_library_root=driver_root,
+                skill_library_root=new_skill_root,
+                legacy_skill_library_root=legacy_skill_root,
+            )
+            context = advisor.build_context(chip="BMI270", interface="SPI")
+
+            self.assertIn("协议技能摘要", context["summary"])
+            self.assertIn("skill_library", context["skill_path"])
+
     def test_select_reuse_candidate_uses_reuse_count_bonus(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -198,6 +221,109 @@ class AssetReuseAdvisorTests(unittest.TestCase):
             advisor = AssetReuseAdvisor(project_root=root, driver_library_root=driver_root, skill_library_root=root / "skill_library")
             candidate = advisor.select_reuse_candidate(chip="POP", interface="SPI", vendor="v", device="pop")
             self.assertIsNotNone(candidate)
+
+    def test_select_reuse_candidate_falls_back_when_vendor_filter_hides_exact_chip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            driver_root = root / "driver_library"
+            source = root / "oled_128x64.c"
+            header = root / "oled_128x64.h"
+            source.write_text("int ch1116_init(void){return 0;}\n", encoding="utf-8")
+            header.write_text("int ch1116_init(void);\n", encoding="utf-8")
+            library = DriverLibrary(driver_root)
+            library.store_driver(
+                DriverMetadata(
+                    name="oled_128x64",
+                    protocol="I2C",
+                    chip="CH1116",
+                    vendor="unknown",
+                    device="oled 128x64",
+                    path=str(source),
+                    header_path=str(header),
+                    source_path=str(source),
+                    review_passed=True,
+                )
+            )
+            advisor = AssetReuseAdvisor(
+                project_root=root,
+                driver_library_root=driver_root,
+                skill_library_root=root / "skill_library",
+            )
+            candidate = advisor.select_reuse_candidate(
+                chip="CH1116",
+                interface="I2C",
+                vendor="wisechip / sino wealth",
+                device="OLED",
+            )
+            self.assertIsNotNone(candidate)
+            self.assertEqual("oled_128x64", candidate.name)
+
+    def test_select_reuse_candidate_uses_chip_search_when_device_alias_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            driver_root = root / "driver_library"
+            source = root / "oled_128x64.c"
+            header = root / "oled_128x64.h"
+            source.write_text("int ch1116_init(void){return 0;}\n", encoding="utf-8")
+            header.write_text("int ch1116_init(void);\n", encoding="utf-8")
+            DriverLibrary(driver_root).store_driver(
+                DriverMetadata(
+                    name="oled_128x64",
+                    protocol="I2C",
+                    chip="CH1116",
+                    vendor="unknown",
+                    device="oled 128x64",
+                    path=str(source),
+                    header_path=str(header),
+                    source_path=str(source),
+                    review_passed=True,
+                )
+            )
+            advisor = AssetReuseAdvisor(
+                project_root=root,
+                driver_library_root=driver_root,
+                skill_library_root=root / "skill_library",
+            )
+            candidate = advisor.select_reuse_candidate(
+                chip="CH1116",
+                interface="I2C",
+                vendor="solomon systech",
+                device="OLED Display Driver IC",
+            )
+            self.assertIsNotNone(candidate)
+            self.assertEqual("oled_128x64", candidate.name)
+
+    def test_materialize_reused_driver_aligns_source_include_with_copied_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "oled_128x64.c"
+            header = root / "oled_128x64.h"
+            output = root / "out"
+            source.write_text('#include "oled_ch1116.h"\nint ch1116_init(void){return 0;}\n', encoding="utf-8")
+            header.write_text("int ch1116_init(void);\n", encoding="utf-8")
+
+            advisor = AssetReuseAdvisor(
+                project_root=root,
+                driver_library_root=root / "driver_library",
+                skill_library_root=root / "skill_library",
+            )
+            _, target_source = advisor.materialize_reused_driver(
+                candidate=DriverMetadata(
+                    name="oled_128x64",
+                    protocol="I2C",
+                    chip="CH1116",
+                    vendor="unknown",
+                    device="oled 128x64",
+                    path=str(source),
+                    header_path=str(header),
+                    source_path=str(source),
+                    review_passed=True,
+                ),
+                output_dir=output,
+                target_stem="oled_128x64",
+            )
+
+            self.assertIn('#include "oled_128x64.h"', Path(target_source).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

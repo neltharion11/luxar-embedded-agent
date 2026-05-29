@@ -12,6 +12,7 @@ def run_init_project(
     runtime: str,
     project_mode: str,
     firmware_package: str,
+    overwrite: bool = False,
 ) -> ProjectConfig:
     manager = ProjectManager(workspace)
     return manager.create_project(
@@ -21,6 +22,7 @@ def run_init_project(
         runtime=runtime,
         project_mode=project_mode,
         firmware_package=firmware_package,
+        overwrite=overwrite,
     )
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from luxar.core.config_manager import AgentConfig
-from luxar.core.workflow_engine import WorkflowEngine
+from luxar.agent.workers._workflow_engine import WorkflowEngine
 from luxar.models.schemas import (
     BuildResult,
     DebugLoopResult,
@@ -58,7 +58,7 @@ class WorkflowEngineTests(unittest.TestCase):
             )
 
             with mock.patch(
-                "luxar.core.workflow_engine.LangGraphDriverWorkflow.run",
+                "luxar.agent.workers._workflow_engine.LangGraphDriverWorkflow.run",
                 return_value=pipeline_result,
             ):
                 result = engine.run_driver_workflow(
@@ -108,7 +108,7 @@ class WorkflowEngineTests(unittest.TestCase):
             )
 
             with mock.patch(
-                "luxar.core.workflow_engine.LangGraphDebugWorkflow.run",
+                "luxar.agent.workers._workflow_engine.LangGraphDebugWorkflow.run",
                 return_value=debug_result,
             ):
                 result = engine.run_debug_workflow(

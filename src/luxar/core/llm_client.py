@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -41,6 +42,8 @@ class ToolCall:
 
 
 def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, http.client.IncompleteRead):
+        return True
     if isinstance(exc, LLMClientError):
         msg = str(exc)
         if msg.startswith("LLM request failed with HTTP 429"):
@@ -58,8 +61,8 @@ _OPENAI_PROVIDERS: dict[str, dict] = {
         "endpoint": "https://api.deepseek.com/chat/completions",
         "key_env": "DEEPSEEK_API_KEY",
         "models": [
-            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "context": 393216},
-            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "context": 393216},
+            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "context": 1048576},
+            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "context": 1048576},
         ],
     },
     "openai": {
@@ -178,6 +181,7 @@ _OPENAI_PROVIDERS: dict[str, dict] = {
 
 
 class LLMClient:
+    _system_cache: str | None = None
     _soul_cache: str | None = None
     _manual_cache: str | None = None
 
@@ -195,6 +199,7 @@ class LLMClient:
         self.retry_attempts = config.llm.retry_attempts
         self.retry_min_delay = config.llm.retry_min_delay
         self.retry_max_delay = config.llm.retry_max_delay
+        self.prompt_stack_mode = str(getattr(config.llm, "prompt_stack_mode", "vnext") or "vnext").strip().lower()
 
     def _resolve_provider(self) -> tuple[str, str, str]:
         """Returns (provider_type, endpoint, api_key).
@@ -223,6 +228,8 @@ class LLMClient:
 
     @classmethod
     def _read_text_file(cls, path: Path) -> str | None:
+        if cls._system_cache is not None and path.name == "system.md":
+            return cls._system_cache
         if cls._soul_cache is not None and path.name == "soul.md":
             return cls._soul_cache
         if cls._manual_cache is not None and path.name == "agent.md":
@@ -233,6 +240,8 @@ class LLMClient:
             content = path.read_text(encoding="utf-8").strip()
         except Exception:
             return None
+        if path.name == "system.md":
+            cls._system_cache = content
         if path.name == "soul.md":
             cls._soul_cache = content
         if path.name == "agent.md":
@@ -252,14 +261,21 @@ class LLMClient:
         return cls._read_text_file(cls._find_project_root() / "workspace" / "agent.md")
 
     @classmethod
-    def build_system_prompt(cls, task_prompt: str = "") -> str:
+    def load_runtime_system_prompt(cls) -> str | None:
+        return cls._read_text_file(cls._find_project_root() / "workspace" / "prompts" / "system.md")
+
+    def build_system_prompt(self, task_prompt: str = "") -> str:
         parts: list[str] = []
-        soul = cls.load_soul()
-        manual = cls.load_agent_manual()
-        if soul:
-            parts.append(soul)
-        if manual:
-            parts.append(manual)
+        runtime_system = self.load_runtime_system_prompt()
+        if runtime_system:
+            parts.append(runtime_system)
+        if self.prompt_stack_mode == "legacy":
+            soul = self.load_soul()
+            manual = self.load_agent_manual()
+            if soul:
+                parts.append(soul)
+            if manual:
+                parts.append(manual)
         if task_prompt:
             parts.append(task_prompt)
         return "\n\n---\n\n".join(parts)
@@ -350,7 +366,8 @@ class LLMClient:
         tools: list[dict] | None = None,
     ) -> LLMResponse:
         msgs: list[dict[str, str]] = []
-        if system_prompt:
+        has_system = messages and messages[0].get("role") == "system"
+        if system_prompt and not has_system:
             msgs.append({"role": "system", "content": system_prompt})
         if messages:
             msgs.extend(messages)
@@ -388,7 +405,12 @@ class LLMClient:
                 try:
                     args = json.loads(tc["function"]["arguments"])
                 except (json.JSONDecodeError, KeyError):
-                    args = {}
+                    # DeepSeek may concatenate multiple JSON objects; extract the first valid one
+                    try:
+                        decoder = json.JSONDecoder()
+                        args, _ = decoder.raw_decode(tc["function"]["arguments"])
+                    except Exception:
+                        args = {}
                 tool_calls.append(ToolCall(
                     id=tc.get("id", ""),
                     function_name=tc["function"]["name"],
@@ -414,7 +436,8 @@ class LLMClient:
         tools: list[dict] | None = None,
     ):
         msgs: list[dict[str, str]] = []
-        if system_prompt:
+        has_system = messages and messages[0].get("role") == "system"
+        if system_prompt and not has_system:
             msgs.append({"role": "system", "content": system_prompt})
         if messages:
             msgs.extend(messages)
@@ -448,6 +471,8 @@ class LLMClient:
             raise LLMClientError(f"LLM stream request failed with HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise LLMClientError(f"LLM stream request failed: {exc.reason}") from exc
+        except http.client.IncompleteRead as exc:
+            raise LLMClientError(f"LLM stream request failed: incomplete read ({exc.partial} bytes received)") from exc
 
         buffer = b""
         for chunk_bytes in iter(lambda: response.read(4096), b""):
@@ -581,6 +606,20 @@ class LLMClient:
             f"Missing API key. Set the `{env_name or default_env_name}` environment variable or configure an API key for provider '{self.provider}' in Model Config."
         )
 
+    def has_valid_api_key(self) -> bool:
+        """Check whether a non-empty API key is available without raising."""
+        try:
+            ptype, _endpoint, api_key = self._resolve_provider()
+            if ptype == "openai_compatible":
+                return bool(api_key.strip())
+            if ptype == "claude":
+                return bool(api_key.strip())
+            return False
+        except LLMClientError:
+            return False
+        except Exception:
+            return False
+
     def _make_retry_decorator(self) -> Callable:
         def _before_sleep(retry_state):
             attempt = retry_state.attempt_number
@@ -621,6 +660,8 @@ class LLMClient:
                 raise LLMClientError(f"LLM request failed with HTTP {exc.code}: {body}") from exc
             except urllib.error.URLError as exc:
                 raise LLMClientError(f"LLM request failed: {exc.reason}") from exc
+            except http.client.IncompleteRead as exc:
+                raise LLMClientError(f"LLM request failed: incomplete read ({exc.partial} bytes received)") from exc
 
             try:
                 return json.loads(body)

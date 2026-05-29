@@ -1,6 +1,8 @@
 agent: {driver_library: ./workspace/driver_library, firmware_library: 
-    ./workspace/firmware_library, name: Luxar, skill_library: 
-    ./workspace/skill_library, version: 0.1.0, workspace: ./workspace/projects}
+    ./workspace/firmware_library, lesson_library: ./workspace/lessons, 
+    memory_root: ./workspace/memory, name: Luxar, prompts_root: 
+    ./workspace/prompts, skill_library: ./workspace/skill_library, skills_root: 
+    ./workspace/skills, version: 0.2.0, workspace: ./workspace/projects}
 api_keys: {}
 build: {cmake_generator: Ninja, jobs: 4, toolchain_prefix: arm-none-eabi-}
 evolution: {auto_update_protocol_skill: true, enabled: true, min_review_passes: 
@@ -9,17 +11,24 @@ flash: {default_probe: stlink, openocd_interface: interface/stlink.cfg,
     openocd_target: target/stm32f1x.cfg}
 git: {agent_branch_prefix: agent/, auto_commit: true}
 llm: {api_key_env: DEEPSEEK_API_KEY, base_url: 
-    https://api.deepseek.com/chat/completions, max_tokens: 393216, model: 
-    deepseek-v4-flash, provider: deepseek, retry_attempts: 5, retry_max_delay: 
-    60, retry_min_delay: 1, temperature: 1.0, thinking_budget_tokens: 2048, 
-    thinking_effort: max, thinking_enabled: true, timeout_sec: 120}
+    https://api.deepseek.com/chat/completions, max_tokens: 262144, model: 
+    deepseek-v4-pro, prompt_stack_mode: vnext, provider: deepseek, 
+    retry_attempts: 5, retry_max_delay: 60, retry_min_delay: 1, temperature: 1.0,
+  thinking_budget_tokens: 2048, thinking_effort: max, thinking_enabled: true, 
+    timeout_sec: 120}
 monitor: {default_baudrate: 115200, default_timeout: 10}
 platform: {default_platform: stm32cubemx, default_runtime: baremetal}
 review:
+  auto_fix_enabled: true
+  auto_fix_rule_ids: [EMB-003, EMB-004]
   enabled: true
   fail_on_warning: false
-  layers: {custom_rules: true, semantic_review: true, static_analysis: true}
+  fix_max_tokens: 8192
+  fix_retry_attempts: 1
+  fix_thinking_enabled: false
+  fix_timeout_sec: 30
+  layers: {custom_rules: true, semantic_review: false, static_analysis: true}
   max_fix_iterations: 3
 stm32: {firmware_package: '', project_mode: cubemx, use_cubemx: true}
-toolchains: {arm_gcc: '', cmake: '', ninja: '', openocd: '', programmer_cli: '', 
-    root: ./workspace/toolchains}
+toolchains: {arm_gcc: '', cmake: '', ninja: '', openocd: '', platformio: '', 
+    probe_rs: '', programmer_cli: '', root: ./workspace/toolchains}

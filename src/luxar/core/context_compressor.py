@@ -10,7 +10,10 @@ logger = logging.getLogger(__name__)
 COMPRESSION_PROMPT = (
     "Please provide a concise summary of the conversation above between a user and an AI assistant. "
     "Preserve all technical details, code snippets, file paths, configuration values, decisions made, "
-    "and action results. Output only the summary text, no preamble."
+    "and action results. Also preserve any behavioral constraints the assistant was given, such as: "
+    "do not create new projects when an existing one has issues, do not re-run run_task after it has "
+    "already been started, stop after consecutive failures, and always prefer fixing over recreating. "
+    "Output only the summary text, no preamble."
 )
 
 MIN_KEEP_MESSAGES = 4

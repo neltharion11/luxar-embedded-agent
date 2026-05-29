@@ -16,7 +16,7 @@ class BackupManager:
         snapshot_path = self.backup_dir / f"{timestamp}_{label}"
         snapshot_path.mkdir(parents=True, exist_ok=False)
 
-        for item_name in ("App", "CMakeLists.txt"):
+        for item_name in self._managed_targets():
             src = self.project / item_name
             if not src.exists():
                 continue
@@ -33,7 +33,7 @@ class BackupManager:
 
     def restore_snapshot(self, snapshot_path: str | Path) -> None:
         snapshot = Path(snapshot_path)
-        for target_name in ("App", "CMakeLists.txt"):
+        for target_name in self._managed_targets():
             dst = self.project / target_name
             if dst.exists():
                 if dst.is_dir():
@@ -54,3 +54,7 @@ class BackupManager:
     def list_snapshots(self) -> list[Path]:
         return sorted(self.backup_dir.iterdir(), key=lambda path: path.name)
 
+    def _managed_targets(self) -> tuple[str, ...]:
+        if (self.project / "FIRMWARE_PACKAGE.txt").exists():
+            return ("App", "Core", "CMakeLists.txt", "LUXAR_BUILD_MANIFEST.json")
+        return ("App", "CMakeLists.txt", "LUXAR_BUILD_MANIFEST.json")

@@ -10,16 +10,22 @@ from pydantic import BaseModel, Field
 
 class AgentSection(BaseModel):
     name: str = "Luxar"
-    version: str = "0.1.0"
+    version: str = "0.2.2"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
+    # Legacy-only compatibility root. New skills live under `skills_root`.
     skill_library: str = "./workspace/skill_library"
     firmware_library: str = "./workspace/firmware_library"
+    skills_root: str = "./workspace/skills"
+    lesson_library: str = "./workspace/lessons"
+    memory_root: str = "./workspace/memory"
+    prompts_root: str = "./workspace/prompts"
 
 
 class LLMSection(BaseModel):
     provider: str = "deepseek"
     model: str = "deepseek-chat"
+    prompt_stack_mode: str = "vnext"
     temperature: float = 0.2
     max_tokens: int = 4096
     thinking_enabled: bool = False
@@ -43,7 +49,13 @@ class ReviewSection(BaseModel):
     enabled: bool = True
     layers: ReviewLayers = Field(default_factory=ReviewLayers)
     max_fix_iterations: int = 3
+    fix_timeout_sec: int = 30
+    fix_retry_attempts: int = 1
+    fix_max_tokens: int = 8192
+    fix_thinking_enabled: bool = False
     fail_on_warning: bool = False
+    auto_fix_enabled: bool = True
+    auto_fix_rule_ids: list[str] = Field(default_factory=lambda: ["EMB-003", "EMB-004"])
 
 
 class PlatformSection(BaseModel):
@@ -64,6 +76,8 @@ class ToolchainsSection(BaseModel):
     arm_gcc: str = ""
     ninja: str = ""
     programmer_cli: str = ""
+    probe_rs: str = ""
+    platformio: str = ""
 
 
 class STM32Section(BaseModel):
@@ -182,12 +196,37 @@ class ConfigManager:
         return self.resolve_path(config.agent.driver_library)
 
     def skill_library_root(self) -> Path:
+        return self.skills_root()
+
+    def legacy_skill_library_root(self) -> Path:
         config = self.ensure_default_config()
         return self.resolve_path(config.agent.skill_library)
+
+    def legacy_protocol_skills_root(self) -> Path:
+        return self.legacy_skill_library_root() / "protocols"
 
     def firmware_library_root(self) -> Path:
         config = self.ensure_default_config()
         return self.resolve_path(config.agent.firmware_library)
+
+    def skills_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.skills_root)
+
+    def protocol_skills_root(self) -> Path:
+        return self.skills_root() / "protocols"
+
+    def lesson_library_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.lesson_library)
+
+    def memory_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.memory_root)
+
+    def prompts_root(self) -> Path:
+        config = self.ensure_default_config()
+        return self.resolve_path(config.agent.prompts_root)
 
     def toolchain_root(self) -> Path:
         config = self.ensure_default_config()

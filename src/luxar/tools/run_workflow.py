@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from luxar.core.config_manager import AgentConfig
-from luxar.core.workflow_engine import WorkflowEngine
+from luxar.agent.workers._workflow_engine import WorkflowEngine
 
 
 def run_driver_workflow(

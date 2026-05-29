@@ -1,0 +1,10 @@
+{evidence: app_main.c reports size=2229 but output cuts off mid-line at 'GPIO_P'
+character position ~1100. Other large files (system_stm32f1xx.c at 14575 bytes) also
+truncated. Writing complete replacement via workspace_write_file works reliably.,
+hypothesis: The tool has a soft output limit of ~1200 characters for file contents,
+outcome: Using workspace_write_file to rewrite app_main.c with full content was successful.,
+resolution: 'When workspace_read_file truncates, either: (1) Rewrite the file in full
+with workspace_write_file, or (2) Read smaller sections if supported. Do NOT retry
+reading the same file expecting different output.', state: promoted, symptom: workspace_read_file
+on app_main.c (2229 bytes) returned truncated content (only ~1100 chars shown), topic: workspace_read_file
+truncates large source files}

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from luxar.core.assembler import Assembler
 from luxar.core.firmware_library_manager import FirmwareLibraryManager
 from luxar.core.driver_library import DriverLibrary
-from luxar.models.schemas import ProjectConfig
+from luxar.models.schemas import ProjectConfig, ProjectPlan
 
 
 def run_assemble_project(
@@ -11,12 +13,15 @@ def run_assemble_project(
     firmware_library_root: str,
     driver_library_root: str = "",
     drivers: list[str] | None = None,
+    project_plan: ProjectPlan | None = None,
 ) -> dict:
     assembler = Assembler()
     firmware_package_resolved = ""
     stm32_family = ""
     firmware_description: dict = {}
     installed_drivers: list[dict] = []
+    installed_driver_sources: list[str] = []
+    installed_driver_include_dirs: list[str] = []
     if project.project_mode == "firmware":
         if not project.firmware_package:
             raise ValueError("Firmware project mode requires a firmware package.")
@@ -41,6 +46,7 @@ def run_assemble_project(
             stm32_family=stm32_family,
             build_context=build_context,
             staged_firmware_paths=staged_firmware_paths,
+            project_plan=project_plan,
         )
     else:
         created_files = assembler.assemble_minimal_app(project)
@@ -56,7 +62,29 @@ def run_assemble_project(
                 raise FileNotFoundError(f"Stored driver not found for query: {query}")
             resolved_drivers.append(resolved)
         created_files.extend(assembler.install_driver_records(project, resolved_drivers))
+        project_root = Path(project.path).resolve()
+        for path in created_files:
+            candidate = Path(path).resolve()
+            try:
+                relative = candidate.relative_to(project_root).as_posix()
+            except ValueError:
+                continue
+            if relative.startswith("App/Drivers/") and relative.endswith(".c"):
+                installed_driver_sources.append(relative)
+            if relative.startswith("App/Drivers/") and "/Inc/" in relative:
+                include_dir = "/".join(relative.split("/")[:3] + ["Inc"])
+                if include_dir not in installed_driver_include_dirs:
+                    installed_driver_include_dirs.append(include_dir)
         installed_drivers = [item.model_dump(mode="json") for item in resolved_drivers]
+
+    manifest_files = assembler.write_build_manifest(
+        project,
+        driver_sources=installed_driver_sources,
+        driver_include_dirs=installed_driver_include_dirs,
+        stm32_family=stm32_family,
+        family_define=build_context.get("family_define", "") if project.project_mode == "firmware" else "",
+    )
+    created_files.extend(manifest_files)
 
     return {
         "project": project.name,

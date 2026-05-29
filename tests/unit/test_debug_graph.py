@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 from luxar.core.config_manager import AgentConfig
-from luxar.core.debug_loop import DebugLoop
+from luxar.agent.workers._debug_loop import DebugLoop
 from luxar.models.schemas import BuildResult, DebugLoopResult, MonitorResult, ReviewReport
-from luxar.workflows.debug_graph import LangGraphDebugWorkflow
+from luxar.agent.workers._langgraph_debug import LangGraphDebugWorkflow
 
 
 class DebugGraphTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class DebugGraphTests(unittest.TestCase):
                 log_dir=str(Path(tmpdir) / "logs"),
             )
 
-            with mock.patch("luxar.workflows.debug_graph.LANGGRAPH_AVAILABLE", False), mock.patch.object(
+            with mock.patch("luxar.agent.workers._langgraph_debug.LANGGRAPH_AVAILABLE", False), mock.patch.object(
                 debug_loop,
                 "run",
                 return_value=expected,

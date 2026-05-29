@@ -50,16 +50,32 @@ class ToolchainManager:
             fallback_name="STM32_Programmer_CLI",
         )
 
-    def resolve_arm_gcc(self) -> str | None:
-        gcc_name = f"{self.config.build.toolchain_prefix}gcc"
+    def resolve_probe_rs(self) -> str | None:
         return self._resolve_binary(
-            explicit=self.config.toolchains.arm_gcc,
+            explicit=self.config.toolchains.probe_rs,
             bundled_relatives=[
-                f"gcc-arm/bin/{gcc_name}.exe",
-                f"gcc-arm/bin/{gcc_name}",
+                "probe-rs/bin/probe-rs.exe",
+                "probe-rs/bin/probe-rs",
             ],
-            fallback_name=gcc_name,
+            fallback_name="probe-rs",
         )
+
+    def resolve_platformio(self) -> str | None:
+        return self._resolve_binary(
+            explicit=self.config.toolchains.platformio,
+            bundled_relatives=["platformio/platformio.exe","platformio/platformio"],
+            fallback_name="platformio",
+        )
+
+    def resolve_arm_gcc(self) -> str | None:
+        return self._resolve_arm_tool("gcc", explicit=self.config.toolchains.arm_gcc)
+
+    def resolve_arm_gxx(self) -> str | None:
+        return self._resolve_arm_tool("g++")
+
+    def resolve_arm_as(self) -> str | None:
+        # GCC is the preferred ASM driver for the generated STM32 projects.
+        return self.resolve_arm_gcc()
 
     def resolve_arm_gcc_bin_dir(self) -> str | None:
         gcc = self.resolve_arm_gcc()
@@ -75,6 +91,8 @@ class ToolchainManager:
             "arm_gcc": self.resolve_arm_gcc() or "",
             "ninja": self.resolve_ninja() or "",
             "programmer_cli": self.resolve_programmer_cli() or "",
+        "probe_rs": self.resolve_probe_rs() or "",
+        "platformio": self.resolve_platformio() or "",
         }
 
     def _resolve_binary(
@@ -94,5 +112,16 @@ class ToolchainManager:
                 return str(candidate.resolve())
 
         return shutil.which(fallback_name)
+
+    def _resolve_arm_tool(self, tool_suffix: str, explicit: str = "") -> str | None:
+        tool_name = f"{self.config.build.toolchain_prefix}{tool_suffix}"
+        return self._resolve_binary(
+            explicit=explicit,
+            bundled_relatives=[
+                f"gcc-arm/bin/{tool_name}.exe",
+                f"gcc-arm/bin/{tool_name}",
+            ],
+            fallback_name=tool_name,
+        )
 
 

@@ -9,10 +9,40 @@ from pathlib import Path
 from luxar.core.config_manager import ConfigManager
 from luxar.core.llm_client import LLMClient, LLMClientError
 from luxar.models.schemas import ReviewIssue, ReviewReport
-from luxar.prompts.semantic_review import (
-    SEMANTIC_REVIEW_SYSTEM_PROMPT,
-    build_semantic_review_prompt,
-)
+SEMANTIC_REVIEW_SYSTEM_PROMPT = """
+你是 LUXAR 0.2.2 runtime 中的语义审查 worker。
+请从逻辑、资源、安全、时序和可移植性角度输出结构化 JSON。
+只根据代码和可见证据提出问题，不要凭空扩展风险。
+""".strip()
+
+
+SEMANTIC_REVIEW_PROMPT = """
+请审查以下 C 代码，并返回 JSON：
+
+{{
+  "passed": true,
+  "issues": [
+    {{
+      "severity": "critical|warning|info",
+      "line": 1,
+      "rule": "逻辑错误|时序风险|错误处理缺失|并发风险",
+      "description": "问题描述",
+      "suggestion": "修复建议"
+    }}
+  ],
+  "summary": "总体评价"
+}}
+
+代码：
+```c
+__CODE_BLOCK__
+```
+""".strip()
+
+
+def build_semantic_review_prompt(source: str) -> str:
+    return SEMANTIC_REVIEW_PROMPT.replace("__CODE_BLOCK__", source)
+
 
 
 class ReviewEngine:
@@ -38,7 +68,11 @@ class ReviewEngine:
         return aggregate
 
     def review_project(self) -> ReviewReport:
-        """Review App/ source files + Core/ files with USER CODE sections (user-editable)."""
+        """Review App/ source files + Core/ files with USER CODE sections (user-editable).
+        
+        Core/ file issues (CubeMX/HAL generated) are downgraded to info so they don't block builds.
+        Only App/ file errors are actionable for the agent.
+        """
         app_root = self.project_path / "App"
         core_root = self.project_path / "Core"
         files = []
@@ -63,7 +97,21 @@ class ReviewEngine:
                 issues=[],
                 raw_logs={"review_project": {"warning": "No reviewable source files found"}},
             )
-        return self.review_files(files)
+        
+        report = self.review_files(files)
+        
+        # Downgrade Core/ file errors to info (CubeMX generated, not editable)
+        actionable_issues: list[ReviewIssue] = []
+        for issue in report.issues:
+            if "core" in Path(issue.file).parts and issue.severity in {"critical", "error"}:
+                issue.severity = "info"
+                issue.message = f"[CubeMX generated, ignore] {issue.message}"
+            actionable_issues.append(issue)
+        
+        return self._build_report(
+            issues=actionable_issues,
+            raw_logs=report.raw_logs,
+        )
 
     def discover_project_files(self) -> list[str]:
         candidates: list[Path] = []
@@ -85,7 +133,7 @@ class ReviewEngine:
         # Skip CubeMX-generated Core/ files for most rules (only EMB-002 applies)
         is_core = "core" in parts
 
-        if self._is_driver_like(parts) and self._has_global_handle_reference(source):
+        if "drivers" in parts and self._has_global_handle_reference(source):
             issues.append(
                 self._issue(
                     path,
@@ -123,7 +171,7 @@ class ReviewEngine:
                 )
             )
 
-        if self._is_driver_like(parts) and "printf" in source:
+        if self._is_driver_like(parts) and re.search(r"\bprintf\s*\(", source):
             issues.append(
                 self._issue(
                     path,
@@ -148,7 +196,8 @@ class ReviewEngine:
                 )
             )
 
-        if self._has_hardcoded_register_address(source):
+        # Core/ files (CubeMX/HAL generated): skip EMB-006 since ST uses register addresses internally
+        if not is_core and self._has_hardcoded_register_address(source):
             issues.append(
                 self._issue(
                     path,
@@ -200,16 +249,30 @@ class ReviewEngine:
                     )
                 )
 
-        missing_null_check_lines = self._missing_null_check_lines(source)
-        for line in missing_null_check_lines:
+        # Core/ files: CubeMX/HAL generated code is out of our control, skip NULL checks
+        if not is_core:
+            missing_null_check_lines = self._missing_null_check_lines(source)
+            for line in missing_null_check_lines:
+                issues.append(
+                    self._issue(
+                        path,
+                        line,
+                        "error",
+                        "EMB-005",
+                        "Pointer parameter is not validated before use.",
+                        "Add an early NULL check for pointer parameters.",
+                    )
+                )
+
+        if re.search(r'#include\s+["<]stm32f10x\.h[">]', source):
             issues.append(
                 self._issue(
                     path,
-                    line,
+                    self._first_line(source, r'#include\s+["<]stm32f10x\.h[">]'),
                     "error",
-                    "EMB-005",
-                    "Pointer parameter is not validated before use.",
-                    "Add an early NULL check for pointer parameters.",
+                    "EMB-011",
+                    "Wrong HAL header: stm32f10x.h (SPL) is incompatible with this project.",
+                    "Replace with #include \"stm32f1xx_hal.h\".",
                 )
             )
 

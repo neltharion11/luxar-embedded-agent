@@ -27,6 +27,20 @@ class UiShellTests(unittest.TestCase):
     def test_stream_parser_handles_warning_and_tool_running_events(self) -> None:
         self.assertIn("currentEvent === 'tool_running'", self.html)
         self.assertIn("currentEvent === 'warning'", self.html)
+        self.assertIn("currentEvent === 'reset_output'", self.html)
+        self.assertIn("currentEvent === 'phase_changed'", self.html)
+        self.assertIn("currentEvent === 'skill_loaded'", self.html)
+        self.assertIn("currentEvent === 'lesson_recorded'", self.html)
+        self.assertIn("currentEvent === 'promotion_applied'", self.html)
+        self.assertIn("currentEvent === 'escalation_triggered'", self.html)
+        self.assertIn("function formatToolRunningLine(chunk)", self.html)
+        self.assertNotIn("workflow_started", self.html)
+        self.assertNotIn("var workflowMode = false;", self.html)
+
+    def test_task_result_cards_prefer_artifacts_payload(self) -> None:
+        self.assertIn("function getTaskArtifact(taskResult, key)", self.html)
+        self.assertIn("taskResult.artifacts", self.html)
+        self.assertIn("driver_pipeline", self.html)
 
 
 if __name__ == "__main__":

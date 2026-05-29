@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import logging
+
 from pathlib import Path
 
 from luxar.models.schemas import DocumentParseResult, KnowledgeChunk
@@ -52,7 +54,10 @@ class PDFParser:
                 error="No text could be extracted from the document.",
             )
 
-        tables = self._extract_tables(path)
+        if suffix == ".pdf":
+            tables = self._extract_tables_from_string(normalized)
+        else:
+            tables = self._extract_tables(path)
 
         document_id = self._build_document_id(path)
         title = path.stem
@@ -77,72 +82,78 @@ class PDFParser:
             summary=summary,
         )
 
+
+
     def _extract_pdf_text(self, path: Path) -> str:
-        extractor_errors: list[str] = []
-        min_text_len = 50
+        _OCR_THRESHOLD = 100  # chars below this per page trigger OCR
+        _MAX_OCR_PAGES = 30   # per-document OCR page budget
+        _DPI = 150
 
-        # Tier 0: Docling — AI layout-aware, produces structured Markdown
-        text = self._extract_pdf_text_docling(path)
-        if text and len(text.strip()) >= min_text_len:
-            return text
-        if text:
-            extractor_errors.append("docling: produced insufficient text")
-
-        # Tier 1: pymupdf embedded text + render-to-OCR cascade
         try:
             import fitz  # type: ignore (pymupdf)
+        except ImportError:
+            raise RuntimeError(
+                "Unable to extract PDF text — install `pymupdf` for PDF support."
+            )
+
+        try:
             import io
             from PIL import Image  # type: ignore
-
-            doc = fitz.open(str(path))
-            text = "\n".join(page.get_text() for page in doc)
-            if len(text.strip()) >= min_text_len:
-                return text
-
-            # Tier 2: scanned PDF — render pages and OCR with RapidOCR
-            pages_text: list[str] = []
-            for page in doc:
-                pix = page.get_pixmap(dpi=200)
-                img = Image.open(io.BytesIO(pix.tobytes("png")))
-                page_text = self._ocr_image_pillow(img)
-                if page_text:
-                    pages_text.append(page_text)
-            if pages_text and sum(len(t) for t in pages_text) >= min_text_len:
-                return "\n".join(pages_text)
-            extractor_errors.append("pymupdf+OCR: produced insufficient text")
-        except Exception as exc:
-            extractor_errors.append(f"pymupdf+OCR: {exc}")
-
-        joined = "; ".join(extractor_errors) if extractor_errors else "No PDF extractor available."
-        raise RuntimeError(
-            "Unable to extract PDF text — the document may be a scanned image or have an unsupported format. "
-            "Install `docling` or `pymupdf`+`rapidocr-onnxruntime` for PDF support. "
-            f"Details: {joined}"
-        )
-
-    def _extract_pdf_text_docling(self, path: Path) -> str:
-        """Convert PDF to Markdown using Docling's layout-aware AI models.
-
-        Docling uses DocLayNet for layout analysis and TableFormer for table
-        structure recognition, producing semantically ordered Markdown output.
-        Falls back silently on any failure — callers should try the next extractor.
-        """
-        try:
-            import os
-            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-
-            from docling.document_converter import DocumentConverter
-
-            converter = DocumentConverter()
-            result = converter.convert(str(path))
-            markdown = result.document.export_to_markdown()
-            if markdown and markdown.strip():
-                return markdown.strip()
-            return ""
+            _HAS_OCR_DEPS = True
         except ImportError:
-            return ""
-        except Exception:
-            return ""
+            _HAS_OCR_DEPS = False
+
+        _log = logging.getLogger("luxar.pdf")
+        doc = fitz.open(str(path))
+        pages_text: list[str] = []
+        total_chars = 0
+        ocr_pages_done = 0
+        _log.info("Processing %d pages, OCR deps=%s", len(doc), _HAS_OCR_DEPS)
+
+        for i, page in enumerate(doc):
+            # Extract embedded text layer — this is the ground truth:
+            # if get_text() returns meaningful content, the text is extractable
+            # and OCR is unnecessary regardless of internal block structure.
+            page_text = page.get_text()
+            text_len = len(page_text.strip())
+
+            needs_ocr = (
+                _HAS_OCR_DEPS
+                and ocr_pages_done < _MAX_OCR_PAGES
+                and text_len < _OCR_THRESHOLD
+            )
+
+            if needs_ocr:
+                _log.info("Page %d: OCR triggered (text=%d chars below threshold)", i + 1, text_len)
+                try:
+                    pix = page.get_pixmap(dpi=_DPI)
+                    img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    ocr_text = self._ocr_image_pillow(img)
+                    ocr_pages_done += 1
+                    if ocr_text:
+                        total_chars += len(ocr_text)
+                        _log.info("Page %d: OCR produced %d chars", i + 1, len(ocr_text))
+                        page_text = ocr_text
+                    else:
+                        _log.info("Page %d: OCR produced no text", i + 1)
+                except Exception as _ocr_exc:
+                    _log.warning("Page %d: OCR failed: %s", i + 1, _ocr_exc)
+            else:
+                total_chars += text_len
+
+            pages_text.append(page_text)
+
+        doc.close()
+
+        text = "\n".join(pages_text)
+        _log.info("Total extracted: %d chars, OCR pages: %d", len(text.strip()), ocr_pages_done)
+        if len(text.strip()) < 50:
+            raise RuntimeError(
+                "Unable to extract PDF text — the document may be a scanned image or have an unsupported format. "
+                "Install `pymupdf`+`rapidocr-onnxruntime` for PDF support."
+            )
+        return text
+
 
     def _extract_image_text(self, path: Path) -> str:
         """Extract text from image files using RapidOCR."""
@@ -262,6 +273,29 @@ class PDFParser:
         if len(cells) < _TABLE_CANDIDATE_MIN_COLS:
             return None
         return cells
+
+    def _extract_tables_from_string(self, text: str) -> list[list[list[str]]]:
+        """Extract tables from already-extracted text using regex (same logic as _extract_tables_from_text)."""
+        lines = text.splitlines()
+        tables: list[list[list[str]]] = []
+        i = 0
+        while i < len(lines):
+            row = self._parse_text_table_row(lines[i])
+            if row and len(row) >= _TABLE_CANDIDATE_MIN_COLS:
+                table: list[list[str]] = [row]
+                i += 1
+                while i < len(lines):
+                    next_row = self._parse_text_table_row(lines[i])
+                    if next_row and len(next_row) == len(row):
+                        table.append(next_row)
+                        i += 1
+                    else:
+                        break
+                if len(table) >= _TABLE_CANDIDATE_MIN_ROWS:
+                    tables.append(table)
+            else:
+                i += 1
+        return tables
 
     def _extract_tables_from_pdf(self, path: Path) -> list[list[list[str]]]:
         """Extract tables from PDF using pdfplumber (optional).
@@ -534,4 +568,3 @@ class PDFParser:
         sentences = re.split(r"(?<=[.!?])\s+", text)
         selected = [segment.strip() for segment in sentences if segment.strip()][:max_sentences]
         return " ".join(selected)[:600]
-
