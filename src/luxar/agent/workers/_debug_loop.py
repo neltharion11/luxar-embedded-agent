@@ -75,15 +75,40 @@ class DebugLoop:
                 context,
                 probe=probe or self.config.flash.default_probe,
             )
-
             # Drain serial buffer captured during flash
             monitor_lines: list[str] = []
             if resolved_port and mgr.state in ("running", "paused"):
                 monitor_lines = mgr.read_buffer()
-                # Brief wait for post-flash boot messages
-                time.sleep(1.5)
-                monitor_lines += mgr.read_buffer()
+
+            # Fallback: if background thread's serial died (port disconnected
+            # during MCU reset), open port directly to catch init output
+            if resolved_port:
+                try:
+                    import serial as _serial_mod
+                    _ser = _serial_mod.Serial(port=resolved_port, baudrate=resolved_baudrate, timeout=0.3)
+                    _deadline = time.time() + 3.0
+                    while time.time() < _deadline:
+                        raw = _ser.readline()
+                        if raw:
+                            line = raw.decode(errors="replace").rstrip()
+                            if line and line not in monitor_lines:
+                                monitor_lines.append(line)
+                        elif monitor_lines:
+                            break  # Silence after data → MCU boot complete
+                    _ser.close()
+                except Exception:
+                    pass
+
+            # Second drain from MonitorManager (catches overlap)
+            if resolved_port and mgr.state in ("running", "paused"):
+                time.sleep(0.5)
+                extra = mgr.read_buffer()
+                for line in extra:
+                    if line not in monitor_lines:
+                        monitor_lines.append(line)
                 if not was_already_running:
+                    mgr.stop()
+
                     mgr.stop()
 
             if not flash_result.success:
