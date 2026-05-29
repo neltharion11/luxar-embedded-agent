@@ -216,7 +216,9 @@ def register_vnext_http_surface(
         if dst.exists():
             raise HTTPException(status_code=409, detail=f"Project '{name}' already exists")
         shutil.copytree(src, dst)
-        meta = {"name": name, "platform": "baremetal", "runtime": "baremetal", "mcu": "STM32F103C8", "project_mode": "firmware"}
+        from luxar.core.project_detector import detect_project
+        detected = detect_project(str(dst))
+        meta = {"name": name, **detected}
         (dst / ".agent_project.json").write_text(_json.dumps(meta, indent=2), encoding="utf-8")
         return {"success": True, "project": meta}
 

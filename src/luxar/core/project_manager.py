@@ -119,15 +119,17 @@ class ProjectManager:
                 }
             )
         else:
+            from luxar.core.project_detector import detect_project
+            detected = detect_project(str(source_dir))
             ioc_candidates = sorted(source_dir.glob("*.ioc"))
             ioc_file = ioc_candidates[0] if ioc_candidates else source_dir / f"{entry_name}.ioc"
             config = ProjectConfig(
                 name=entry_name,
                 path=str(source_dir),
-                platform=platform,
-                runtime=runtime,
-                project_mode=project_mode,
-                mcu=mcu or "UNKNOWN",
+                platform=platform or detected["platform"],
+                runtime=runtime or detected["runtime"],
+                project_mode=project_mode or detected["project_mode"],
+                mcu=mcu or detected["mcu"],
                 ioc_file=str(ioc_file.resolve()),
                 firmware_package=firmware_package,
             )
