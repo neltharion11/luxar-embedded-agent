@@ -16,3 +16,11 @@ config/*.local.yaml
 config/*.local.yml
 workspace/projects/*
 !workspace/projects/.gitkeep
+
+# Temp debug files
+_*.py
+_*.txt
+_*.ps1
+_*.bat
+__*.py
+WORKFLOW_STREAMING_PLAN.md
