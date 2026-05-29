@@ -423,6 +423,7 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
       <div class="form-group"><label>Platform</label><select id="npm-platform"><option value="stm32cubemx">stm32cubemx (CubeMX)</option><option value="stm32firmware">stm32firmware (bare)</option></select></div>
       <div class="form-group"><label>Runtime</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
       <div class="form-group"><label>FW Package</label><select id="npm-fw"><option value="STM32Cube_FW_F1">STM32Cube_FW_F1</option></select></div>
+      <div id="cubemx-platform-hint" style="display:none;font-size:12px;color:#b45309;background:#fffbeb;padding:8px 12px;border-radius:8px;margin-top:4px" data-i18n="cubemx.platformHint">CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.</div>
     </div>
     <!-- AI config form -->
     <div id="new-project-ai" class="form-group" style="display:none">
@@ -436,6 +437,30 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
     <div class="btn-group" style="justify-content:flex-end">
       <button class="btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
       <button class="btn-primary" id="new-project-submit" onclick="submitNewProject()">Create</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- CubeMX Guide Modal -->
+<div id="cubemx-guide-modal" class="modal-shell" onclick="closeCubemxGuideModal(event)">
+  <div class="modal-card" onclick="event.stopPropagation()" style="max-width:480px">
+    <div class="modal-head">
+      <div><h3 data-i18n="cubemx.guideTitle">🧰 CubeMX Project Created</h3></div>
+      <button class="modal-close" onclick="closeCubemxGuideModal()">&times;</button>
+    </div>
+    <div style="padding:8px 0">
+      <p style="margin-bottom:12px;color:#60646c;font-size:14px" data-i18n="cubemx.guideBody">Project directory is ready. Use STM32CubeMX to generate code into it.</p>
+      <ol style="padding-left:20px;color:#1c2024;font-size:13px;line-height:2">
+        <li data-i18n="cubemx.guideStep1">Open STM32CubeMX, select MCU model and configure peripherals</li>
+        <li data-i18n="cubemx.guideStep2">Click GENERATE CODE, set output path to this project directory</li>
+      </ol>
+      <div style="margin-top:12px;padding:8px 12px;background:#f0fdf4;border-radius:8px;font-size:12px;color:#166534">
+        <strong>Project:</strong> <span id="cubemx-guide-project-name"></span>
+      </div>
+    </div>
+    <div class="btn-group" style="justify-content:flex-end;margin-top:8px">
+      <button class="btn-primary" onclick="cubemxGuideDone()" data-i18n="cubemx.guideDone">Code Generated</button>
     </div>
   </div>
 </div>
@@ -478,6 +503,14 @@ zh['sidebar.createHint']='使用上方按钮创建项目或打开已有项目';
 zh['sidebar.delete']='删除项目';
 zh['sidebar.deleteConfirm']='确定要删除项目 "{name}" 吗？此操作不可撤销。';
 zh['sidebar.deleteFailed']='删除失败';
+zh['cubemx.guideTitle']='🧰 CubeMX 项目已创建';
+zh['cubemx.guideBody']='项目目录已就绪。请使用 STM32CubeMX 打开该目录并生成代码。';
+zh['cubemx.guideStep1']='打开 STM32CubeMX，选择 MCU 型号并配置外设';
+zh['cubemx.guideStep2']='点击 GENERATE CODE，输出路径选择本项目目录';
+zh['cubemx.guideDone']='已生成代码';
+zh['cubemx.awaitingGenerate']='等待 CubeMX 生成代码';
+zh['cubemx.platformHint']='CubeMX 平台将创建空项目，请后续使用 STM32CubeMX 生成代码';
+
 zh['chat.activeProject']='当前项目：';
 zh['chat.welcomeTitle']='欢迎使用 Luxar';
 zh['chat.welcomeDesc']='从侧边栏选择一个项目，开始关于嵌入式开发、代码审查、驱动生成等对话。';
@@ -583,6 +616,14 @@ en['sidebar.createHint']='Use the buttons above to create or open a project';
 en['sidebar.delete']='Delete project';
 en['sidebar.deleteConfirm']='Delete project "{name}"? This cannot be undone.';
 en['sidebar.deleteFailed']='Delete failed';
+en['cubemx.guideTitle']='🧰 CubeMX Project Created';
+en['cubemx.guideBody']='Project directory is ready. Use STM32CubeMX to generate code into it.';
+en['cubemx.guideStep1']='Open STM32CubeMX, select MCU model and configure peripherals';
+en['cubemx.guideStep2']='Click GENERATE CODE, set output path to this project directory';
+en['cubemx.guideDone']='Code Generated';
+en['cubemx.awaitingGenerate']='Awaiting CubeMX code generation';
+en['cubemx.platformHint']='CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.';
+
 en['chat.activeProject']='Active Project:';
 en['chat.welcomeTitle']='Welcome to Luxar';
 en['chat.welcomeDesc']='Select a project from the sidebar and start a conversation about embedded development, code review, driver generation, and more.';
@@ -864,10 +905,15 @@ function renderTaskResultCards(taskResult) {
 }
 
 function extractProjectNameFromToolResult(toolName, resultText) {
-  if (!toolName || !resultText || toolName !== 'init_project') return null;
+  if (!toolName || !resultText) return null;
+  if (toolName !== 'init_project' && toolName !== 'workspace_create_project') return null;
   try {
     var parsed = typeof resultText === 'string' ? JSON.parse(resultText) : resultText;
-    return parsed && parsed.name ? parsed.name : null;
+    // workspace_create_project returns {success: true, project: {name: ...}}
+    if (parsed && parsed.project && parsed.project.name) return parsed.project.name;
+    // init_project returns {name: ...}
+    if (parsed && parsed.name) return parsed.name;
+    return null;
   } catch (e) {
     return null;
   }
@@ -1135,6 +1181,7 @@ async function submitNewProject() {
     return;
   }
 
+  var prevProject = selectedProject;
   var platform = document.getElementById('npm-platform').value.trim() || 'stm32cubemx';
   var payload = {
     name: document.getElementById('npm-name').value.trim(),
@@ -1146,12 +1193,23 @@ async function submitNewProject() {
   };
   if (!payload.name) { status.textContent = 'Project name is required.'; return; }
   try {
-    var res = await fetch('/api/workspace/create-project', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+var res = await fetch('/api/workspace/create-project', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
     var data = await res.json();
-    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
-    await loadSidebarProjects();
-    closeNewProjectModal();
-    if (data.project && data.project.name) selectProject(data.project.name);
+if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+await loadSidebarProjects();
+closeNewProjectModal();
+    if (data.project && data.project.name) {
+if (platform === 'stm32cubemx') {
+        pendingCubemxImport = { source: prevProject, target: data.project.name };
+        document.getElementById('cubemx-guide-project-name').textContent = data.project.name;
+        document.getElementById('cubemx-guide-modal').classList.add('active');
+      } else {
+        if (prevProject) {
+          try { await importConversationToProject(prevProject, data.project.name); } catch(e) {}
+        }
+        selectProject(data.project.name);
+      }
+    }
   } catch(e) { status.textContent = e.message; }
 }
 
@@ -1159,6 +1217,26 @@ function openOpenProjectModal() {
   document.getElementById('open-project-modal').classList.add('active');
   loadOpenProjectList();
 }
+
+
+// CubeMX guide modal
+function closeCubemxGuideModal(event) {
+  if (event && event.target && event.target.id !== 'cubemx-guide-modal') return;
+  document.getElementById('cubemx-guide-modal').classList.remove('active');
+}
+
+async function cubemxGuideDone() {
+  var name = document.getElementById('cubemx-guide-project-name').textContent;
+  document.getElementById('cubemx-guide-modal').classList.remove('active');
+  if (name) {
+    if (pendingCubemxImport && pendingCubemxImport.target === name && pendingCubemxImport.source) {
+      try { await importConversationToProject(pendingCubemxImport.source, name); } catch(e) {}
+      pendingCubemxImport = null;
+    }
+    selectProject(name);
+  }
+}
+
 
 function closeOpenProjectModal(event) {
   if (event && event.target && event.target.id !== 'open-project-modal') return;
@@ -1210,8 +1288,15 @@ async function deleteProject(name) {
   } catch(e) { alert(t('sidebar.deleteFailed') + ': ' + e.message); }
 }
 
+
+// Show/hide CubeMX platform hint
+document.getElementById('npm-platform').addEventListener('change', function() {
+  var hint = document.getElementById('cubemx-platform-hint');
+  if (hint) hint.style.display = this.value === 'stm32cubemx' ? 'block' : 'none';
+});
+
 function selectProject(name) {
-  selectedProject = name || null;
+selectedProject = name || null;
   document.querySelectorAll('.sidebar-project').forEach(function(el) { el.classList.remove('active'); });
   if (name) {
     var items = document.querySelectorAll('.sidebar-project');
@@ -1243,7 +1328,7 @@ function seedNewProjectChat() {
 
 async function importConversationToProject(sourceProject, targetProject) {
   if (!sourceProject || !targetProject) return;
-  await fetch('/api/conversations/' + encodeURIComponent(targetProject) + '/import', {
+var res = await fetch('/api/conversations/' + encodeURIComponent(targetProject) + '/import', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -1251,6 +1336,7 @@ async function importConversationToProject(sourceProject, targetProject) {
       replace: true
     })
   });
+  var data = await res.json();
 }
 
 async function clearConversation() {
@@ -1537,6 +1623,15 @@ async function sendMessage() {
                 renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
+          } else if (currentEvent === 'project_created') {
+            try {
+              var projData = JSON.parse(dataStr);
+              var proj = projData.project || projData;
+              var pname = proj.name || '';
+              if (pname) {
+pendingProjectSelection = pname;
+              }
+            } catch(e) {}
           } else if (currentEvent === 'phase_changed') {
             try {
               var phaseChunk = JSON.parse(dataStr);
@@ -1605,6 +1700,7 @@ async function sendMessage() {
               var projectToOpen = pendingProjectSelection;
               pendingProjectSelection = null;
               await importConversationToProject('__global__', projectToOpen);
+              await fetch('/api/conversations/__global__/reset', { method: 'POST' });
               await loadSidebarProjects();
               selectProject(projectToOpen);
             }
@@ -1649,6 +1745,13 @@ async function loadDashboard() {
     else {
       dashList.innerHTML = projList.map(function(p) {
         var name = p.name.replace(/'/g, "\\'");
+        var isCubemxEmpty = p.platform === 'stm32cubemx' && !p.has_ioc && !p.has_core;
+        if (isCubemxEmpty) {
+          return '<div class="driver-item" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="showCubemxGuideForProject(\'' + name + '\')">' +
+            '<div><div class="item-title">' + escapeHtml(p.name) + '</div><div style="font-size:11px;color:#b45309;margin-top:2px">' + t('cubemx.awaitingGenerate') + '</div></div>' +
+            '<span style="font-size:11px;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px">CubeMX</span>' +
+            '</div>';
+        }
         return '<div class="driver-item" onclick="selectProject(\'' + name + '\')"><div class="item-title">' + escapeHtml(p.name) + '</div></div>';
       }).join('');
     }
@@ -1715,6 +1818,7 @@ async function loadSkills() {
 }
 
 var savedKeys = {};
+var pendingCubemxImport = null;
 
 function loadKeyForProvider(provider) {
   var envName = (providerDefaults[provider] || {}).key || '';
@@ -1946,6 +2050,13 @@ loadSidebarProjects();
 loadDashboard();
 
   // ── Hardware Status Polling ──
+
+  function showCubemxGuideForProject(name) {
+    document.getElementById('cubemx-guide-project-name').textContent = name;
+    document.getElementById('cubemx-guide-modal').classList.add('active');
+  }
+
+
   async function refreshHwStatus() {
     try {
       var r = await fetch('/api/workspace/status');

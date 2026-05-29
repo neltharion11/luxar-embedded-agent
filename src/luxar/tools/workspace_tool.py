@@ -57,6 +57,10 @@ def workspace_list_projects() -> dict[str, object]:
     for meta_file in sorted(ws.glob("*/.agent_project.json")):
         try:
             data = _json.loads(meta_file.read_text(encoding="utf-8"))
+            # Add CubeMX initialization detection fields
+            proj_dir = meta_file.parent
+            data["has_ioc"] = any(proj_dir.glob("*.ioc"))
+            data["has_core"] = (proj_dir / "Core").is_dir()
             projects.append(data)
         except Exception:
             projects.append({"name": meta_file.parent.name, "error": "invalid metadata"})
@@ -84,12 +88,13 @@ def workspace_create_project(
             firmware_package=firmware_package or cfg.stm32.firmware_package,
             overwrite=overwrite,
         )
-        # Copy template files via skill framework
-        try:
-            from luxar.tools.skills_tool import skill_execute
-            skill_execute("init_project_framework", category="project", project=name)
-        except Exception:
-            pass  # template copy is best-effort; project metadata already written
+        # Copy template files via skill framework (skip for CubeMX — user generates via CubeMX tool)
+        if platform != "stm32cubemx":
+            try:
+                from luxar.tools.skills_tool import skill_execute
+                skill_execute("init_project_framework", category="project", project=name)
+            except Exception:
+                pass  # template copy is best-effort; project metadata already written
         return {"success": True, "project": project.model_dump(mode="json")}
     except FileExistsError as exc:
         return {"success": False, "error": str(exc), "detail": "Project already exists"}
@@ -138,14 +143,7 @@ def workspace_status() -> dict[str, object]:
             programmer_cli = None
         if programmer_cli:
             try:
-                if "openocd" in programmer_cli.lower():
-                    result = subprocess.run(
-                        [programmer_cli, "--version"],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    stlink_connected = result.returncode == 0
-                    stlink_info = "openocd available"
-                else:
+                if "openocd" not in programmer_cli.lower():
                     result = subprocess.run(
                         [programmer_cli, "-l", "stlink"],
                         capture_output=True, text=True, timeout=10
@@ -158,23 +156,27 @@ def workspace_status() -> dict[str, object]:
                             if "ST-LINK SN" in ln or "ST-LINK FW" in ln:
                                 stlink_info = ln.strip()[:80]
                                 break
-                                break
             except Exception:
                 pass
 
-    # Method 3: pyocd / stlink Python package
+    # Method 3: pyocd / stlink Python package - only mark connected if actual probe enumeration succeeds
     if not stlink_connected:
         try:
             import pyocd
-            stlink_connected = True
-            stlink_info = "pyOCD available"
+            from pyocd.probe import aggregator
+            probes = aggregator.DebugProbeAggregator.get_all_connected_probes()
+            if probes:
+                stlink_connected = True
+                stlink_info = f"pyOCD: {probes[0].product_name} ({probes[0].unique_id})"
         except ImportError:
             pass
     if not stlink_connected:
         try:
             import stlink
-            stlink_connected = True
-            stlink_info = "stlink package available"
+            devices = stlink.enum_devices()
+            if devices:
+                stlink_connected = True
+                stlink_info = f"stlink: {devices[0].description}"
         except ImportError:
             pass
 

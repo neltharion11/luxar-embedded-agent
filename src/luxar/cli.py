@@ -79,6 +79,44 @@ def start_command(host: str, port: int, no_reload: bool) -> None:
     )
 
 
+@main.command("stop")
+def stop_command() -> None:
+    """Stop the running LUXAR server."""
+    import subprocess, sys
+
+    killed = False
+    try:
+        if sys.platform == "win32":
+            ps_cmd = (
+                "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                "Where-Object { $_.CommandLine -like '*luxar.cli start*' } | "
+                "ForEach-Object { $_.ProcessId }"
+            )
+            result = subprocess.run(
+                ["powershell", "-Command", ps_cmd],
+                capture_output=True, text=True, timeout=10
+            )
+            pids = [p.strip() for p in result.stdout.strip().split() if p.strip().isdigit()]
+            for p in pids:
+                subprocess.run(["taskkill", "/f", "/pid", p], capture_output=True)
+                click.echo(f"Server (PID {p}) stopped.")
+                killed = True
+        else:
+            result = subprocess.run(["pgrep", "-f", "uvicorn.*luxar"], capture_output=True, text=True)
+            pids = [p.strip() for p in result.stdout.strip().split() if p.strip().isdigit()]
+            for p in pids:
+                import os, signal
+                os.kill(int(p), signal.SIGTERM)
+                click.echo(f"Server (PID {p}) stopped.")
+                killed = True
+    except Exception as exc:
+        click.echo(f"Failed to stop: {exc}")
+        return
+
+    if not killed:
+        click.echo("No running LUXAR server found.")
+
+
 @main.command("run")
 @click.option("--task", "task_text", required=True)
 @click.option("--project", "project_name", default="")

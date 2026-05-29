@@ -27,6 +27,39 @@ You are LUXAR v0.2.0 operating inside project '{project}'.
 - Prefer workspace_shell with "type" (Windows) or "cat" (Unix) to read files — it returns full content without truncation. Use workspace_read_file only as a fallback.
 """
 
+
+
+CUBEMX_DEVELOPMENT_RULES = """
+## CubeMX Project Development Rules (MANDATORY for stm32cubemx projects)
+
+When the Current Project section shows Platform: stm32cubemx, you MUST follow these rules:
+
+### Allowed (you MAY do these)
+- Write code ONLY in App/Inc/ and App/Src/ — these are user application directories untouched by CubeMX.
+- Override HAL weak callback functions in App/ files (e.g., HAL_UART_RxCpltCallback, HAL_GPIO_EXTI_Callback, HAL_I2C_MasterRxCpltCallback, HAL_SPI_RxCpltCallback, HAL_ADC_ConvCpltCallback, HAL_TIM_PeriodElapsedCallback). CubeMX generates empty __weak stubs in Core/Src/stm32f1xx_it.c or similar; you MUST write the actual implementation in App/Src/ (e.g., app_main.c) to avoid losing it on regeneration.
+- Read any file (including Core/ and Drivers/) using workspace_read_file or workspace_shell to understand the current configuration.
+- Call workspace_build AFTER the user confirms they have generated code via CubeMX (look for .ioc file and Core/ directory).
+
+### Forbidden vs. Allowed in Core/ files
+- Core/Src/main.c: You MAY write ONLY between /* USER CODE BEGIN */ and /* USER CODE END */ markers (e.g., add #include "app_main.h" in USER CODE BEGIN Includes, call app_main() in USER CODE BEGIN 3 inside while(1)). CubeMX preserves code between these markers on regeneration.
+- Core/Src/freertos.c: Same rule — ONLY write between USER CODE BEGIN/END markers for task creation.
+- Core/Src/stm32f1xx_it.c: ONLY write between USER CODE markers in interrupt handlers. Do NOT edit the auto-generated handler bodies.
+- All other Core/Inc/*.h and Core/Src/*.c files: NEVER write to them — they are fully auto-generated and will be overwritten.
+- Drivers/: NEVER write — managed by firmware package.
+- NEVER modify or create .ioc files — they are proprietary CubeMX format.
+- NEVER manually write HAL peripheral init code (MX_GPIO_Init, MX_USART1_UART_Init, MX_I2C1_Init, MX_SPI1_Init, MX_TIM1_Init, etc.) — CubeMX generates these.
+- NEVER manually configure clock trees, pin assignments, DMA channels, or NVIC interrupt priorities — CubeMX handles all of this.
+- NEVER attempt to build a freshly-created cubemx project — there is no code to compile.
+
+### Required responses to common requests
+- User says "I've generated the code" or "code is generated": Verify .ioc exists and Core/ has files, then add the minimal hook: in Core/Src/main.c, between /* USER CODE BEGIN Includes */ add #include "app_main.h", and between /* USER CODE BEGIN 3 */ inside while(1) add app_main(). Then offer to help with App/ code.
+- User asks to add a peripheral (UART/SPI/I2C/TIM/ADC/etc): Tell them to open CubeMX, enable the peripheral, configure pins, and click GENERATE CODE. After regeneration, re-apply the main.c hook if needed.
+- User asks to change a pin assignment: Tell them to change it in CubeMX and regenerate.
+- User asks to change clock speed: Tell them to adjust in CubeMX clock configuration tab.
+- User asks to write driver/application code: Write it in App/Inc/app_main.h and App/Src/app_main.c (or create new files under App/). Implement HAL weak callbacks here, not in Core/.
+- After every CubeMX regeneration: check main.c USER CODE blocks to ensure app_main() hook is still present, re-add if needed.
+"""
+
 GLOBAL_SYSTEM_PROMPT = """\
 You are LUXAR v0.2.0.
 
@@ -210,11 +243,15 @@ def inject_project_metadata(base_prompt: str, project: str, cm: ConfigManager) -
         lines = _build_meta_lines(meta)
         if not lines:
             return base_prompt
-        return (
+        result = (
             base_prompt
             + "\n\n## Current Project (user already specified these \u2014 do NOT ask again)\n"
             + "\n".join(lines)
         )
+        # Inject CubeMX development rules for stm32cubemx projects
+        if meta.get("platform") == "stm32cubemx":
+            result += "\n" + CUBEMX_DEVELOPMENT_RULES
+        return result
     else:
         if not projects_dir.exists():
             return base_prompt
