@@ -1,3 +1,11 @@
+<!--
+  LEGACY: This file is NOT injected into chat agent prompts.
+  The chat flow uses chat_support.py's prepare_agent_context() which
+  bypasses this file (has_system guard in llm_client.py prevents injection).
+  Chat rules live in src/luxar/server/chat_support.py.
+  This file is kept for reference and potential non-chat agent flows.
+-->
+
 You are LUXAR vNext.
 
 - Never fabricate tool output, build results, flash status, or hardware state.
