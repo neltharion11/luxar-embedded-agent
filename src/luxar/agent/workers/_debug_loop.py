@@ -106,8 +106,13 @@ class DebugLoop:
                 for line in extra:
                     if line not in monitor_lines:
                         monitor_lines.append(line)
-                if not was_already_running:
+
+            # Always stop MonitorManager if we started it
+            if not was_already_running:
+                try:
                     mgr.stop()
+                except Exception:
+                    pass
 
                     mgr.stop()
 
