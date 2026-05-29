@@ -6,12 +6,78 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+import threading
+import time
 
 from luxar.core.toolchain_manager import ToolchainManager
 from luxar.models.schemas import BuildResult, FlashResult, MonitorResult, ProbeResult
 from luxar.core.platform_adapter import PlatformAdapter
 
 NINJA_FATAL_RE = re.compile(r"ninja:\s*fatal:")
+
+
+class BackgroundSerialMonitor:
+    """Thread-safe background serial reader for flash-then-monitor flow."""
+
+    def __init__(self, port: str, baudrate: int = 115200):
+        self.port = port
+        self.baudrate = baudrate
+        self._lines: list[str] = []
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._ser = None
+
+    def start(self) -> None:
+        import serial
+        self._ser = serial.Serial(
+            port=self.port,
+            baudrate=self.baudrate,
+            timeout=0.1,
+        )
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._thread.start()
+
+    def _read_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                if self._ser is not None and self._ser.is_open:
+                    raw = self._ser.readline()
+                    if raw:
+                        line = raw.decode(errors="replace").rstrip()
+                        with self._lock:
+                            self._lines.append(line)
+            except Exception:
+                time.sleep(0.05)
+
+    def stop(self, extra_wait: float = 1.5) -> list[str]:
+        """Signal stop, wait for extra data, close port, return all collected lines."""
+        self._stop_event.set()
+        deadline = time.time() + extra_wait
+        while time.time() < deadline:
+            try:
+                if self._ser is not None and self._ser.is_open:
+                    raw = self._ser.readline()
+                    if raw:
+                        line = raw.decode(errors="replace").rstrip()
+                        with self._lock:
+                            self._lines.append(line)
+            except Exception:
+                break
+            time.sleep(0.05)
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self._ser is not None and self._ser.is_open:
+            try:
+                self._ser.close()
+            except Exception:
+                pass
+        with self._lock:
+            return list(self._lines)
+
+    def get_lines_so_far(self) -> list[str]:
+        with self._lock:
+            return list(self._lines)
 
 
 class STM32CubeMXAdapter(PlatformAdapter):
@@ -87,7 +153,20 @@ class STM32CubeMXAdapter(PlatformAdapter):
                 errors=["cmake_not_found"],
             )
 
-        build_dir = project / "build"
+        # For CubeMX/CMakePresets projects, use cmake --preset
+        preset_name = self._detect_cmake_preset(project)
+        if preset_name is not None:
+            env = os.environ.copy()
+            if self.toolchain_manager is not None:
+                arm_gcc_bin = self.toolchain_manager.resolve_arm_gcc_bin_dir()
+                if arm_gcc_bin:
+                    env["PATH"] = arm_gcc_bin + os.pathsep + env.get("PATH", "")
+                ninja_bin = self.toolchain_manager.resolve_ninja()
+                if ninja_bin:
+                    env["PATH"] = str(Path(ninja_bin).parent) + os.pathsep + env.get("PATH", "")
+            return self._build_with_preset(project, preset_name, clean, cmake_bin, env)
+
+        build_dir = project / "build" / "Debug"
         if clean and build_dir.exists():
             shutil.rmtree(build_dir)
         build_dir.mkdir(parents=True, exist_ok=True)
@@ -527,7 +606,28 @@ class STM32CubeMXAdapter(PlatformAdapter):
             if ser is not None and getattr(ser, "is_open", False):
                 ser.close()
 
+    def start_background_monitor(self, port: str, baudrate: int = 115200) -> None:
+        """Open serial port in background thread, continuously reading into buffer."""
+        self._bg_monitor = BackgroundSerialMonitor(port, baudrate)
+        self._bg_monitor.start()
+
+    def stop_background_monitor(self, extra_wait: float = 2.0) -> list[str]:
+        """Stop background monitor, wait for trailing output, return all lines."""
+        if self._bg_monitor is None:
+            return []
+        lines = self._bg_monitor.stop(extra_wait=extra_wait)
+        self._bg_monitor = None
+        return lines
+
+    def _auto_detect_serial_port_for_monitor(self) -> str:
+        """Auto-detect serial port for use with background monitor."""
+        try:
+            from serial.tools import list_ports
+        except ImportError:
+            return ""
+        return self._auto_detect_serial_port(list_ports.comports())
     def probe(self, project_path: str, probe_type: str = "i2c") -> ProbeResult:
+
         project = Path(project_path)
         project_info = self.check_project_config(project_path)
         normalized = probe_type.strip().lower() or "i2c"
@@ -646,6 +746,79 @@ class STM32CubeMXAdapter(PlatformAdapter):
             logging.getLogger('luxar').debug('probe-rs flash attempt failed: %s', exc)
             return None
 
+    def _detect_cmake_preset(self, project: Path) -> str | None:
+        presets_file = project / "CMakePresets.json"
+        if not presets_file.exists():
+            return None
+        try:
+            data = json.loads(presets_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        configure_presets = data.get("configurePresets", [])
+        for preset in configure_presets:
+            if not preset.get("hidden", False):
+                return preset.get("name")
+        return None
+
+    def _build_with_preset(
+        self,
+        project: Path,
+        preset_name: str,
+        clean: bool,
+        cmake_bin: str,
+        env: dict,
+    ) -> BuildResult:
+        # Use standard CMake preset build dir pattern: build/<presetName>
+        build_path = project / "build" / preset_name
+        if clean and build_path.exists():
+            shutil.rmtree(build_path)
+        build_path.mkdir(parents=True, exist_ok=True)
+
+        configure_cmd = [cmake_bin, "--preset", preset_name, "-S", str(project)]
+        configure = subprocess.run(
+            configure_cmd,
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            cwd=project,
+            env=env,
+        )
+        if configure.returncode != 0:
+            return BuildResult(
+                success=False,
+                command=configure_cmd,
+                return_code=configure.returncode,
+                stdout=configure.stdout,
+                stderr=configure.stderr,
+                errors=["cmake_configure_failed"],
+            )
+
+        build_cmd = [cmake_bin, "--build", "--preset", preset_name]
+        build = subprocess.run(
+            build_cmd,
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            cwd=project,
+            env=env,
+        )
+        warnings = [
+            line for line in ((build.stdout or "") + "\n" + (build.stderr or "")).splitlines()
+            if "warning" in line.lower()
+        ]
+        combined = (build.stdout or "") + "\n" + (build.stderr or "")
+        errors = [
+            line for line in combined.splitlines()
+            if "error" in line.lower() or "fatal:" in line.lower() or "failed:" in line.lower()
+        ]
+        return BuildResult(
+            success=(build.returncode == 0),
+            command=build_cmd,
+            return_code=build.returncode,
+            stdout=build.stdout,
+            stderr=build.stderr,
+            warnings=warnings,
+            errors=errors,
+        )
+
     def _build_with_make(self, project: Path, makefile: Path, clean: bool) -> BuildResult:
         import shutil
         make_bin = shutil.which("make")
@@ -733,7 +906,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
         return str(getattr(best, "device", "") or "")
 
     def _find_flash_artifacts(self, project: Path) -> list[Path]:
-        build_dir = project / "build"
+        build_dir = project / "build" / "Debug"
         if not build_dir.exists():
             return []
 

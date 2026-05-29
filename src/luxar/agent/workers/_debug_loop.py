@@ -52,30 +52,53 @@ class DebugLoop:
                     log_dir=context["log_dir"],
                 )
 
+            # Start background serial monitor before flashing
+            resolved_port = port
+            if not resolved_port:
+                resolved_port = context["adapter"]._auto_detect_serial_port_for_monitor()
+            resolved_baudrate = baudrate or self.config.monitor.default_baudrate
+            if resolved_port:
+                try:
+                    context["adapter"].start_background_monitor(resolved_port, resolved_baudrate)
+                except Exception:
+                    resolved_port = ""  # Port unavailable, proceed without monitor
+
             flash_result = self._run_flash(
                 context,
                 probe=probe or self.config.flash.default_probe,
             )
+
+            # Collect serial output captured during flash
+            monitor_lines: list[str] = []
+            if resolved_port:
+                try:
+                    monitor_lines = context["adapter"].stop_background_monitor()
+                except Exception:
+                    pass
+
             if not flash_result.success:
+                diagnosis = self._diagnose_flash_failure(
+                    flash_result.stdout,
+                    flash_result.stderr,
+                )
+                if monitor_lines:
+                    diagnosis += "\n\n[Serial output captured during flash]\n" + "\n".join(monitor_lines[-20:])
                 return DebugLoopResult(
                     success=False,
                     stage="flash",
-                    diagnosis=self._diagnose_flash_failure(
-                        flash_result.stdout,
-                        flash_result.stderr,
-                    ),
+                    diagnosis=diagnosis,
                     build_result=build_result,
                     flash_result=flash_result,
                     snapshot_path=context["snapshot_path"],
                     log_dir=context["log_dir"],
                 )
 
-            monitor_result = self._run_monitor(
-                context,
-                port=port,
-                baudrate=baudrate or self.config.monitor.default_baudrate,
-                timeout=self.config.monitor.default_timeout,
-                lines=lines,
+            monitor_result = MonitorResult(
+                success=bool(monitor_lines),
+                port=resolved_port,
+                lines=monitor_lines,
+                error="" if monitor_lines else "No serial data captured during/after flash.",
+                port_released=True,
             )
 
             diagnosis = self._diagnose_monitor_result(monitor_result)
@@ -118,6 +141,7 @@ class DebugLoop:
         return {
             "project": project,
             "logger": logger,
+            "adapter": adapter,
             "snapshot_path": str(snapshot),
             "log_dir": str(project / "logs"),
             "build_system": BuildSystem(adapter),
@@ -471,5 +495,3 @@ class DebugLoop:
         if lowered:
             return "generic_monitor_failure"
         return "no_output"
-
-
