@@ -1,11 +1,211 @@
-from __future__ import annotations
 
-from dataclasses import field
-from typing import ClassVar
+# ── Lightweight peripheral existence per MCU family ──
+import re
+# Key: family prefix (matches _DEFINE_FAMILY_PREFIX keys). Value: lists of instance names.
+MCU_FAMILY_PERIPHERALS: dict[str, dict[str, list[str]]] = {
+    "STM32F0": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM6", "TIM7", "TIM14", "TIM15", "TIM16", "TIM17"],
+        "usart": ["USART1", "USART2"],
+        "i2c":   ["I2C1", "I2C2"],
+        "spi":   ["SPI1", "SPI2"],
+        "adc":   ["ADC1"],
+        "dac":   [],
+        "can":   [],
+        "sdio":  [],
+        "usb":   [],
+    },
+    "STM32F1": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4"],
+        "usart": ["USART1", "USART2", "USART3"],
+        "i2c":   ["I2C1", "I2C2"],
+        "spi":   ["SPI1", "SPI2"],
+        "adc":   ["ADC1", "ADC2"],
+        "dac":   [],
+        "can":   ["CAN1"],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+    "STM32F2": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM8", "TIM9", "TIM10", "TIM11", "TIM12", "TIM13", "TIM14"],
+        "usart": ["USART1", "USART2", "USART3", "UART4", "UART5", "USART6"],
+        "i2c":   ["I2C1", "I2C2", "I2C3"],
+        "spi":   ["SPI1", "SPI2", "SPI3"],
+        "adc":   ["ADC1", "ADC2", "ADC3"],
+        "dac":   ["DAC1"],
+        "can":   ["CAN1", "CAN2"],
+        "sdio":  ["SDIO"],
+        "usb":   ["USB_OTG_FS", "USB_OTG_HS"],
+    },
+    "STM32F3": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM6", "TIM7", "TIM8", "TIM15", "TIM16", "TIM17"],
+        "usart": ["USART1", "USART2", "USART3", "UART4"],
+        "i2c":   ["I2C1", "I2C2"],
+        "spi":   ["SPI1", "SPI2", "SPI3"],
+        "adc":   ["ADC1", "ADC2", "ADC3", "ADC4"],
+        "dac":   ["DAC1", "DAC2"],
+        "can":   ["CAN1"],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+    "STM32F4": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM8", "TIM9", "TIM10", "TIM11", "TIM12", "TIM13", "TIM14"],
+        "usart": ["USART1", "USART2", "USART3", "UART4", "UART5", "USART6"],
+        "i2c":   ["I2C1", "I2C2", "I2C3"],
+        "spi":   ["SPI1", "SPI2", "SPI3"],
+        "adc":   ["ADC1", "ADC2", "ADC3"],
+        "dac":   ["DAC1", "DAC2"],
+        "can":   ["CAN1", "CAN2"],
+        "sdio":  ["SDIO"],
+        "usb":   ["USB_OTG_FS", "USB_OTG_HS"],
+    },
+    "STM32F7": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM8", "TIM9", "TIM10", "TIM11", "TIM12", "TIM13", "TIM14"],
+        "usart": ["USART1", "USART2", "USART3", "UART4", "UART5", "USART6", "USART7", "UART8"],
+        "i2c":   ["I2C1", "I2C2", "I2C3", "I2C4"],
+        "spi":   ["SPI1", "SPI2", "SPI3", "SPI4", "SPI5", "SPI6"],
+        "adc":   ["ADC1", "ADC2", "ADC3"],
+        "dac":   ["DAC1", "DAC2"],
+        "can":   ["CAN1", "CAN2"],
+        "sdio":  ["SDIO"],
+        "usb":   ["USB_OTG_FS", "USB_OTG_HS"],
+    },
+    "STM32G0": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM6", "TIM7", "TIM14", "TIM15", "TIM16", "TIM17"],
+        "usart": ["USART1", "USART2", "USART3", "USART4", "USART5", "USART6"],
+        "i2c":   ["I2C1", "I2C2", "I2C3"],
+        "spi":   ["SPI1", "SPI2", "SPI3"],
+        "adc":   ["ADC1"],
+        "dac":   ["DAC1"],
+        "can":   ["CAN1", "CAN2"],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+    "STM32G4": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM8", "TIM15", "TIM16", "TIM17"],
+        "usart": ["USART1", "USART2", "USART3", "UART4", "UART5"],
+        "i2c":   ["I2C1", "I2C2", "I2C3", "I2C4"],
+        "spi":   ["SPI1", "SPI2", "SPI3", "SPI4"],
+        "adc":   ["ADC1", "ADC2", "ADC3", "ADC4", "ADC5"],
+        "dac":   ["DAC1", "DAC2", "DAC3", "DAC4"],
+        "can":   ["CAN1", "CAN2", "CAN3"],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+    "STM32H7": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM8", "TIM12", "TIM13", "TIM14", "TIM15", "TIM16", "TIM17"],
+        "usart": ["USART1", "USART2", "USART3", "UART4", "UART5", "USART6", "UART7", "UART8"],
+        "i2c":   ["I2C1", "I2C2", "I2C3", "I2C4"],
+        "spi":   ["SPI1", "SPI2", "SPI3", "SPI4", "SPI5", "SPI6"],
+        "adc":   ["ADC1", "ADC2", "ADC3"],
+        "dac":   ["DAC1", "DAC2"],
+        "can":   ["CAN1", "CAN2"],
+        "sdio":  ["SDIO"],
+        "usb":   ["USB_OTG_FS", "USB_OTG_HS"],
+    },
+    "STM32L0": {
+        "tim":   ["TIM2", "TIM3", "TIM6", "TIM7", "TIM21", "TIM22"],
+        "usart": ["USART1", "USART2"],
+        "i2c":   ["I2C1", "I2C2", "I2C3"],
+        "spi":   ["SPI1", "SPI2"],
+        "adc":   ["ADC1"],
+        "dac":   ["DAC1"],
+        "can":   [],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+    "STM32L1": {
+        "tim":   ["TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM9", "TIM10", "TIM11"],
+        "usart": ["USART1", "USART2"],
+        "i2c":   ["I2C1", "I2C2"],
+        "spi":   ["SPI1", "SPI2"],
+        "adc":   ["ADC1"],
+        "dac":   ["DAC1", "DAC2"],
+        "can":   [],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+    "STM32L4": {
+        "tim":   ["TIM1", "TIM2", "TIM3", "TIM4", "TIM5", "TIM6", "TIM7", "TIM8", "TIM15", "TIM16", "TIM17"],
+        "usart": ["USART1", "USART2", "USART3", "UART4", "UART5"],
+        "i2c":   ["I2C1", "I2C2", "I2C3", "I2C4"],
+        "spi":   ["SPI1", "SPI2", "SPI3"],
+        "adc":   ["ADC1", "ADC2", "ADC3"],
+        "dac":   ["DAC1", "DAC2"],
+        "can":   ["CAN1", "CAN2"],
+        "sdio":  ["SDIO"],
+        "usb":   ["USB_OTG_FS"],
+    },
+    "STM32WB": {
+        "tim":   ["TIM1", "TIM2", "TIM16", "TIM17"],
+        "usart": ["USART1"],
+        "i2c":   ["I2C1", "I2C3"],
+        "spi":   ["SPI1", "SPI2"],
+        "adc":   ["ADC1"],
+        "dac":   [],
+        "can":   [],
+        "sdio":  [],
+        "usb":   ["USB"],
+    },
+}
 
-
-def _format_pin_map(pins: dict[str, str]) -> str:
-    return ", ".join(f"{k}={v}" for k, v in pins.items())
+# ── Updated clock data for all families ──
+MCU_FAMILY_CLOCKS: dict[str, dict] = {
+    "F1": {
+        "hsi_hz": 8_000_000,
+        "hse_typical_hz": 8_000_000,
+        "max_pll_out_hz": 72_000_000,
+        "apb1_max_hz": 36_000_000,
+        "apb2_max_hz": 72_000_000,
+        "note": "APB1 max 36 MHz. APB1 timer clocks 2x when prescaler != 1.",
+    },
+    "F4": {
+        "hsi_hz": 16_000_000,
+        "hse_typical_hz": 8_000_000,
+        "max_pll_out_hz": 168_000_000,
+        "apb1_max_hz": 42_000_000,
+        "apb2_max_hz": 84_000_000,
+        "note": "Max SYSCLK 168 MHz. APB1 max 42 MHz, APB2 max 84 MHz.",
+    },
+    "F7": {
+        "hsi_hz": 16_000_000,
+        "hse_typical_hz": 25_000_000,
+        "max_pll_out_hz": 216_000_000,
+        "apb1_max_hz": 54_000_000,
+        "apb2_max_hz": 108_000_000,
+        "note": "Max SYSCLK 216 MHz. APB1 max 54 MHz, APB2 max 108 MHz.",
+    },
+    "H7": {
+        "hsi_hz": 64_000_000,
+        "hse_typical_hz": 25_000_000,
+        "max_pll_out_hz": 480_000_000,
+        "apb1_max_hz": 120_000_000,
+        "apb2_max_hz": 120_000_000,
+        "note": "Max SYSCLK 480 MHz. Dual-core (M7+M4) on some models.",
+    },
+    "G0": {
+        "hsi_hz": 16_000_000,
+        "hse_typical_hz": 8_000_000,
+        "max_pll_out_hz": 64_000_000,
+        "apb_max_hz": 64_000_000,
+        "note": "Max SYSCLK 64 MHz. Single APB bus.",
+    },
+    "G4": {
+        "hsi_hz": 16_000_000,
+        "hse_typical_hz": 8_000_000,
+        "max_pll_out_hz": 170_000_000,
+        "apb1_max_hz": 85_000_000,
+        "apb2_max_hz": 85_000_000,
+        "note": "Max SYSCLK 170 MHz.",
+    },
+    "L4": {
+        "hsi_hz": 16_000_000,
+        "hse_typical_hz": 8_000_000,
+        "max_pll_out_hz": 80_000_000,
+        "apb1_max_hz": 40_000_000,
+        "apb2_max_hz": 40_000_000,
+        "note": "Max SYSCLK 80 MHz. Low-power optimized.",
+    },
+}
 
 
 MCU_PIN_MAP: dict[str, dict] = {
@@ -72,6 +272,106 @@ def get_family_clock_info(mcu_name: str) -> dict | None:
             return MCU_FAMILY_CLOCKS[key]
     return None
 
+
+
+def check_peripheral_exists(mcu_name: str, peripheral: str) -> tuple[bool, str]:
+    """Check if a peripheral instance exists on the given MCU.
+    Returns (exists: bool, message: str).
+    """
+    normalized_mcu = mcu_name.strip().upper().replace(" ", "").replace("_", "")
+    normalized_periph = peripheral.strip().upper().replace(" ", "")
+
+    # Find family
+    family = None
+    for prefix in ["STM32H7", "STM32F7", "STM32F4", "STM32F3", "STM32F2", "STM32F1",
+                   "STM32F0", "STM32G4", "STM32G0", "STM32L4", "STM32L1", "STM32L0",
+                   "STM32WB"]:
+        if normalized_mcu.startswith(prefix):
+            family = prefix
+            break
+
+    if family is None or family not in MCU_FAMILY_PERIPHERALS:
+        return True, f"No peripheral data for {mcu_name} — cannot verify, proceed with caution."
+
+    periphs = MCU_FAMILY_PERIPHERALS[family]
+
+    # Determine category
+    cat = None
+    if re.search(r'^TIM\d+$', normalized_periph, re.IGNORECASE):
+        cat = "tim"
+    elif re.search(r'^(USART|UART)\d+$', normalized_periph, re.IGNORECASE):
+        cat = "usart"
+    elif re.search(r'^I2C\d+$', normalized_periph, re.IGNORECASE):
+        cat = "i2c"
+    elif re.search(r'^SPI\d+$', normalized_periph, re.IGNORECASE):
+        cat = "spi"
+    elif re.search(r'^ADC\d+$', normalized_periph, re.IGNORECASE):
+        cat = "adc"
+    elif re.search(r'^DAC\d+$', normalized_periph, re.IGNORECASE):
+        cat = "dac"
+    elif re.search(r'^CAN\d+$', normalized_periph, re.IGNORECASE):
+        cat = "can"
+    elif normalized_periph in ("SDIO",):
+        cat = "sdio"
+    elif "USB" in normalized_periph:
+        cat = "usb"
+    else:
+        return True, f"Unknown peripheral category for {peripheral} — cannot verify."
+
+    if cat is None or cat not in periphs:
+        return True, f"Unknown peripheral category — cannot verify."
+
+    available = periphs[cat]
+    if not available:
+        return False, f"{mcu_name} ({family}) does NOT have {cat.upper()} peripherals. {peripheral} is unavailable."
+
+    if normalized_periph.upper() not in [p.upper() for p in available]:
+        available_str = ", ".join(available)
+        return False, f"{peripheral} does NOT exist on {mcu_name} ({family}). Available {cat.upper()}: {available_str}"
+
+    return True, f"{peripheral} exists on {mcu_name} ({family})."
+
+
+def format_mcu_capability_summary(mcu_name: str) -> str:
+    """Generate a concise capability summary for prompt injection.
+    Uses progressive disclosure: only shows data for the relevant MCU family.
+    """
+    normalized_mcu = mcu_name.strip().upper().replace(" ", "").replace("_", "")
+
+    # Find family
+    family = None
+    for prefix in ["STM32H7", "STM32F7", "STM32F4", "STM32F3", "STM32F2", "STM32F1",
+                   "STM32F0", "STM32G4", "STM32G0", "STM32L4", "STM32L1", "STM32L0",
+                   "STM32WB"]:
+        if normalized_mcu.startswith(prefix):
+            family = prefix
+            break
+
+    if family is None or family not in MCU_FAMILY_PERIPHERALS:
+        return (
+            f"WARNING: No peripheral reference data for {mcu_name}. "
+            "Before writing code that uses any peripheral, verify it exists on this MCU. "
+            "Do NOT assume peripheral availability."
+        )
+
+    periphs = MCU_FAMILY_PERIPHERALS[family]
+    clocks = MCU_FAMILY_CLOCKS.get(family.replace("STM32", ""), {})
+
+    lines = [f"### {family} MCU Capability Reference"]
+    if clocks:
+        max_sysclk = clocks.get("max_pll_out_hz", 0) // 1_000_000
+        lines.append(f"- Max SYSCLK: {max_sysclk} MHz, HSI: {clocks.get('hsi_hz', 0)//1_000_000} MHz")
+
+    for cat, instances in periphs.items():
+        cat_upper = cat.upper()
+        if instances:
+            lines.append(f"- {cat_upper}: {', '.join(instances)}")
+        else:
+            lines.append(f"- {cat_upper}: NONE (not available on this family)")
+
+    lines.append("- Before writing code using any peripheral, verify the instance name is in the list above.")
+    lines.append("- NEVER write code targeting a peripheral NOT listed above.")
+    return "\n".join(lines)
 
 def format_mcu_pin_reference(mcu_name: str) -> str:
     data = get_mcu_pin_map(mcu_name)

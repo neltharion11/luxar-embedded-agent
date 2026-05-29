@@ -68,6 +68,7 @@ class TaskRouter:
         dry_run: bool,
         plan_only: bool,
     ) -> TaskIntent:
+        # 1. Strong project execution signals → forge
         if self._looks_like_project_execution_request(task):
             return self._build_intent(
                 intent_type="forge_project",
@@ -77,25 +78,10 @@ class TaskRouter:
                 confidence=0.9,
                 reason="Task combines project implementation intent with concrete engineering/code-generation signals.",
             )
-        if any(token in task for token in EXPLAIN_HINT_TOKENS):
-            return self._build_intent(
-                intent_type="explain",
-                execution_mode="explain",
-                required_capabilities=["document_analysis"],
-                recommended_workflow="explain",
-                confidence=0.85 if has_docs else 0.72,
-                reason="Task is asking for explanation or engineering guidance rather than direct execution.",
-            )
-        if any(token in task for token in ("status", "toolchain", "git", "driver library", "skill", "workspace")):
-            return self._build_intent(
-                intent_type="project_status",
-                execution_mode="explain",
-                required_capabilities=["status"],
-                recommended_workflow="status",
-                confidence=0.9,
-                reason="Task asks for project or environment status information.",
-            )
-        if any(token in task for token in ("build", "flash", "monitor", "debug", "编译", "烧录", "串口", "重建", "rebuild")):
+
+        # 2. Debug/build/flash/monitor — checked BEFORE explain to avoid misrouting
+        debug_tokens = ("build", "flash", "monitor", "debug", "compile", "编译", "烧录", "串口", "重建", "rebuild")
+        if any(token in task for token in debug_tokens):
             return self._build_intent(
                 intent_type="debug_project",
                 execution_mode="execute" if has_project and not dry_run else "plan",
@@ -104,6 +90,8 @@ class TaskRouter:
                 confidence=0.84,
                 reason="Task is centered on build/flash/monitor/debug activity.",
             )
+
+        # 3. Review/fix — also before explain
         if any(token in task for token in ("review", "fix", "lint", "warning", "error in file", "修复", "审查")):
             return self._build_intent(
                 intent_type="review_or_fix",
@@ -113,6 +101,42 @@ class TaskRouter:
                 confidence=0.82,
                 reason="Task asks to review or repair source code.",
             )
+
+        # 4. Explain — only when there are NO debug/error keywords (compound rule)
+        explain_tokens = ("explain", "what is", "how does", "how do", "why", "tell me", "接线", "引脚", "协议", "收发", "解释")
+        error_tokens = ("error", "fail", "wrong", "bug", "错误", "失败", "崩溃", "不工作")
+        if any(token in task for token in explain_tokens) and not any(token in task for token in error_tokens):
+            return self._build_intent(
+                intent_type="explain",
+                execution_mode="explain",
+                required_capabilities=["document_analysis"],
+                recommended_workflow="explain",
+                confidence=0.85 if has_docs else 0.72,
+                reason="Task is asking for explanation or engineering guidance without error/debug context.",
+            )
+        # If explain + error keywords → route to debug (compound fallback)
+        if any(token in task for token in explain_tokens):
+            return self._build_intent(
+                intent_type="debug_project",
+                execution_mode="execute" if has_project and not dry_run else "plan",
+                required_capabilities=["build", "flash", "monitor", "debug"],
+                recommended_workflow="workflow_debug",
+                confidence=0.78,
+                reason="Task contains explain + error/failure keywords — routed to debug for diagnostic context.",
+            )
+
+        # 5. Status queries
+        if any(token in task for token in ("status", "toolchain", "git", "driver library", "skill", "workspace")):
+            return self._build_intent(
+                intent_type="project_status",
+                execution_mode="explain",
+                required_capabilities=["status"],
+                recommended_workflow="status",
+                confidence=0.9,
+                reason="Task asks for project or environment status information.",
+            )
+
+        # 6. Driver-specific requests (not project-level)
         if any(token in task for token in ("driver", "protocol", "寄存器", "驱动")) and not any(token in task for token in ("project", "工程", "assemble", "forge")):
             return self._build_intent(
                 intent_type="generate_driver",
@@ -122,6 +146,8 @@ class TaskRouter:
                 confidence=0.78,
                 reason="Task is primarily about a device driver or protocol implementation.",
             )
+
+        # 7. General project creation signals
         if has_docs or any(token in task for token in (
             "generate project", "create project", "new project", "工程", "forge",
             "blink", "blinking", "led", "gpio", "button", "uart", "sensor",
@@ -136,7 +162,7 @@ class TaskRouter:
                 confidence=0.88,
                 reason="Task describes a project-level outcome that fits the forge workflow.",
             )
-        # Default: if task mentions project/app, route to forge; otherwise explain
+
         if any(token in task for token in ("project", "app", "application", "工程", "程序")):
             return self._build_intent(
                 intent_type="forge_project",
@@ -146,6 +172,8 @@ class TaskRouter:
                 confidence=0.72,
                 reason="Task describes a project-level outcome that fits the forge workflow.",
             )
+
+        # 8. Default: explain
         return self._build_intent(
             intent_type="explain",
             execution_mode="explain",
