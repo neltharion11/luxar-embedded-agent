@@ -248,7 +248,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "workspace_list_projects",
-            "description": "List all existing projects in the workspace with their MCU, platform, and runtime info.",
+            "description": "List all existing projects in the workspace with their MCU, platform, and system info.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -259,14 +259,14 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "workspace_create_project",
-            "description": "Create a new project in the workspace with specified MCU, platform, and runtime. stm32cubemx creates an EMPTY project (no code) — user must use STM32CubeMX to generate code afterwards. stm32firmware auto-creates a ready-to-build template. For cubemx: do NOT call skill_execute or workspace_build afterwards.",
+            "description": "Create a new project in the workspace with specified MCU, platform, and system. stm32cubemx creates only App/ and BSP/ — user must use STM32CubeMX to generate Core/Drivers/CMake/toolchain files afterwards. stm32firmware auto-creates a ready-to-build template. For cubemx: do NOT call workspace_build before CubeMX generates code.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Project name"},
                     "mcu": {"type": "string", "description": "Target MCU (e.g. STM32F103C8)"},
                     "platform": {"type": "string", "description": "Platform: stm32cubemx or stm32firmware"},
-                    "runtime": {"type": "string", "description": "Runtime: baremetal or freertos"},
+                    "runtime": {"type": "string", "description": "System: baremetal or freertos"},
                     "firmware_package": {"type": "string", "description": "Firmware package name"},
                 },
                 "required": ["name"],
@@ -358,12 +358,12 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "workspace_shell",
-            "description": "Execute a safe shell command in the project directory to read or search files. Use cat/type to read files, rg/grep to search, ls/dir to list, find to locate files.",
+            "description": "Execute a read-only shell command in the project directory to inspect files. Use cat/type/head/tail to read files, rg/grep/findstr to search, ls/dir/find to list or locate files.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Project name"},
-                    "command": {"type": "string", "description": "Shell command (cat, type, rg, grep, head, tail, ls, dir, find, wc, mkdir, rmdir, copy, move, del, echo)"}
+                    "command": {"type": "string", "description": "Read-only shell command (cat, type, rg, grep, head, tail, wc, find, ls, dir, findstr)"}
                 },
                 "required": ["project", "command"]
             }

@@ -421,7 +421,7 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
       <div class="form-group"><label>Project Name</label><input id="npm-name" /></div>
       <div class="form-group"><label>MCU</label><input id="npm-mcu" placeholder="STM32F103C8T6" /></div>
       <div class="form-group"><label>Platform</label><select id="npm-platform"><option value="stm32cubemx">stm32cubemx (CubeMX)</option><option value="stm32firmware">stm32firmware (bare)</option></select></div>
-      <div class="form-group"><label>Runtime</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
+      <div class="form-group"><label>System</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
       <div class="form-group"><label>FW Package</label><select id="npm-fw"><option value="STM32Cube_FW_F1">STM32Cube_FW_F1</option></select></div>
       <div id="cubemx-platform-hint" style="display:none;font-size:12px;color:#b45309;background:#fffbeb;padding:8px 12px;border-radius:8px;margin-top:4px" data-i18n="cubemx.platformHint">CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.</div>
     </div>
@@ -509,7 +509,7 @@ zh['cubemx.guideStep1']='打开 STM32CubeMX，选择 MCU 型号并配置外设';
 zh['cubemx.guideStep2']='点击 GENERATE CODE，输出路径选择本项目目录';
 zh['cubemx.guideDone']='已生成代码';
 zh['cubemx.awaitingGenerate']='等待 CubeMX 生成代码';
-zh['cubemx.platformHint']='CubeMX 平台将创建空项目，请后续使用 STM32CubeMX 生成代码';
+zh['cubemx.platformHint']='CubeMX 平台只创建 App/ 和 BSP/，请后续使用 STM32CubeMX 生成 Core/Drivers/CMake 等代码';
 
 zh['chat.activeProject']='当前项目：';
 zh['chat.welcomeTitle']='欢迎使用 Luxar';
@@ -522,7 +522,7 @@ zh['landing.aiHint']='进入聊天引导后，Luxar 会发送新建项目所需�
 zh['landing.aiJump']='进入聊天引导';
 zh['chat.globalWelcome']='从这里开始创建或打开项目。创建项目时，Luxar 会在聊天里一步步引导你补全项目所需信息。';
 zh['chat.startPage']='启动页';
-zh['chat.newProjectTemplate']='我们来一起创建一个新项目。请尽量按下面模板回复，我会根据这些信息帮你初始化工程，并在创建完成后自动切换到新项目对话窗口。\n\n项目创建信息模板：\n- 项目名：\n- MCU：\n- 平台：`stm32cubemx` 或 `stm32firmware`\n- 运行时：`baremetal` 或 `freertos`\n- 固件包：例如 `STM32Cube_FW_F1`\n- 目标功能：\n- 外设/通信：\n- 参考文档：如果有，请说明你会附加哪些资料\n\n示例：\n- 项目名：EnvMonitor\n- MCU：STM32F103C8T6\n- 平台：stm32cubemx\n- 运行时：baremetal\n- 固件包：STM32Cube_FW_F1\n- 目标功能：每 1 秒采集 AHT20 并通过 UART 打印温湿度\n- 外设/通信：I2C1, USART1, LED\n- 参考文档：AHT20 数据手册';
+zh['chat.newProjectTemplate']='我们来一起创建一个新项目。请尽量按下面模板回复，我会根据这些信息帮你初始化工程，并在创建完成后自动切换到新项目对话窗口。\n\n项目创建信息模板：\n- 项目名：\n- MCU：\n- 平台：`stm32cubemx` 或 `stm32firmware`\n- 系统：`baremetal` 或 `freertos`\n- 固件包：例如 `STM32Cube_FW_F1`\n- 目标功能：\n- 外设/通信：\n- 参考文档：如果有，请说明你会附加哪些资料\n\n示例：\n- 项目名：EnvMonitor\n- MCU：STM32F103C8T6\n- 平台：stm32cubemx\n- 系统：baremetal\n- 固件包：STM32Cube_FW_F1\n- 目标功能：每 1 秒采集 AHT20 并通过 UART 打印温湿度\n- 外设/通信：I2C1, USART1, LED\n- 参考文档：AHT20 数据手册';
 zh['chat.inputPlaceholder']='输入消息... /clear=清空上下文 (Enter=发送, Shift+Enter=换行)';
 zh['chat.sendBtn']='发送';
 zh['chat.selectProject']='请从侧边栏选择一个项目。';
@@ -547,7 +547,7 @@ zh['dashboard.configTitle']='配置';
 zh['dashboard.configProvider']='提供方';
 zh['dashboard.configModel']='模型';
 zh['dashboard.configPlatform']='平台';
-zh['dashboard.configRuntime']='运行时';
+zh['dashboard.configRuntime']='系统';
 zh['dashboard.configWorkspace']='工作空间';
 zh['dashboard.recentProjects']='项目';
 zh['dashboard.loadingProjects']='加载中...';
@@ -622,7 +622,7 @@ en['cubemx.guideStep1']='Open STM32CubeMX, select MCU model and configure periph
 en['cubemx.guideStep2']='Click GENERATE CODE, set output path to this project directory';
 en['cubemx.guideDone']='Code Generated';
 en['cubemx.awaitingGenerate']='Awaiting CubeMX code generation';
-en['cubemx.platformHint']='CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.';
+en['cubemx.platformHint']='CubeMX platform creates only App/ and BSP/. Please use STM32CubeMX to generate Core/Drivers/CMake and toolchain files afterwards.';
 
 en['chat.activeProject']='Active Project:';
 en['chat.welcomeTitle']='Welcome to Luxar';
@@ -635,7 +635,7 @@ en['landing.aiHint']='Luxar will open a guided chat and send you the project cre
 en['landing.aiJump']='Open guided chat';
 en['chat.globalWelcome']='Start here to create or open a project. When you choose AI setup, Luxar will guide project creation step by step in chat.';
 en['chat.startPage']='Start Page';
-en['chat.newProjectTemplate']='Let us create a new project together. Please reply using this template as much as possible. I will initialize the project from your answers and automatically switch you into the new project conversation when creation is complete.\n\nProject creation template:\n- Project name:\n- MCU:\n- Platform: `stm32cubemx` or `stm32firmware`\n- Runtime: `baremetal` or `freertos`\n- Firmware package: for example `STM32Cube_FW_F1`\n- Target behavior:\n- Peripherals / buses:\n- Reference docs: mention any files you plan to attach\n\nExample:\n- Project name: EnvMonitor\n- MCU: STM32F103C8T6\n- Platform: stm32cubemx\n- Runtime: baremetal\n- Firmware package: STM32Cube_FW_F1\n- Target behavior: sample AHT20 every second and print temperature and humidity over UART\n- Peripherals / buses: I2C1, USART1, LED\n- Reference docs: AHT20 datasheet';
+en['chat.newProjectTemplate']='Let us create a new project together. Please reply using this template as much as possible. I will initialize the project from your answers and automatically switch you into the new project conversation when creation is complete.\n\nProject creation template:\n- Project name:\n- MCU:\n- Platform: `stm32cubemx` or `stm32firmware`\n- System: `baremetal` or `freertos`\n- Firmware package: for example `STM32Cube_FW_F1`\n- Target behavior:\n- Peripherals / buses:\n- Reference docs: mention any files you plan to attach\n\nExample:\n- Project name: EnvMonitor\n- MCU: STM32F103C8T6\n- Platform: stm32cubemx\n- System: baremetal\n- Firmware package: STM32Cube_FW_F1\n- Target behavior: sample AHT20 every second and print temperature and humidity over UART\n- Peripherals / buses: I2C1, USART1, LED\n- Reference docs: AHT20 datasheet';
 en['chat.inputPlaceholder']='Type... /clear=reset context (Enter=send, Shift+Enter=newline)';
 en['chat.sendBtn']='Send';
 en['chat.selectProject']='Please select a project from the sidebar.';
@@ -660,7 +660,7 @@ en['dashboard.configTitle']='Configuration';
 en['dashboard.configProvider']='Provider';
 en['dashboard.configModel']='Model';
 en['dashboard.configPlatform']='Platform';
-en['dashboard.configRuntime']='Runtime';
+en['dashboard.configRuntime']='System';
 en['dashboard.configWorkspace']='Workspace';
 en['dashboard.recentProjects']='Projects';
 en['dashboard.loadingProjects']='Loading...';

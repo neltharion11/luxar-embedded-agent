@@ -367,14 +367,14 @@ def workspace_write_file(project: str, path: str, content: str) -> dict:
     if not project_dir.exists():
         return {"success": False, "error": f"Project '{project}' not found"}
     full_path = (project_dir / path).resolve()
-    if not str(full_path).startswith(str(project_dir.resolve())):
+    if not full_path.is_relative_to(project_dir.resolve()):
         return {"success": False, "error": "Access denied: path outside workspace"}
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return {"success": True, "path": str(full_path), "size": len(content)}
 
 # -- Safe shell commands --
-_ALLOWED_COMMANDS = frozenset({"cat", "grep", "rg", "head", "tail", "wc", "find", "ls", "dir", "type", "echo", "mkdir", "md", "rmdir", "rd", "copy", "move", "del", "cp", "mv", "rm", "findstr", "xcopy"})
+_ALLOWED_COMMANDS = frozenset({"cat", "grep", "rg", "head", "tail", "wc", "find", "ls", "dir", "type", "findstr"})
 _FORBIDDEN_PATTERNS = (";", "&&", "$(", "`", "&")
 _SHELL_TIMEOUT_SEC = 10
 _SHELL_MAX_OUTPUT = 16000

@@ -299,15 +299,18 @@ def format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool
     if name == "workspace_build":
         if is_ok:
             return True, "构建成功"
+        errors = data.get('errors') or []
+        if errors:
+            return False, f"构建失败: {len(errors)} 个错误"
         stderr = data.get('stderr') or ''
         stdout = data.get('stdout') or ''
         combined = (stderr + '\n' + stdout).strip()
         if combined:
+            error_lines = [line for line in combined.splitlines() if "error" in line.lower()]
+            if error_lines:
+                return False, f"构建失败: {len(error_lines)} 个错误"
             output = combined[-2000:] if len(combined) > 2000 else combined
             return False, '构建失败，提示内容：\n' + output
-        errors = data.get('errors') or []
-        if errors:
-            return False, '构建失败: ' + '; '.join(str(e)[:200] for e in errors[:10])
         error_msg = data.get('error') or data.get('message', '') or '编译出错'
         return False, '构建失败： ' + str(error_msg)[:500]
     if name == "workspace_flash":

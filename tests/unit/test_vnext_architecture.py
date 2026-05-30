@@ -160,6 +160,9 @@ class VNextArchitectureGuardrailTests(unittest.TestCase):
             ("GET", "/api/project-context/{name}"),
             ("POST", "/api/generate-driver"),
             ("POST", "/api/generate-driver-loop"),
+            ("POST", "/api/projects/import"),
+            ("GET", "/api/drivers"),
+            ("GET", "/api/pick-files"),
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("luxar.server.app.ConfigManager") as cm_cls:

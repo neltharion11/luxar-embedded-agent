@@ -183,7 +183,7 @@ async def run_agent_loop(
                 )
 
                 # If tool execution raised, stop the loop
-                if isinstance(result, type("_", (), {})) and hasattr(result, "ok") and not result.ok:
+                if hasattr(result, "ok") and not result.ok and getattr(result, "error", ""):
                     return {
                         "content": str(getattr(result, "error", "Tool execution failed")),
                         "reasoning_content": "",

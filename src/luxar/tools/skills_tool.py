@@ -27,6 +27,32 @@ def _manager() -> SkillManagerVNext:
     return SkillManagerVNext(workspace.skills_root)
 
 
+_TEXT_TEMPLATE_SUFFIXES = {
+    ".c",
+    ".cmake",
+    ".h",
+    ".json",
+    ".ld",
+    ".md",
+    ".s",
+    ".txt",
+}
+
+
+def _replace_project_placeholders(project_dir: Path, project: str) -> None:
+    for path in project_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name == "CMakeLists.txt" or path.suffix.lower() in _TEXT_TEMPLATE_SUFFIXES:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            updated = text.replace("{PROJECT_NAME}", project)
+            if updated != text:
+                path.write_text(updated, encoding="utf-8")
+
+
 def skills_list(category: str | None = None) -> dict[str, object]:
     return {"success": True, "skills": _manager().list_skills(category=category)}
 
@@ -92,23 +118,29 @@ def skill_execute(name: str, category: str = "", project: str = "", port: str = 
         tpl_dst = cm.workspace_root() / project
         if tpl_src.exists():
             shutil.copytree(tpl_src, tpl_dst, dirs_exist_ok=True)
-            # Replace {PROJECT_NAME} placeholder in CMakeLists.txt
-            cmake_file = tpl_dst / "CMakeLists.txt"
-            if cmake_file.exists():
-                cm_text = cmake_file.read_text(encoding="utf-8")
-                cm_text = cm_text.replace("{PROJECT_NAME}", project)
-                cmake_file.write_text(cm_text, encoding="utf-8")
+            _replace_project_placeholders(tpl_dst, project)
 
-            # Write .agent_project.json so WebUI sidebar discovers this project
+            # Write .agent_project.json so WebUI sidebar discovers this project.
+            # Preserve an existing project runtime/platform when this helper is
+            # invoked after ProjectManager.create_project().
             agent_file = tpl_dst / ".agent_project.json"
             import json as _json2
+            existing_meta = {}
+            if agent_file.exists():
+                try:
+                    existing_meta = _json2.loads(agent_file.read_text(encoding="utf-8"))
+                except Exception:
+                    existing_meta = {}
             agent_file.write_text(_json2.dumps({
                 "name": project,
-                "mcu": "STM32F103C8",
-                "platform": "baremetal",
-                "runtime": "baremetal",
-                "project_mode": "firmware",
-                "firmware_package": "STM32Cube_FW_F1_V1.8.7"
+                "mcu": existing_meta.get("mcu", "STM32F103C8"),
+                "platform": existing_meta.get("platform", "stm32firmware"),
+                "runtime": existing_meta.get("runtime", "baremetal"),
+                "project_mode": existing_meta.get(
+                    "project_mode",
+                    "cubemx" if existing_meta.get("platform") == "stm32cubemx" else "firmware",
+                ),
+                "firmware_package": existing_meta.get("firmware_package", "STM32Cube_FW_F1_V1.8.7")
             }, indent=2), encoding="utf-8")
             # Link HAL/CMSIS from firmware_library if available
             from luxar.core.config_manager import ConfigManager
@@ -281,30 +313,37 @@ def skill_execute(name: str, category: str = "", project: str = "", port: str = 
     # ── Skill routing: init_project_framework -> picks correct template ──
     if normalized == "init_project_framework" and project:
         import json as _json, shutil
+        from luxar.core.config_manager import ConfigManager
+        cm = ConfigManager()
+        project_dir = cm.workspace_root() / project
         meta_file = project_dir / ".agent_project.json"
         platform = "stm32cubemx"
         if meta_file.exists():
             try:
                 meta = _json.loads(meta_file.read_text(encoding="utf-8"))
                 platform = meta.get("platform", "stm32cubemx")
+                runtime = meta.get("runtime", "baremetal")
             except Exception:
+                runtime = "baremetal"
                 pass
-        # Determine template path based on platform
-        from luxar.core.config_manager import ConfigManager
-        cm = ConfigManager()
-        tpl_name = "cubemx" if platform == "stm32cubemx" else "baremetal"
+        else:
+            runtime = "baremetal"
+        # Determine template path based on platform/runtime
+        if platform == "stm32cubemx":
+            tpl_name = "cubemx"
+        elif runtime == "freertos":
+            tpl_name = "freertos"
+        else:
+            tpl_name = "baremetal"
         tpl_src = cm.project_root() / "workspace" / "templates" / tpl_name
         tpl_dst = cm.workspace_root() / project
         if not tpl_src.exists():
             return {"success": False, "error": f"Template not found: {tpl_src}"}
         shutil.copytree(tpl_src, tpl_dst, dirs_exist_ok=True)
-        # Replace {PROJECT_NAME} placeholder
+        _replace_project_placeholders(tpl_dst, project)
         cmake_file = tpl_dst / "CMakeLists.txt"
-        if cmake_file.exists():
-            cm_text = cmake_file.read_text(encoding="utf-8")
-            cm_text = cm_text.replace("{PROJECT_NAME}", project)
-            cmake_file.write_text(cm_text, encoding="utf-8")
-        # Copy HAL/CMSIS if baremetal
+        # Copy HAL/CMSIS if baremetal. FreeRTOS template references
+        # workspace/firmware_library directly to avoid copying middleware.
         if tpl_name == "baremetal":
             fl = cm.project_root() / "workspace" / "firmware_library" / "stm32" / "STM32Cube_FW_F1_V1.8.7"
             hal_src = fl / "Drivers" / "STM32F1xx_HAL_Driver"

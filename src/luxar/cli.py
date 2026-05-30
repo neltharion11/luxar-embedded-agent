@@ -54,8 +54,6 @@ def main() -> None:
 @click.option("--no-reload", is_flag=True, default=False, help="Disable auto-reload")
 def start_command(host: str, port: int, no_reload: bool) -> None:
     """Start the LUXAR web UI and API server."""
-    import os
-    os.environ.setdefault("LUXAR_ENABLE_LEGACY_HTTP_SURFACE", "1")
     import uvicorn
     click.echo(f"LUXAR server starting on http://{host}:{port}")
 

@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
@@ -16,27 +17,41 @@ set(FW_LIB "C:/Users/Gugugu/Documents/Codex/LUXAR/workspace/firmware_library/stm
 set(HAL_DRIVER "${FW_LIB}/Drivers/STM32F1xx_HAL_Driver")
 set(CMSIS_DEVICE "${FW_LIB}/Drivers/CMSIS/Device/ST/STM32F1xx")
 set(CMSIS_CORE "${FW_LIB}/Drivers/CMSIS/Include")
+set(FREERTOS_ROOT "${FW_LIB}/Middlewares/Third_Party/FreeRTOS/Source")
 
 add_executable(${CMAKE_PROJECT_NAME})
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/main.c
-    Core/Src/system_stm32f1xx.c
+    Core/Src/freertos.c
     Core/Src/stm32f1xx_it.c
     Core/Src/stm32f1xx_hal_msp.c
+    Core/Src/system_stm32f1xx.c
+    Core/Src/syscalls.c
+    Core/Src/sysmem.c
     App/Src/app_main.c
     startup_stm32f103xb.s
     ${HAL_DRIVER}/Src/stm32f1xx_hal.c
     ${HAL_DRIVER}/Src/stm32f1xx_hal_cortex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_rcc.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_rcc_ex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_gpio.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_gpio_ex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_flash.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_flash_ex.c
     ${HAL_DRIVER}/Src/stm32f1xx_hal_dma.c
     ${HAL_DRIVER}/Src/stm32f1xx_hal_exti.c
+    ${HAL_DRIVER}/Src/stm32f1xx_hal_flash.c
+    ${HAL_DRIVER}/Src/stm32f1xx_hal_flash_ex.c
+    ${HAL_DRIVER}/Src/stm32f1xx_hal_gpio.c
+    ${HAL_DRIVER}/Src/stm32f1xx_hal_gpio_ex.c
     ${HAL_DRIVER}/Src/stm32f1xx_hal_pwr.c
+    ${HAL_DRIVER}/Src/stm32f1xx_hal_rcc.c
+    ${HAL_DRIVER}/Src/stm32f1xx_hal_rcc_ex.c
+    ${FREERTOS_ROOT}/croutine.c
+    ${FREERTOS_ROOT}/event_groups.c
+    ${FREERTOS_ROOT}/list.c
+    ${FREERTOS_ROOT}/queue.c
+    ${FREERTOS_ROOT}/stream_buffer.c
+    ${FREERTOS_ROOT}/tasks.c
+    ${FREERTOS_ROOT}/timers.c
+    ${FREERTOS_ROOT}/CMSIS_RTOS_V2/cmsis_os2.c
+    ${FREERTOS_ROOT}/portable/GCC/ARM_CM3/port.c
+    ${FREERTOS_ROOT}/portable/MemMang/heap_4.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -46,9 +61,17 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${HAL_DRIVER}/Inc/Legacy
     ${CMSIS_DEVICE}/Include
     ${CMSIS_CORE}
+    ${FREERTOS_ROOT}/include
+    ${FREERTOS_ROOT}/CMSIS_RTOS_V2
+    ${FREERTOS_ROOT}/portable/GCC/ARM_CM3
 )
 
-set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/link.ld" CACHE FILEPATH "Linker script")
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    STM32F103xB
+    USE_HAL_DRIVER
+)
+
+set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32F103XX_FLASH.ld" CACHE FILEPATH "Linker script")
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
     -T${LINKER_SCRIPT}
     --specs=nano.specs
@@ -56,11 +79,6 @@ target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
     -Wl,-Map=${CMAKE_PROJECT_NAME}.map
     -Wl,--gc-sections
     -Wl,--print-memory-usage
-)
-
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    STM32F103xB
-    USE_HAL_DRIVER
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE

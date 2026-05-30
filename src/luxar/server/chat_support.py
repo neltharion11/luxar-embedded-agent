@@ -53,6 +53,7 @@ When the Current Project section shows Platform: stm32cubemx, you MUST follow th
 ### Read-Only (NEVER write)
 - Core/Inc/*.h and Core/Src/*.c (except USER CODE zones in main.c/stm32f1xx_it.c) -- fully auto-generated
 - Drivers/ -- managed by firmware package
+- CMakePresets.json, CMakeLists.txt, cmake/, startup_*.s, linker scripts, and toolchain files -- generated and owned by CubeMX/CubeCLT
 - .ioc files -- proprietary CubeMX format
 
 ### CubeMX Configuration Changes (MANDATORY STEP-BY-STEP)
@@ -67,6 +68,7 @@ When asked to add/modify/remove any peripheral, pin, clock, DMA, NVIC, or middle
 
 - NEVER manually write HAL peripheral init code (MX_GPIO_Init, MX_USART1_UART_Init, etc.)
 - NEVER manually configure clock trees, pin assignments, DMA channels, or NVIC interrupt priorities
+- NEVER add, replace, or rewrite CubeMX toolchain/build files from LUXAR templates.
 - NEVER attempt to build a freshly-created cubemx project -- there is no code to compile
 
 ### MCU Capability Verification (MANDATORY)
@@ -96,7 +98,7 @@ Before writing any code, verify the MCU supports the peripheral. See the MCU Cap
 
 
 _FREERTOS_EXTENSION = """
-### FreeRTOS Runtime Rules (MANDATORY when Runtime: freertos)
+### FreeRTOS System Rules (MANDATORY when System: freertos)
 - Core/Src/freertos.c: ONLY write between USER CODE BEGIN/END markers for task creation (osThreadNew calls). Task function bodies go in App/Src/.
 - Use CMSIS-RTOS v2 API wrapped by CubeMX: osThreadNew, osMessageQueueNew, osSemaphoreNew, osTimerNew, osEventFlagsNew.
 - HAL weak callbacks (HAL_UART_RxCpltCallback, etc.) may run in ISR context -- keep them short, delegate work to FreeRTOS tasks via queues or semaphores in App/.
@@ -256,11 +258,10 @@ def validate_api_messages(msgs: list[dict]) -> list[dict]:
 def inject_project_metadata(base_prompt: str, project: str, cm: ConfigManager) -> str:
     """Inject project metadata into the system prompt."""
     workspace = cm.workspace_root()
-    projects_dir = workspace / "projects"
 
     if project:
         try:
-            proj_meta_path = projects_dir / project / ".agent_project.json"
+            proj_meta_path = workspace / project / ".agent_project.json"
             if not proj_meta_path.exists():
                 return base_prompt
             meta = json.loads(proj_meta_path.read_text(encoding="utf-8"))
@@ -293,10 +294,10 @@ def inject_project_metadata(base_prompt: str, project: str, cm: ConfigManager) -
             result += "\n\nNEVER write code targeting a peripheral NOT listed above. If unsure, check before coding."
         return result
     else:
-        if not projects_dir.exists():
+        if not workspace.exists():
             return base_prompt
         project_dirs = sorted(
-            [d for d in projects_dir.iterdir() if d.is_dir() and (d / ".agent_project.json").exists()]
+            [d for d in workspace.iterdir() if d.is_dir() and (d / ".agent_project.json").exists()]
         )
         if not project_dirs:
             return base_prompt
@@ -308,7 +309,7 @@ def inject_project_metadata(base_prompt: str, project: str, cm: ConfigManager) -
                 mcu = meta.get("mcu", "?")
                 platform = meta.get("platform", "?")
                 runtime = meta.get("runtime", "?")
-                project_list.append(f"- {name}: MCU={mcu}, Platform={platform}, Runtime={runtime}")
+                project_list.append(f"- {name}: MCU={mcu}, Platform={platform}, System={runtime}")
             except Exception:
                 project_list.append(f"- {proj_dir.name}")
         return (
@@ -320,7 +321,7 @@ def inject_project_metadata(base_prompt: str, project: str, cm: ConfigManager) -
 
 def _build_meta_lines(meta: dict) -> list[str]:
     lines = []
-    for key, label in [("mcu", "MCU"), ("platform", "Platform"), ("runtime", "Runtime"), ("firmware_package", "Firmware Package")]:
+    for key, label in [("mcu", "MCU"), ("platform", "Platform"), ("runtime", "System"), ("firmware_package", "Firmware Package")]:
         v = meta.get(key, "")
         if v:
             lines.append(f"- {label}: {v}")

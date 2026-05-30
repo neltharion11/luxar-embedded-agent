@@ -27,7 +27,7 @@ SKILL_EVOLUTION_PROMPT = """
 【平台】
 {platforms}
 
-【运行时】
+【系统】
 {runtimes}
 
 【来源项目】
@@ -192,7 +192,7 @@ This skill captures reusable guidance for building and reviewing {protocol.upper
 - Protocol: {protocol.upper()}
 - Validated device example: {device_name}
 - Platforms: {", ".join(platforms) or "unknown"}
-- Runtimes: {", ".join(runtimes) or "unknown"}
+- Systems: {", ".join(runtimes) or "unknown"}
 - Validation source: {source_project}
 
 ## Interface Pattern

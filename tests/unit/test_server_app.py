@@ -66,9 +66,11 @@ class ServerAppTests(unittest.TestCase):
         return cfg
 
     def test_legacy_http_surface_is_disabled_by_default(self) -> None:
-        """Legacy conversation endpoints are still accessible (not behind env guard yet in current migration state)."""
+        """Legacy conversation endpoints require an explicit opt-in switch."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("luxar.server.app.ConfigManager") as cm_cls:
+            with patch.dict("os.environ", {LEGACY_HTTP_SURFACE_ENV: "0"}, clear=False), patch(
+                "luxar.server.app.ConfigManager"
+            ) as cm_cls:
                 cm = cm_cls.return_value
                 cm.ensure_default_config.return_value = object()
                 cm.driver_library_root.return_value = Path(tmpdir) / "driver_library"
@@ -80,7 +82,7 @@ class ServerAppTests(unittest.TestCase):
                         ("post", "/api/conversations/Demo"),
                     ]:
                         response = getattr(client, method)(path)
-                        self.assertNotEqual(404, response.status_code, path)  # endpoint exists but may need params
+                        self.assertEqual(404, response.status_code, path)
 
     def test_analyze_docs_endpoint_returns_engineering_context_when_legacy_http_surface_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -189,7 +191,7 @@ class ServerAppTests(unittest.TestCase):
                     response = client.post(
                         "/api/conversations/__global__",
                         json={
-                            "message": "项目名: Demo\nMCU: STM32F103C8T6\n平台: stm32cubemx\n运行时: baremetal",
+                            "message": "项目名: Demo\nMCU: STM32F103C8T6\n平台: stm32cubemx\n系统: baremetal",
                             "stream": True,
                         },
                         headers={"Accept": "text/event-stream"},

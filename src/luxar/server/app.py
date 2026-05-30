@@ -150,7 +150,7 @@ async def _execute_tool_with_timeout(name: str, args: dict, cfg: Any, cm: Config
 
 
 def _legacy_http_surface_enabled() -> bool:
-    return os.getenv(LEGACY_HTTP_SURFACE_ENV, "1").strip() == "1"
+    return os.getenv(LEGACY_HTTP_SURFACE_ENV, "0").strip() == "1"
 
 
 _conversation_state = ConversationState()
@@ -248,7 +248,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://127.0.0.1",
+            "http://127.0.0.1:8000",
+            "http://localhost",
+            "http://localhost:8000",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
