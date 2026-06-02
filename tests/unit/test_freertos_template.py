@@ -26,10 +26,10 @@ class FreeRtosFirmwareTemplateTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("STM32Cube_FW_F1_V1.8.7", cmake)
+        self.assertIn("{STM32_FIRMWARE_PACKAGE}", cmake)
         self.assertIn("FREERTOS_ROOT", cmake)
         self.assertIn("${FREERTOS_ROOT}/CMSIS_RTOS_V2/cmsis_os2.c", cmake)
-        self.assertIn("${FREERTOS_ROOT}/portable/GCC/ARM_CM3/port.c", cmake)
+        self.assertIn("${FREERTOS_ROOT}/portable/GCC/{STM32_FREERTOS_PORT}/port.c", cmake)
         self.assertNotIn("${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares", cmake)
         self.assertIn("App/Src/app_main.c", cmake)
 
@@ -55,6 +55,7 @@ class FreeRtosFirmwareTemplateTests(unittest.TestCase):
             cm = Mock()
             cm.workspace_root.return_value = workspace
             cm.project_root.return_value = repo_root
+            cm.firmware_library_root.return_value = repo_root / "workspace" / "firmware_library"
             manager = Mock()
             manager.view.return_value = {"metadata": {}, "content": ""}
 
@@ -66,6 +67,10 @@ class FreeRtosFirmwareTemplateTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertTrue((project_dir / "Core" / "Src" / "freertos.c").exists())
             self.assertTrue((project_dir / "Core" / "Inc" / "FreeRTOSConfig.h").exists())
+            self.assertTrue((project_dir / "startup_stm32f103xb.s").exists())
+            self.assertTrue((project_dir / "STM32F103XB_FLASH.ld").exists())
+            self.assertTrue((project_dir / "FIRMWARE_PACKAGE.txt").exists())
+            self.assertEqual("F1", (project_dir / "STM32_FAMILY.txt").read_text(encoding="utf-8").strip())
             self.assertTrue((project_dir / "App" / "Src" / "app_main.c").exists())
             self.assertFalse((project_dir / "Core" / "Src" / "app_main.c").exists())
             self.assertEqual(

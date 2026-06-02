@@ -8,7 +8,7 @@
             "servertype": "stlink",
             "cwd": "${workspaceFolder}",
             "executable": "${workspaceFolder}/build/Debug/{PROJECT_NAME}.elf",
-            "device": "STM32F103C8",
+            "device": "{STM32_MCU}",
             "runToEntryPoint": "main",
             "preLaunchTask": "LUXAR: build",
             "gdbPath": "${workspaceFolder}/../../toolchains/gcc-arm/bin/arm-none-eabi-gdb.exe",

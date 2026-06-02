@@ -29,7 +29,9 @@ def register_vnext_http_surface(
     workspace_monitor_start,
     workspace_monitor_stop,
     workspace_monitor_status,
+    workspace_hw_probe,
     workspace_probe,
+    workspace_uart_gate,
     skills_list,
     skill_view,
     skill_manage,
@@ -161,6 +163,27 @@ def register_vnext_http_surface(
     @app.post("/api/workspace/probe")
     def api_workspace_probe(body: dict):
         result = workspace_probe(project=str(body.get("project", "")), probe_type=str(body.get("probe_type", "i2c")))
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/hw-probe")
+    def api_workspace_hw_probe(body: dict):
+        result = workspace_hw_probe(
+            project=str(body.get("project", "")),
+            probe=str(body.get("probe", "stlink")),
+            address=str(body.get("address", "0x08000000")),
+            words=int(body.get("words", 1)),
+        )
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/uart-gate")
+    def api_workspace_uart_gate(body: dict):
+        result = workspace_uart_gate(
+            project=str(body.get("project", "")),
+            usart=str(body.get("usart", "")),
+            tx_pin=str(body.get("tx_pin", "")),
+            rx_pin=str(body.get("rx_pin", "")),
+            baudrate=int(body.get("baudrate", 115200)),
+        )
         return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
 
     @app.get("/api/skills")

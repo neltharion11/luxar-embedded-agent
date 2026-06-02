@@ -87,8 +87,11 @@ class DebugLoopRunTests(unittest.TestCase):
         context = _make_context(self.project)
         context["build_system"].build_project.return_value = BuildResult(success=True, return_code=0)
         context["flash_system"].flash_project.return_value = FlashResult(success=True)
+        fake_serial = mock.Mock()
+        fake_serial.readline.return_value = b""
         with mock.patch.object(self.loop, "_create_context", return_value=context), \
-             self._mock_monitor([]):
+             self._mock_monitor([]), \
+             mock.patch("serial.Serial", return_value=fake_serial):
             result = self.loop.run(project_path=str(self.project), port="COM3")
         self.assertFalse(result.success)
         self.assertEqual("monitor", result.stage)
@@ -268,4 +271,3 @@ class DebugLoopLoadProjectConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

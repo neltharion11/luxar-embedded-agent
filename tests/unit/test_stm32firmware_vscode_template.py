@@ -100,6 +100,7 @@ class STM32FirmwareVSCodeTemplateTests(unittest.TestCase):
                     cm = Mock()
                     cm.workspace_root.return_value = workspace
                     cm.project_root.return_value = self.repo_root
+                    cm.firmware_library_root.return_value = self.repo_root / "workspace" / "firmware_library"
                     manager = Mock()
                     manager.view.return_value = {"metadata": {}, "content": ""}
 
@@ -114,7 +115,10 @@ class STM32FirmwareVSCodeTemplateTests(unittest.TestCase):
                     self.assertNotIn("{PROJECT_NAME}", launch_text)
                     self.assertNotIn("{PROJECT_NAME}", tasks_text)
                     self.assertIn(f"build/Debug/{project_name}.elf", launch_text)
+                    self.assertIn('"device": "STM32F103C8"', launch_text)
                     self.assertIn(f"build/Debug/{project_name}.hex", tasks_text)
+                    self.assertTrue((project_dir / "FIRMWARE_PACKAGE.txt").exists())
+                    self.assertEqual("F1", (project_dir / "STM32_FAMILY.txt").read_text(encoding="utf-8").strip())
 
     def test_baremetal_cmake_uses_stable_target_and_correct_cmsis_path(self) -> None:
         cmake = (self.repo_root / "workspace" / "templates" / "baremetal" / "CMakeLists.txt").read_text(
@@ -125,6 +129,8 @@ class STM32FirmwareVSCodeTemplateTests(unittest.TestCase):
         self.assertNotIn("add_executable(${CMAKE_PROJECT_NAME}.elf)", cmake)
         self.assertIn('set(CMSIS_CORE "${FW_LIB}/Drivers/CMSIS/Include")', cmake)
         self.assertIn("LINKER_SCRIPT", cmake)
+        self.assertIn("{STM32_DEVICE_DEFINE}", cmake)
+        self.assertNotIn("STM32F103xB", cmake)
 
 
 if __name__ == "__main__":

@@ -33,7 +33,8 @@ class UiShellTests(unittest.TestCase):
         self.assertIn("currentEvent === 'lesson_recorded'", self.html)
         self.assertIn("currentEvent === 'promotion_applied'", self.html)
         self.assertIn("currentEvent === 'escalation_triggered'", self.html)
-        self.assertIn("function formatToolRunningLine(chunk)", self.html)
+        self.assertNotIn("function formatToolRunningLine(chunk)", self.html)
+        self.assertNotIn("var toolLine", self.html)
         self.assertNotIn("workflow_started", self.html)
         self.assertNotIn("var workflowMode = false;", self.html)
 

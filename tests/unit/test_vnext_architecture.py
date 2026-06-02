@@ -135,6 +135,8 @@ class VNextArchitectureGuardrailTests(unittest.TestCase):
                 ("POST", "/api/workspace/flash"),
                 ("POST", "/api/workspace/monitor"),
                 ("POST", "/api/workspace/probe"),
+                ("POST", "/api/workspace/hw-probe"),
+                ("POST", "/api/workspace/uart-gate"),
                 ("GET", "/api/session-search"),
             }
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -206,6 +208,8 @@ class VNextArchitectureGuardrailTests(unittest.TestCase):
                 "workspace_flash",
                 "workspace_monitor",
                 "workspace_probe",
+                "workspace_hw_probe",
+                "workspace_uart_gate",
                 "workspace_write_file",
                 "workspace_shell",
                 "workspace_monitor_start",

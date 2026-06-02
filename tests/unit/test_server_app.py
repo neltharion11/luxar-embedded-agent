@@ -143,7 +143,7 @@ class ServerAppTests(unittest.TestCase):
             result = _execute_tool("init_project", {}, cfg, cm)
 
         self.assertFalse(result.ok)
-        self.assertIn("not part of the LUXAR 0.2.2 public control plane", result.error or "")
+        self.assertIn("not part of the LUXAR 0.2.3 public control plane", result.error or "")
 
     def test_conversation_endpoint_uses_vnext_agent_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

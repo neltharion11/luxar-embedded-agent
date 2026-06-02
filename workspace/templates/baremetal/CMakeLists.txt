@@ -12,31 +12,31 @@ set(CMAKE_PROJECT_NAME {PROJECT_NAME})
 project(${CMAKE_PROJECT_NAME} C ASM)
 message("Build type: ${CMAKE_BUILD_TYPE}")
 
-set(FW_LIB "C:/Users/Gugugu/Documents/Codex/LUXAR/workspace/firmware_library/stm32/STM32Cube_FW_F1_V1.8.7")
-set(HAL_DRIVER "${FW_LIB}/Drivers/STM32F1xx_HAL_Driver")
-set(CMSIS_DEVICE "${FW_LIB}/Drivers/CMSIS/Device/ST/STM32F1xx")
+set(FW_LIB "{STM32_FIRMWARE_PACKAGE}" CACHE PATH "STM32Cube firmware package")
+set(HAL_DRIVER "${FW_LIB}/Drivers/{STM32_HAL_DRIVER_DIR}")
+set(CMSIS_DEVICE "${FW_LIB}/Drivers/CMSIS/Device/ST/{STM32_CMSIS_DEVICE_DIR}")
 set(CMSIS_CORE "${FW_LIB}/Drivers/CMSIS/Include")
 
 add_executable(${CMAKE_PROJECT_NAME})
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/main.c
-    Core/Src/system_stm32f1xx.c
+    Core/Src/{STM32_SYSTEM_FILE}
     Core/Src/stm32f1xx_it.c
     Core/Src/stm32f1xx_hal_msp.c
     App/Src/app_main.c
-    startup_stm32f103xb.s
-    ${HAL_DRIVER}/Src/stm32f1xx_hal.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_cortex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_rcc.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_rcc_ex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_gpio.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_gpio_ex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_flash.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_flash_ex.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_dma.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_exti.c
-    ${HAL_DRIVER}/Src/stm32f1xx_hal_pwr.c
+    {STM32_STARTUP_FILE}
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_cortex.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_rcc.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_rcc_ex.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_gpio.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_gpio_ex.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_flash.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_flash_ex.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_dma.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_exti.c
+    ${HAL_DRIVER}/Src/stm32{STM32_FAMILY_LOWER}xx_hal_pwr.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -48,7 +48,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMSIS_CORE}
 )
 
-set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/link.ld" CACHE FILEPATH "Linker script")
+set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/{STM32_LINKER_SCRIPT}" CACHE FILEPATH "Linker script")
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
     -T${LINKER_SCRIPT}
     --specs=nano.specs
@@ -59,7 +59,7 @@ target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    STM32F103xB
+    {STM32_DEVICE_DEFINE}
     USE_HAL_DRIVER
 )
 

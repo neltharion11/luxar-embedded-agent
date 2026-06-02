@@ -33,8 +33,10 @@ from luxar.tools.workspace_tool import (
     workspace_monitor_start,
     workspace_monitor_stop,
     workspace_monitor_status,
+    workspace_hw_probe,
     workspace_probe,
     workspace_read_file,
+    workspace_uart_gate,
     workspace_write_file,
     workspace_shell,
     workspace_publish_driver,
@@ -328,6 +330,24 @@ def format_tool_result_summary(name: str, args: dict, result: Any) -> tuple[bool
     if name == "workspace_probe":
         probe_type = data.get("probe_type") or args.get("probe_type", "")
         return is_ok, f"{probe_type or 'workspace'} 探测已执行"
+    if name == "workspace_hw_probe":
+        target = data.get("target") or {}
+        stlink = data.get("stlink") or {}
+        readback = data.get("readback") or []
+        if is_ok:
+            device = target.get("device_name") or target.get("device_id") or "target"
+            value = readback[0].get("value") if readback and isinstance(readback[0], dict) else ""
+            serial = stlink.get("serial") or "ST-Link"
+            suffix = f", readback {value}" if value else ""
+            return True, f"硬件探测成功: {device} via {serial}{suffix}"
+        return False, f"硬件探测失败: {data.get('error','')}"
+    if name == "workspace_uart_gate":
+        if is_ok:
+            return True, (
+                f"UART gate 已生成: {data.get('usart', '')} "
+                f"{data.get('tx_pin', '')}/{data.get('rx_pin', '')} @{data.get('baudrate', '')}"
+            )
+        return False, f"UART gate 生成失败: {data.get('error','')}"
     if name == "workspace_publish_driver":
         if is_ok:
             chip = data.get("chip", "")
@@ -386,7 +406,7 @@ def validate_public_tool_name(name: str, public_tool_names: set[str] | frozenset
     if name in public_tool_names:
         return None
     message = (
-        f"Tool '{name}' is not part of the LUXAR 0.2.2 public control plane. "
+        f"Tool '{name}' is not part of the LUXAR 0.2.3 public control plane. "
         "Use runtime/skills/memory/workspace primitives instead."
     )
     return build_tool_envelope(name, {"error": message}, error=message)
@@ -560,6 +580,27 @@ def execute_tool(name: str, args: dict, cfg: Any, cm: ConfigManager, public_tool
             return build_tool_envelope(
                 name,
                 workspace_probe(project=args.get("project", ""), probe_type=args.get("probe_type", "i2c")),
+            )
+        if name == "workspace_hw_probe":
+            return build_tool_envelope(
+                name,
+                workspace_hw_probe(
+                    project=str(args.get("project", "")),
+                    probe=str(args.get("probe", "stlink")),
+                    address=str(args.get("address", "0x08000000")),
+                    words=int(args.get("words", 1)),
+                ),
+            )
+        if name == "workspace_uart_gate":
+            return build_tool_envelope(
+                name,
+                workspace_uart_gate(
+                    project=str(args.get("project", "")),
+                    usart=str(args.get("usart", "")),
+                    tx_pin=str(args.get("tx_pin", "")),
+                    rx_pin=str(args.get("rx_pin", "")),
+                    baudrate=int(args.get("baudrate", 115200)),
+                ),
             )
 
         if name == "workspace_publish_driver":

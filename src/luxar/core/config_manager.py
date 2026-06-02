@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class AgentSection(BaseModel):
     name: str = "Luxar"
-    version: str = "0.2.2"
+    version: str = "0.2.3"
     workspace: str = "./workspace/projects"
     driver_library: str = "./workspace/driver_library"
     # Legacy-only compatibility root. New skills live under `skills_root`.
@@ -231,5 +231,4 @@ class ConfigManager:
     def toolchain_root(self) -> Path:
         config = self.ensure_default_config()
         return self.resolve_path(config.toolchains.root)
-
 

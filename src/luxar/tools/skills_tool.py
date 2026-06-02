@@ -40,6 +40,10 @@ _TEXT_TEMPLATE_SUFFIXES = {
 
 
 def _replace_project_placeholders(project_dir: Path, project: str) -> None:
+    _replace_template_placeholders(project_dir, {"{PROJECT_NAME}": project})
+
+
+def _replace_template_placeholders(project_dir: Path, replacements: dict[str, str]) -> None:
     for path in project_dir.rglob("*"):
         if not path.is_file():
             continue
@@ -48,9 +52,19 @@ def _replace_project_placeholders(project_dir: Path, project: str) -> None:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
-            updated = text.replace("{PROJECT_NAME}", project)
+            updated = text
+            for key, value in replacements.items():
+                updated = updated.replace(key, value)
             if updated != text:
                 path.write_text(updated, encoding="utf-8")
+
+
+def _firmware_library_root_from_config(cm: ConfigManager) -> Path:
+    try:
+        root = cm.firmware_library_root()
+        return Path(root)
+    except Exception:
+        return cm.project_root() / "workspace" / "firmware_library"
 
 
 def skills_list(category: str | None = None) -> dict[str, object]:
@@ -340,56 +354,83 @@ def skill_execute(name: str, category: str = "", project: str = "", port: str = 
         if not tpl_src.exists():
             return {"success": False, "error": f"Template not found: {tpl_src}"}
         shutil.copytree(tpl_src, tpl_dst, dirs_exist_ok=True)
-        _replace_project_placeholders(tpl_dst, project)
-        cmake_file = tpl_dst / "CMakeLists.txt"
-        # Copy HAL/CMSIS if baremetal. FreeRTOS template references
-        # workspace/firmware_library directly to avoid copying middleware.
-        if tpl_name == "baremetal":
-            fl = cm.project_root() / "workspace" / "firmware_library" / "stm32" / "STM32Cube_FW_F1_V1.8.7"
-            hal_src = fl / "Drivers" / "STM32F1xx_HAL_Driver"
-            cmsis_src = fl / "Drivers" / "CMSIS"
-            hal_dst = tpl_dst / "Drivers" / "STM32F1xx_HAL_Driver"
-            cmsis_dst = tpl_dst / "Drivers" / "CMSIS"
-            if hal_src.exists():
-                shutil.copytree(hal_src, hal_dst, dirs_exist_ok=True)
-            if cmsis_src.exists():
-                shutil.copytree(cmsis_src, cmsis_dst, dirs_exist_ok=True)
-            # Inject HAL into CMakeLists.txt
-            if cmake_file.exists():
-                cm_text = cmake_file.read_text(encoding="utf-8")
-                if "STM32F1xx_HAL_Driver" not in cm_text:
-                    hal_lines = (
-                        "    Drivers/CMSIS/Include\n"
-                        "    Drivers/CMSIS/Device/ST/STM32F1xx/Include\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Inc\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Inc/Legacy\n"
-                    )
-                    cm_text = cm_text.replace(
-                        "target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE inc)",
-                        "target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE inc\n" + hal_lines + ")"
-                    )
-                    hal_sources = (
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc_ex.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_cortex.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash_ex.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_dma.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c\n"
-                        "    Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_pwr.c\n"
-                    )
-                    cm_text = cm_text.replace(
-                        "    src/system_stm32f1xx.c\n)",
-                        "    src/system_stm32f1xx.c\n" + hal_sources + ")"
-                    )
-                    cm_text = cm_text.replace(
-                        ")\nadd_custom_command",
-                        ")\ntarget_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE STM32F103xB USE_HAL_DRIVER)\nadd_custom_command"
-                    )
-                    cmake_file.write_text(cm_text, encoding="utf-8")
+        replacements = {"{PROJECT_NAME}": project}
+        if platform == "stm32firmware":
+            from luxar.core.firmware_library_manager import FirmwareLibraryManager
+
+            meta = _json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
+            mcu = meta.get("mcu", "STM32F103C8")
+            firmware_package = meta.get("firmware_package", "")
+            firmware_root = _firmware_library_root_from_config(cm)
+            firmware_manager = FirmwareLibraryManager(firmware_root)
+            resolved = firmware_manager.resolve_stm32_package(firmware_package) if firmware_package else firmware_manager.resolve_stm32_package_for_mcu(mcu)
+            if resolved is None:
+                family = firmware_manager.infer_stm32_family(mcu)
+                expected = f"STM32Cube_FW_{family}" if family != "UNKNOWN" else "STM32Cube_FW_<family>"
+                return {
+                    "success": False,
+                    "error": f"No STM32Cube firmware package found for {mcu}. Expected {expected} under {firmware_root / 'stm32'}.",
+                }
+            try:
+                profile = firmware_manager.build_stm32_profile(mcu, resolved)
+            except Exception as exc:
+                return {"success": False, "error": str(exc)}
+
+            shutil.copy2(profile["startup_source"], tpl_dst / profile["startup_file"])
+            shutil.copy2(profile["linker_source"], tpl_dst / profile["linker_script"])
+            shutil.copy2(profile["system_source"], tpl_dst / "Core" / "Src" / profile["system_file"])
+            freertos_port_dir = profile["freertos_port"]
+            freertos_port_path = Path(profile["firmware_package"]) / "Middlewares" / "Third_Party" / "FreeRTOS" / "Source" / "portable" / "GCC" / freertos_port_dir
+            if tpl_name == "freertos" and not freertos_port_path.exists():
+                return {"success": False, "error": f"FreeRTOS GCC port not found for {mcu}: {freertos_port_path}"}
+
+            family_lower = profile["family"].lower()
+            old_conf = tpl_dst / "Core" / "Inc" / "stm32f1xx_hal_conf.h"
+            new_conf = tpl_dst / "Core" / "Inc" / f"stm32{family_lower}xx_hal_conf.h"
+            if old_conf.exists() and old_conf != new_conf:
+                old_conf.rename(new_conf)
+            for old_rel, new_rel in (
+                ("Core/Src/stm32f1xx_it.c", f"Core/Src/stm32{family_lower}xx_it.c"),
+                ("Core/Src/stm32f1xx_hal_msp.c", f"Core/Src/stm32{family_lower}xx_hal_msp.c"),
+                ("Core/Inc/stm32f1xx_it.h", f"Core/Inc/stm32{family_lower}xx_it.h"),
+            ):
+                old_path = tpl_dst / old_rel
+                new_path = tpl_dst / new_rel
+                if old_path.exists() and old_path != new_path:
+                    old_path.rename(new_path)
+
+            replacements.update({
+                "{STM32_MCU}": profile["mcu"],
+                "{STM32_FAMILY}": profile["family"],
+                "{STM32_FAMILY_LOWER}": family_lower,
+                "{STM32_DEVICE_DEFINE}": profile["device_define"],
+                "{STM32_CMSIS_DEVICE_DIR}": profile["cmsis_device_dir"],
+                "{STM32_HAL_DRIVER_DIR}": profile["hal_driver_dir"],
+                "{STM32_STARTUP_FILE}": profile["startup_file"],
+                "{STM32_LINKER_SCRIPT}": profile["linker_script"],
+                "{STM32_SYSTEM_FILE}": profile["system_file"],
+                "{STM32_CPU_FLAGS}": profile["cpu_flags"],
+                "{STM32_FREERTOS_PORT}": profile["freertos_port"],
+                "{STM32_FIRMWARE_PACKAGE}": profile["firmware_package"].replace("\\", "/"),
+            })
+            meta.update({
+                "firmware_package": profile["firmware_package"],
+                "family": profile["family"],
+                "device_define": profile["device_define"],
+            })
+            meta_file.write_text(_json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            (tpl_dst / "FIRMWARE_PACKAGE.txt").write_text(profile["firmware_package"] + "\n", encoding="utf-8")
+            (tpl_dst / "STM32_FAMILY.txt").write_text(profile["family"] + "\n", encoding="utf-8")
+        _replace_template_placeholders(tpl_dst, replacements)
+        if platform == "stm32firmware":
+            _replace_template_placeholders(
+                tpl_dst,
+                {
+                    "stm32f1xx": f"stm32{replacements['{STM32_FAMILY_LOWER}']}xx",
+                    "STM32F1xx": f"STM32{replacements['{STM32_FAMILY}']}xx",
+                    "STM32F1XX": f"STM32{replacements['{STM32_FAMILY}']}XX",
+                },
+            )
         return {"success": True, "skill": name, "project": project, "files_created": [], "evidence": evidence}
 
     # ── Hardcoded executable skills ──

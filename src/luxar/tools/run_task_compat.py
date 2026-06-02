@@ -8,7 +8,7 @@ from luxar.models.schemas import EngineeringContext, TaskArtifacts, TaskRunResul
 
 LEGACY_RUN_TASK_WARNING = (
     "run_task/run_task_stream are legacy compatibility entrypoints. "
-    "Prefer the LUXAR 0.2.2 runtime surface instead."
+    "Prefer the LUXAR 0.2.3 runtime surface instead."
 )
 LEGACY_COMPATIBILITY_MODE = "legacy-run-task"
 

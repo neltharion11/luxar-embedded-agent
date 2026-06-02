@@ -23,7 +23,7 @@ set(CMAKE_EXECUTABLE_SUFFIX_C ".elf")
 set(CMAKE_EXECUTABLE_SUFFIX_CXX ".elf")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-set(TARGET_FLAGS "-mcpu=cortex-m3 -mthumb -msoft-float")
+set(TARGET_FLAGS "{STM32_CPU_FLAGS}")
 set(CMAKE_C_FLAGS "${TARGET_FLAGS} -Wall -ffunction-sections -fdata-sections -g -O0")
 set(CMAKE_ASM_FLAGS "${TARGET_FLAGS} -x assembler-with-cpp")
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti -fno-exceptions -fno-threadsafe-statics")

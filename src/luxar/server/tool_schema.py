@@ -6,7 +6,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "runtime_run",
-            "description": "Run the LUXAR 0.2.2 runtime for a task inside the current workspace.",
+            "description": "Run the LUXAR 0.2.3 runtime for a task inside the current workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -21,7 +21,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "runtime_explain",
-            "description": "Explain the LUXAR 0.2.2 runtime model and current orchestration approach.",
+            "description": "Explain the LUXAR 0.2.3 runtime model and current orchestration approach.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -323,7 +323,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "workspace_probe",
-            "description": "Run a workspace probe primitive such as i2c.",
+            "description": "Run a static workspace configuration probe such as uart, i2c, or spi. Do not use this for ST-Link/SWD hardware evidence; use workspace_hw_probe instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -331,6 +331,41 @@ TOOLS: list[dict] = [
                     "probe_type": {"type": "string", "description": "Probe type"},
                 },
                 "required": ["project"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_hw_probe",
+            "description": "Run a real hardware-level ST-Link/SWD probe. Returns ST-Link serial, target voltage, Device ID/name, and flash readback evidence.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name"},
+                    "probe": {"type": "string", "description": "Hardware probe, currently stlink"},
+                    "address": {"type": "string", "description": "Flash address to read, default 0x08000000"},
+                    "words": {"type": "integer", "description": "32-bit words to read, default 1"},
+                },
+                "required": ["project"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_uart_gate",
+            "description": "Generate UART hardware-gate firmware only after the user explicitly confirms USART, TX/RX pins, and baudrate. It prints LUXAR_HW_GATE_OK for monitor evidence and does not change normal project templates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name"},
+                    "usart": {"type": "string", "description": "USART instance: USART1, USART2, or USART3"},
+                    "tx_pin": {"type": "string", "description": "Confirmed TX pin, e.g. PA9"},
+                    "rx_pin": {"type": "string", "description": "Confirmed RX pin, e.g. PA10"},
+                    "baudrate": {"type": "integer", "description": "Confirmed baudrate, default 115200"},
+                },
+                "required": ["project", "usart", "tx_pin", "rx_pin"],
             },
         },
     },

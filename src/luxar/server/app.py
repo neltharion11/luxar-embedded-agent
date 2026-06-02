@@ -37,8 +37,10 @@ from luxar.tools.workspace_tool import (
     workspace_monitor_start,
     workspace_monitor_stop,
     workspace_monitor_status,
+    workspace_hw_probe,
     workspace_probe,
     workspace_status,
+    workspace_uart_gate,
 )
 from luxar.server.legacy_surface import (
     normalize_project_name,
@@ -244,7 +246,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
             MonitorManager.instance().stop()
             _conversation_state.close()
 
-    app = FastAPI(title="Luxar API", version="0.2.2", lifespan=lifespan)
+    app = FastAPI(title="Luxar API", version="0.2.3", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -289,7 +291,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         workspace_monitor_start=workspace_monitor_start,
         workspace_monitor_stop=workspace_monitor_stop,
         workspace_monitor_status=workspace_monitor_status,
+        workspace_hw_probe=workspace_hw_probe,
         workspace_probe=workspace_probe,
+        workspace_uart_gate=workspace_uart_gate,
         workspace_status=workspace_status,
         skills_list=vnext_skills_list,
         skill_view=skill_view,
