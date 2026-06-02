@@ -78,27 +78,62 @@ def workspace_create_project(
     cfg_manager = _get_cm()
     cfg = cfg_manager.ensure_default_config()
     manager = ProjectManager(str(cfg_manager.workspace_root()))
+    project_dir = cfg_manager.workspace_root() / name
+    was_new_project = not project_dir.exists()
     try:
+        resolved_firmware_package = firmware_package or cfg.stm32.firmware_package
+        family = ""
+        device_define = ""
+        if platform == "stm32firmware":
+            from luxar.core.firmware_library_manager import FirmwareLibraryManager
+
+            firmware_manager = FirmwareLibraryManager(cfg_manager.firmware_library_root())
+            if firmware_package:
+                resolved = firmware_manager.resolve_stm32_package(firmware_package)
+                if resolved is None:
+                    raise FileNotFoundError(f"Firmware package not found: {firmware_package}")
+            else:
+                resolved = firmware_manager.resolve_stm32_package_for_mcu(mcu)
+                if resolved is None:
+                    expected_family = firmware_manager.infer_stm32_family(mcu)
+                    expected = f"STM32Cube_FW_{expected_family}" if expected_family != "UNKNOWN" else "STM32Cube_FW_<family>"
+                    raise FileNotFoundError(
+                        f"No STM32Cube firmware package found for {mcu}. "
+                        f"Expected {expected} under {cfg_manager.firmware_library_root() / 'stm32'}."
+                    )
+            profile = firmware_manager.build_stm32_profile(mcu, resolved)
+            resolved_firmware_package = profile["firmware_package"]
+            family = profile["family"]
+            device_define = profile["device_define"]
+
         project = manager.create_project(
             name=name,
             mcu=mcu,
             platform=platform,
             runtime=runtime,
             project_mode="cubemx" if platform == "stm32cubemx" else "firmware",
-            firmware_package=firmware_package or cfg.stm32.firmware_package,
+            firmware_package=resolved_firmware_package,
+            family=family,
+            device_define=device_define,
             overwrite=overwrite,
         )
         # Copy template files via skill framework (skip for CubeMX — user generates via CubeMX tool)
         if platform != "stm32cubemx":
             try:
                 from luxar.tools.skills_tool import skill_execute
-                skill_execute("init_project_framework", category="project", project=name)
+                template_result = skill_execute("init_project_framework", category="project", project=name)
+                if not template_result.get("success", False):
+                    raise RuntimeError(str(template_result.get("error", "Template generation failed")))
             except Exception:
-                pass  # template copy is best-effort; project metadata already written
+                raise
         return {"success": True, "project": project.model_dump(mode="json")}
     except FileExistsError as exc:
         return {"success": False, "error": str(exc), "detail": "Project already exists"}
     except Exception as exc:
+        if was_new_project and project_dir.exists():
+            import shutil
+
+            shutil.rmtree(project_dir, ignore_errors=True)
         return {"success": False, "error": str(exc)}
 
 def workspace_status() -> dict[str, object]:
@@ -359,6 +394,356 @@ def workspace_probe(project: str, probe_type: str = "i2c") -> dict[str, object]:
     )
 
 
+def workspace_hw_probe(project: str, probe: str = "stlink", address: str = "0x08000000", words: int = 1) -> dict[str, object]:
+    """Run a real hardware-level SWD/ST-Link probe and return structured evidence."""
+    import re
+    import subprocess
+    from pathlib import Path
+
+    cfg_manager = _get_cm()
+    cfg = cfg_manager.ensure_default_config()
+    project_dir = (cfg_manager.workspace_root() / project).resolve()
+    if not project or not project.strip():
+        return {"success": False, "error": "No project selected."}
+    if not project_dir.exists():
+        return {"success": False, "error": f"Project '{project}' not found"}
+
+    normalized_probe = (probe or "stlink").strip().lower()
+    if normalized_probe not in {"stlink", "swd"}:
+        return {
+            "success": False,
+            "error": f"Unsupported hardware probe '{probe}'. Supported probes: stlink.",
+            "probe": probe,
+        }
+
+    try:
+        read_words = max(1, min(int(words), 16))
+    except (TypeError, ValueError):
+        read_words = 1
+    read_bytes = read_words * 4
+    read_address = str(address or "0x08000000")
+
+    try:
+        from luxar.core.toolchain_manager import ToolchainManager
+
+        tm = ToolchainManager(config=cfg, project_root=str(cfg_manager.project_root()))
+        programmer_cli = tm.resolve_programmer_cli()
+    except Exception:
+        programmer_cli = None
+    if not programmer_cli:
+        return {
+            "success": False,
+            "error": "STM32_Programmer_CLI not found. Configure LUXAR toolchains.programmer_cli or install STM32CubeProgrammer.",
+            "probe": "stlink",
+        }
+
+    command = [programmer_cli, "-c", "port=SWD", "-r32", read_address, str(read_bytes)]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": "ST-Link hardware probe timed out.",
+            "probe": "stlink",
+            "command": command,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "probe": "stlink", "command": command}
+
+    output = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+
+    def _field(label: str) -> str:
+        match = re.search(rf"^\s*{re.escape(label)}\s*:\s*(.+?)\s*$", output, re.MULTILINE | re.IGNORECASE)
+        return match.group(1).strip() if match else ""
+
+    readback: list[dict[str, str]] = []
+    for match in re.finditer(r"^\s*(0x[0-9A-Fa-f]+)\s*:\s*([0-9A-Fa-f]{8})\s*$", output, re.MULTILINE):
+        readback.append({"address": match.group(1), "value": match.group(2).upper()})
+
+    stlink = {
+        "serial": _field("ST-LINK SN"),
+        "firmware": _field("ST-LINK FW"),
+    }
+    target = {
+        "voltage": _field("Voltage"),
+        "device_id": _field("Device ID"),
+        "revision_id": _field("Revision ID"),
+        "device_name": _field("Device name"),
+        "nvm_size": _field("NVM size"),
+        "cpu": _field("Device CPU"),
+    }
+    success = proc.returncode == 0 and bool(readback)
+    return {
+        "success": success,
+        "probe": "stlink",
+        "interface": "SWD",
+        "project": project,
+        "project_path": str(project_dir),
+        "command": command,
+        "return_code": proc.returncode,
+        "stlink": stlink,
+        "target": target,
+        "readback": readback,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "error": "" if success else "ST-Link hardware probe failed or produced no flash readback.",
+    }
+
+
+_UART_GATE_MAPPINGS = {
+    "USART1": ("PA9", "PA10"),
+    "USART2": ("PA2", "PA3"),
+    "USART3": ("PB10", "PB11"),
+}
+
+
+def _gpio_port(pin: str) -> str:
+    return f"GPIO{pin[1]}"
+
+
+def _gpio_pin_mask(pin: str) -> str:
+    return f"GPIO_PIN_{int(pin[2:])}"
+
+
+def _gpio_clock_enable(pin: str) -> str:
+    return f"__HAL_RCC_GPIO{pin[1]}_CLK_ENABLE();"
+
+
+def workspace_uart_gate(project: str, usart: str, tx_pin: str, rx_pin: str, baudrate: int = 115200) -> dict[str, object]:
+    """Generate an explicit UART hardware-gate app after the user confirms UART wiring."""
+    import json
+    import re
+
+    cfg_manager = _get_cm()
+    project_dir = (cfg_manager.workspace_root() / project).resolve()
+    if not project or not project.strip():
+        return {"success": False, "error": "No project selected."}
+    if not project_dir.exists():
+        return {"success": False, "error": f"Project '{project}' not found"}
+
+    meta_path = project_dir / ".agent_project.json"
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    except Exception:
+        metadata = {}
+    platform = str(metadata.get("platform", ""))
+    runtime = str(metadata.get("runtime", ""))
+    family = str(metadata.get("family", "F1") or "F1").upper()
+    if platform != "stm32firmware":
+        return {"success": False, "error": "UART gate generation currently supports stm32firmware projects only."}
+    if runtime not in {"baremetal", "freertos"}:
+        return {"success": False, "error": f"Unsupported system '{runtime}' for UART gate generation."}
+    if family != "F1":
+        return {
+            "success": False,
+            "error": f"UART gate pin template currently supports STM32F1 projects. Project family is {family}.",
+        }
+
+    usart_name = (usart or "").strip().upper()
+    tx = (tx_pin or "").strip().upper()
+    rx = (rx_pin or "").strip().upper()
+    if usart_name not in _UART_GATE_MAPPINGS:
+        return {"success": False, "error": "Unsupported USART. Choose USART1, USART2, or USART3."}
+    if not re.fullmatch(r"P[A-Z][0-9]{1,2}", tx) or not re.fullmatch(r"P[A-Z][0-9]{1,2}", rx):
+        return {"success": False, "error": "Invalid TX/RX pin format. Use values like PA9 and PA10."}
+    expected_tx, expected_rx = _UART_GATE_MAPPINGS[usart_name]
+    if (tx, rx) != (expected_tx, expected_rx):
+        return {
+            "success": False,
+            "error": f"{usart_name} currently supports {expected_tx}/{expected_rx} on STM32F1 gate firmware.",
+            "recommended": {"usart": usart_name, "tx_pin": expected_tx, "rx_pin": expected_rx},
+        }
+    try:
+        baud = int(baudrate)
+    except (TypeError, ValueError):
+        baud = 115200
+    if baud <= 0:
+        return {"success": False, "error": "Baudrate must be a positive integer."}
+
+    app_inc = project_dir / "App" / "Inc"
+    app_src = project_dir / "App" / "Src"
+    app_inc.mkdir(parents=True, exist_ok=True)
+    app_src.mkdir(parents=True, exist_ok=True)
+    hal_conf = project_dir / "Core" / "Inc" / "stm32f1xx_hal_conf.h"
+    if hal_conf.exists():
+        conf_text = hal_conf.read_text(encoding="utf-8")
+        if "#define HAL_UART_MODULE_ENABLED" not in conf_text:
+            conf_text = conf_text.replace(
+                "#define HAL_RCC_MODULE_ENABLED",
+                "#define HAL_RCC_MODULE_ENABLED\n#define HAL_UART_MODULE_ENABLED",
+            )
+        if '#include "stm32f1xx_hal_uart.h"' not in conf_text:
+            conf_text = conf_text.replace(
+                '#include "stm32f1xx_hal_pwr.h"\n#endif',
+                '#include "stm32f1xx_hal_pwr.h"\n#endif\n#ifdef HAL_UART_MODULE_ENABLED\n #include "stm32f1xx_hal_uart.h"\n#endif',
+            )
+        hal_conf.write_text(conf_text, encoding="utf-8")
+    cmake_file = project_dir / "CMakeLists.txt"
+    if cmake_file.exists():
+        cmake_text = cmake_file.read_text(encoding="utf-8")
+        uart_source = "${HAL_DRIVER}/Src/stm32f1xx_hal_uart.c"
+        if uart_source not in cmake_text:
+            cmake_text = cmake_text.replace(
+                "    ${HAL_DRIVER}/Src/stm32f1xx_hal_pwr.c\n",
+                "    ${HAL_DRIVER}/Src/stm32f1xx_hal_pwr.c\n    ${HAL_DRIVER}/Src/stm32f1xx_hal_uart.c\n",
+            )
+            cmake_file.write_text(cmake_text, encoding="utf-8")
+
+    include_header = "stm32f1xx_hal.h"
+    tx_port = _gpio_port(tx)
+    rx_port = _gpio_port(rx)
+    tx_mask = _gpio_pin_mask(tx)
+    rx_mask = _gpio_pin_mask(rx)
+    clock_lines = "\n    ".join(sorted({_gpio_clock_enable(tx), _gpio_clock_enable(rx)}))
+    usart_clock = f"__HAL_RCC_{usart_name}_CLK_ENABLE();"
+    handle_name = f"huart_{usart_name.lower()}"
+
+    header = f"""#ifndef APP_MAIN_H
+#define APP_MAIN_H
+
+#ifdef __cplusplus
+extern "C" {{
+#endif
+
+#include "{include_header}"
+
+void App_Init(void);
+void App_Loop(void);
+void App_DefaultTask(void *argument);
+
+#ifdef __cplusplus
+}}
+#endif
+
+#endif /* APP_MAIN_H */
+"""
+    if runtime == "baremetal":
+        source = f"""#include "app_main.h"
+
+#include <string.h>
+
+static UART_HandleTypeDef {handle_name};
+
+void App_Init(void)
+{{
+    GPIO_InitTypeDef gpio = {{0}};
+
+    {clock_lines}
+    {usart_clock}
+
+    gpio.Pin = {tx_mask};
+    gpio.Mode = GPIO_MODE_AF_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init({tx_port}, &gpio);
+
+    gpio.Pin = {rx_mask};
+    gpio.Mode = GPIO_MODE_INPUT;
+    gpio.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init({rx_port}, &gpio);
+
+    {handle_name}.Instance = {usart_name};
+    {handle_name}.Init.BaudRate = {baud};
+    {handle_name}.Init.WordLength = UART_WORDLENGTH_8B;
+    {handle_name}.Init.StopBits = UART_STOPBITS_1;
+    {handle_name}.Init.Parity = UART_PARITY_NONE;
+    {handle_name}.Init.Mode = UART_MODE_TX_RX;
+    {handle_name}.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    {handle_name}.Init.OverSampling = UART_OVERSAMPLING_16;
+    HAL_UART_Init(&{handle_name});
+}}
+
+void App_Loop(void)
+{{
+    static const char msg[] = "LUXAR_HW_GATE_OK\\r\\n";
+    HAL_UART_Transmit(&{handle_name}, (uint8_t *)msg, (uint16_t)strlen(msg), HAL_MAX_DELAY);
+    HAL_Delay(1000);
+}}
+"""
+    else:
+        source = f"""#include "app_main.h"
+
+#include "cmsis_os.h"
+#include <string.h>
+
+static UART_HandleTypeDef {handle_name};
+
+static void Gate_UART_Init(void)
+{{
+    GPIO_InitTypeDef gpio = {{0}};
+
+    {clock_lines}
+    {usart_clock}
+
+    gpio.Pin = {tx_mask};
+    gpio.Mode = GPIO_MODE_AF_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init({tx_port}, &gpio);
+
+    gpio.Pin = {rx_mask};
+    gpio.Mode = GPIO_MODE_INPUT;
+    gpio.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init({rx_port}, &gpio);
+
+    {handle_name}.Instance = {usart_name};
+    {handle_name}.Init.BaudRate = {baud};
+    {handle_name}.Init.WordLength = UART_WORDLENGTH_8B;
+    {handle_name}.Init.StopBits = UART_STOPBITS_1;
+    {handle_name}.Init.Parity = UART_PARITY_NONE;
+    {handle_name}.Init.Mode = UART_MODE_TX_RX;
+    {handle_name}.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    {handle_name}.Init.OverSampling = UART_OVERSAMPLING_16;
+    HAL_UART_Init(&{handle_name});
+}}
+
+void App_Init(void)
+{{
+    Gate_UART_Init();
+}}
+
+void App_Loop(void)
+{{
+    static const char msg[] = "LUXAR_HW_GATE_OK\\r\\n";
+    HAL_UART_Transmit(&{handle_name}, (uint8_t *)msg, (uint16_t)strlen(msg), HAL_MAX_DELAY);
+}}
+
+void App_DefaultTask(void *argument)
+{{
+    if (argument == NULL) {{
+        return;
+    }}
+    (void)argument;
+    App_Init();
+    for (;;) {{
+        App_Loop();
+        osDelay(1000);
+    }}
+}}
+"""
+    (app_inc / "app_main.h").write_text(header, encoding="utf-8")
+    (app_src / "app_main.c").write_text(source, encoding="utf-8")
+    return {
+        "success": True,
+        "project": project,
+        "runtime": runtime,
+        "usart": usart_name,
+        "tx_pin": tx,
+        "rx_pin": rx,
+        "baudrate": baud,
+        "message": "UART hardware gate firmware generated. Build, flash, then monitor for LUXAR_HW_GATE_OK.",
+        "files": [str(app_inc / "app_main.h"), str(app_src / "app_main.c")],
+    }
+
+
 def workspace_write_file(project: str, path: str, content: str) -> dict:
     """Write content to a file within a project directory."""
     from pathlib import Path
@@ -367,14 +752,14 @@ def workspace_write_file(project: str, path: str, content: str) -> dict:
     if not project_dir.exists():
         return {"success": False, "error": f"Project '{project}' not found"}
     full_path = (project_dir / path).resolve()
-    if not str(full_path).startswith(str(project_dir.resolve())):
+    if not full_path.is_relative_to(project_dir.resolve()):
         return {"success": False, "error": "Access denied: path outside workspace"}
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return {"success": True, "path": str(full_path), "size": len(content)}
 
 # -- Safe shell commands --
-_ALLOWED_COMMANDS = frozenset({"cat", "grep", "rg", "head", "tail", "wc", "find", "ls", "dir", "type", "echo", "mkdir", "md", "rmdir", "rd", "copy", "move", "del", "cp", "mv", "rm", "findstr", "xcopy"})
+_ALLOWED_COMMANDS = frozenset({"cat", "grep", "rg", "head", "tail", "wc", "find", "ls", "dir", "type", "findstr"})
 _FORBIDDEN_PATTERNS = (";", "&&", "$(", "`", "&")
 _SHELL_TIMEOUT_SEC = 10
 _SHELL_MAX_OUTPUT = 16000

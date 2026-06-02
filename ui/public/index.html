@@ -129,14 +129,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .tool-output summary::marker{font-size:10px;color:#b0b4ba}
 .tool-output .tool-output-body{padding:0;max-height:400px;overflow:auto}
 .tool-output .tool-output-body pre{margin:0;border-radius:0;border:none;border-top:1px solid #e0e1e6}
-/* Tool output collapsible blocks */
-.tool-output{margin:8px 0;border:1px solid #e0e1e6;border-radius:8px;font-size:13px}
-.tool-output summary{cursor:pointer;padding:8px 14px;background:#f6f8fa;color:#60646c;font-weight:600;font-size:12px;user-select:none;transition:background .15s}
-.tool-output summary:hover{background:#ebeef2;color:#1c2024}
-.tool-output summary .tl-icon{font-size:14px;margin-right:6px}
-.tool-output summary::marker{font-size:10px;color:#b0b4ba}
-.tool-output .tool-output-body{padding:0;max-height:400px;overflow:auto}
-.tool-output .tool-output-body pre{margin:0;border-radius:0;border:none;border-top:1px solid #e0e1e6}
+.edited-files{margin:10px 0 0;border:1px solid #d7dce3;border-radius:8px;background:#fff;font-size:13px}
+.edited-files summary{cursor:pointer;user-select:none}
+.edited-files > summary{padding:9px 14px;background:#f6f8fa;color:#3b4048;font-weight:700;font-size:12px}
+.edited-file{border-top:1px solid #e8ebf0}
+.edited-file > summary{padding:8px 14px;color:#60646c;font-weight:600;font-size:12px}
+.edited-file-count{color:#7a808a;font-weight:500;margin-left:6px}
+.edited-file-content{border-top:1px solid #eef0f4;background:#fff}
+.edited-file-content > summary{padding:8px 18px;color:#60646c;font-size:12px;font-weight:600;background:#fbfcfd}
+.edited-file-body{max-height:420px;overflow:auto;border-top:1px solid #eef0f4}
+.edited-file-body pre{margin:0;border:none;border-radius:0;background:#f6f8fa;padding:12px 14px;white-space:pre-wrap;word-break:break-word}
 .chat-bubble.assistant .md table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
 .chat-bubble.assistant .md th,.chat-bubble.assistant .md td{border:1px solid #e0e1e6;padding:6px 10px;text-align:left}
 .chat-bubble.assistant .md th{background:#f6f8fa;font-weight:600}
@@ -421,7 +423,7 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
       <div class="form-group"><label>Project Name</label><input id="npm-name" /></div>
       <div class="form-group"><label>MCU</label><input id="npm-mcu" placeholder="STM32F103C8T6" /></div>
       <div class="form-group"><label>Platform</label><select id="npm-platform"><option value="stm32cubemx">stm32cubemx (CubeMX)</option><option value="stm32firmware">stm32firmware (bare)</option></select></div>
-      <div class="form-group"><label>Runtime</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
+      <div class="form-group"><label>System</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
       <div class="form-group"><label>FW Package</label><select id="npm-fw"><option value="STM32Cube_FW_F1">STM32Cube_FW_F1</option></select></div>
       <div id="cubemx-platform-hint" style="display:none;font-size:12px;color:#b45309;background:#fffbeb;padding:8px 12px;border-radius:8px;margin-top:4px" data-i18n="cubemx.platformHint">CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.</div>
     </div>
@@ -509,7 +511,7 @@ zh['cubemx.guideStep1']='打开 STM32CubeMX，选择 MCU 型号并配置外设';
 zh['cubemx.guideStep2']='点击 GENERATE CODE，输出路径选择本项目目录';
 zh['cubemx.guideDone']='已生成代码';
 zh['cubemx.awaitingGenerate']='等待 CubeMX 生成代码';
-zh['cubemx.platformHint']='CubeMX 平台将创建空项目，请后续使用 STM32CubeMX 生成代码';
+zh['cubemx.platformHint']='CubeMX 平台只创建 App/ 和 BSP/，请后续使用 STM32CubeMX 生成 Core/Drivers/CMake 等代码';
 
 zh['chat.activeProject']='当前项目：';
 zh['chat.welcomeTitle']='欢迎使用 Luxar';
@@ -522,7 +524,7 @@ zh['landing.aiHint']='进入聊天引导后，Luxar 会发送新建项目所需�
 zh['landing.aiJump']='进入聊天引导';
 zh['chat.globalWelcome']='从这里开始创建或打开项目。创建项目时，Luxar 会在聊天里一步步引导你补全项目所需信息。';
 zh['chat.startPage']='启动页';
-zh['chat.newProjectTemplate']='我们来一起创建一个新项目。请尽量按下面模板回复，我会根据这些信息帮你初始化工程，并在创建完成后自动切换到新项目对话窗口。\n\n项目创建信息模板：\n- 项目名：\n- MCU：\n- 平台：`stm32cubemx` 或 `stm32firmware`\n- 运行时：`baremetal` 或 `freertos`\n- 固件包：例如 `STM32Cube_FW_F1`\n- 目标功能：\n- 外设/通信：\n- 参考文档：如果有，请说明你会附加哪些资料\n\n示例：\n- 项目名：EnvMonitor\n- MCU：STM32F103C8T6\n- 平台：stm32cubemx\n- 运行时：baremetal\n- 固件包：STM32Cube_FW_F1\n- 目标功能：每 1 秒采集 AHT20 并通过 UART 打印温湿度\n- 外设/通信：I2C1, USART1, LED\n- 参考文档：AHT20 数据手册';
+zh['chat.newProjectTemplate']='我们来一起创建一个新项目。请尽量按下面模板回复，我会根据这些信息帮你初始化工程，并在创建完成后自动切换到新项目对话窗口。\n\n项目创建信息模板：\n- 项目名：\n- MCU：\n- 平台：`stm32cubemx` 或 `stm32firmware`\n- 系统：`baremetal` 或 `freertos`\n- 固件包：例如 `STM32Cube_FW_F1`\n- 目标功能：\n- 外设/通信：\n- 参考文档：如果有，请说明你会附加哪些资料\n\n示例：\n- 项目名：EnvMonitor\n- MCU：STM32F103C8T6\n- 平台：stm32cubemx\n- 系统：baremetal\n- 固件包：STM32Cube_FW_F1\n- 目标功能：每 1 秒采集 AHT20 并通过 UART 打印温湿度\n- 外设/通信：I2C1, USART1, LED\n- 参考文档：AHT20 数据手册';
 zh['chat.inputPlaceholder']='输入消息... /clear=清空上下文 (Enter=发送, Shift+Enter=换行)';
 zh['chat.sendBtn']='发送';
 zh['chat.selectProject']='请从侧边栏选择一个项目。';
@@ -547,7 +549,7 @@ zh['dashboard.configTitle']='配置';
 zh['dashboard.configProvider']='提供方';
 zh['dashboard.configModel']='模型';
 zh['dashboard.configPlatform']='平台';
-zh['dashboard.configRuntime']='运行时';
+zh['dashboard.configRuntime']='系统';
 zh['dashboard.configWorkspace']='工作空间';
 zh['dashboard.recentProjects']='项目';
 zh['dashboard.loadingProjects']='加载中...';
@@ -622,7 +624,7 @@ en['cubemx.guideStep1']='Open STM32CubeMX, select MCU model and configure periph
 en['cubemx.guideStep2']='Click GENERATE CODE, set output path to this project directory';
 en['cubemx.guideDone']='Code Generated';
 en['cubemx.awaitingGenerate']='Awaiting CubeMX code generation';
-en['cubemx.platformHint']='CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.';
+en['cubemx.platformHint']='CubeMX platform creates only App/ and BSP/. Please use STM32CubeMX to generate Core/Drivers/CMake and toolchain files afterwards.';
 
 en['chat.activeProject']='Active Project:';
 en['chat.welcomeTitle']='Welcome to Luxar';
@@ -635,7 +637,7 @@ en['landing.aiHint']='Luxar will open a guided chat and send you the project cre
 en['landing.aiJump']='Open guided chat';
 en['chat.globalWelcome']='Start here to create or open a project. When you choose AI setup, Luxar will guide project creation step by step in chat.';
 en['chat.startPage']='Start Page';
-en['chat.newProjectTemplate']='Let us create a new project together. Please reply using this template as much as possible. I will initialize the project from your answers and automatically switch you into the new project conversation when creation is complete.\n\nProject creation template:\n- Project name:\n- MCU:\n- Platform: `stm32cubemx` or `stm32firmware`\n- Runtime: `baremetal` or `freertos`\n- Firmware package: for example `STM32Cube_FW_F1`\n- Target behavior:\n- Peripherals / buses:\n- Reference docs: mention any files you plan to attach\n\nExample:\n- Project name: EnvMonitor\n- MCU: STM32F103C8T6\n- Platform: stm32cubemx\n- Runtime: baremetal\n- Firmware package: STM32Cube_FW_F1\n- Target behavior: sample AHT20 every second and print temperature and humidity over UART\n- Peripherals / buses: I2C1, USART1, LED\n- Reference docs: AHT20 datasheet';
+en['chat.newProjectTemplate']='Let us create a new project together. Please reply using this template as much as possible. I will initialize the project from your answers and automatically switch you into the new project conversation when creation is complete.\n\nProject creation template:\n- Project name:\n- MCU:\n- Platform: `stm32cubemx` or `stm32firmware`\n- System: `baremetal` or `freertos`\n- Firmware package: for example `STM32Cube_FW_F1`\n- Target behavior:\n- Peripherals / buses:\n- Reference docs: mention any files you plan to attach\n\nExample:\n- Project name: EnvMonitor\n- MCU: STM32F103C8T6\n- Platform: stm32cubemx\n- System: baremetal\n- Firmware package: STM32Cube_FW_F1\n- Target behavior: sample AHT20 every second and print temperature and humidity over UART\n- Peripherals / buses: I2C1, USART1, LED\n- Reference docs: AHT20 datasheet';
 en['chat.inputPlaceholder']='Type... /clear=reset context (Enter=send, Shift+Enter=newline)';
 en['chat.sendBtn']='Send';
 en['chat.selectProject']='Please select a project from the sidebar.';
@@ -660,7 +662,7 @@ en['dashboard.configTitle']='Configuration';
 en['dashboard.configProvider']='Provider';
 en['dashboard.configModel']='Model';
 en['dashboard.configPlatform']='Platform';
-en['dashboard.configRuntime']='Runtime';
+en['dashboard.configRuntime']='System';
 en['dashboard.configWorkspace']='Workspace';
 en['dashboard.recentProjects']='Projects';
 en['dashboard.loadingProjects']='Loading...';
@@ -936,57 +938,6 @@ var TOOL_ICONS = {
   'workspace_monitor': '\U0001f5a5\ufe0f'
 };
 
-function renderToolOutput(bubbleDiv, eventData, container) {
-  var tool = eventData.tool || '';
-  var summary = eventData.summary || '';
-  var contentText = eventData.content || '';
-  var icon = TOOL_ICONS[tool] || '\U0001f527';
-  var wrapper = document.createElement('details');
-  wrapper.className = 'tool-output';
-  wrapper.removeAttribute('open');
-  if (eventData.tool_call_id) { wrapper.setAttribute('data-tool-call-id', eventData.tool_call_id); }
-  var sum = document.createElement('summary');
-  var iconSpan = document.createElement('span');
-  iconSpan.className = 'tl-icon';
-  iconSpan.textContent = icon;
-  sum.appendChild(iconSpan);
-  sum.appendChild(document.createTextNode((tool ? tool + ': ' : '') + summary));
-  wrapper.appendChild(sum);
-  if (contentText) {
-    var body = document.createElement('div');
-    body.className = 'tool-output-body';
-    var pre = document.createElement('pre');
-    var code = document.createElement('code');
-    code.textContent = contentText;
-    pre.appendChild(code);
-    body.appendChild(pre);
-    wrapper.appendChild(body);
-  }
-  wrapper.open = false;
-  bubbleDiv.appendChild(wrapper);
-  if (typeof hljs !== 'undefined' && contentText) { try { hljs.highlightElement(code); } catch(e) {} }
-  if (container) container.scrollTop = container.scrollHeight;
-}
-
-function renderToolOutputRefine(eventData) {
-  var toolCallId = eventData.tool_call_id || '';
-  var summary = eventData.summary || '';
-  var contentText = eventData.content || '';
-  var wrapper = document.querySelector('.tool-output[data-tool-call-id="' + toolCallId + '"]');
-  if (!wrapper) return;
-  var sum = wrapper.querySelector('summary');
-  if (sum && summary) { sum.textContent = summary; }
-  var body = wrapper.querySelector('.tool-output-body');
-  if (body) {
-    if (contentText) {
-      var pre = body.querySelector('pre');
-      var code = pre ? pre.querySelector('code') : null;
-      if (!pre) { pre = document.createElement('pre'); code = document.createElement('code'); pre.appendChild(code); body.innerHTML = ''; body.appendChild(pre); }
-      if (code) { code.textContent = contentText; if (typeof hljs !== 'undefined') { try { hljs.highlightElement(code); } catch(e) {} } }
-    } else { body.innerHTML = ''; }
-  }
-}
-
 function showSerialOutput() {
   var panel = document.getElementById('serial-output-panel');
   if (panel) panel.style.display = 'block';
@@ -996,20 +947,119 @@ function clearSerialOutput() {
   if (linesEl) linesEl.textContent = '';
 }
 
-function formatToolRunningLine(chunk) {
-  if (!chunk || !chunk.tool) return '';
-  var suffix = chunk.task ? chunk.task : chunk.tool;
-  return '_' + t('chat.toolRunning') + ': ' + suffix + '..._';
+function isEditableToolOutput(eventData) {
+  return eventData && eventData.tool === 'workspace_write_file';
 }
 
-var TOOL_ICONS = {
-  'workspace_shell': '\u2328\ufe0f',
-  'workspace_read_file': '\U0001f4c4',
-  'workspace_write_file': '\u270f\ufe0f',
-  'workspace_build': '\U0001f528',
-  'workspace_flash': '\u26a1',
-  'workspace_monitor': '\U0001f5a5\ufe0f'
-};
+function shouldRenderVerboseToolOutput(eventData) {
+  return eventData && eventData.tool === 'workspace_build' && !!eventData.content;
+}
+
+function extractEditedFilePath(eventData) {
+  var summary = eventData.summary || '';
+  var match = summary.match(/^Wrote\s+(.+?)\s+\(\d+\s+chars\)/i);
+  if (match && match[1]) return match[1];
+  return eventData.path || eventData.file || eventData.tool_call_id || 'modified file';
+}
+
+function createEditedFilesController(bubbleDiv, container) {
+  var state = {items: {}, order: [], wrapper: null, summary: null};
+
+  function ensureWrapper() {
+    if (state.wrapper) return state.wrapper;
+    var wrapper = document.createElement('details');
+    wrapper.className = 'edited-files';
+    wrapper.removeAttribute('open');
+    var summary = document.createElement('summary');
+    wrapper.appendChild(summary);
+    state.wrapper = wrapper;
+    state.summary = summary;
+    bubbleDiv.appendChild(wrapper);
+    return wrapper;
+  }
+
+  function updateSummary() {
+    var count = state.order.length;
+    state.summary.textContent = '\u5df2\u7f16\u8f91 ' + count + ' \u4e2a\u6587\u4ef6';
+  }
+
+  function renderFileItem(item) {
+    if (!item.node) {
+      item.node = document.createElement('details');
+      item.node.className = 'edited-file';
+      item.summaryNode = document.createElement('summary');
+      item.contentNode = document.createElement('details');
+      item.contentNode.className = 'edited-file-content';
+      item.contentSummaryNode = document.createElement('summary');
+      item.contentSummaryNode.textContent = '\u4fee\u6539\u5185\u5bb9';
+      item.bodyNode = document.createElement('div');
+      item.bodyNode.className = 'edited-file-body';
+      var pre = document.createElement('pre');
+      item.codeNode = document.createElement('code');
+      pre.appendChild(item.codeNode);
+      item.bodyNode.appendChild(pre);
+      item.contentNode.appendChild(item.contentSummaryNode);
+      item.contentNode.appendChild(item.bodyNode);
+      item.node.appendChild(item.summaryNode);
+      item.node.appendChild(item.contentNode);
+      state.wrapper.appendChild(item.node);
+    }
+    item.summaryNode.innerHTML = '';
+    item.summaryNode.appendChild(document.createTextNode(item.path));
+    if (item.count > 1) {
+      var countSpan = document.createElement('span');
+      countSpan.className = 'edited-file-count';
+      countSpan.textContent = '\u66f4\u65b0 ' + item.count + ' \u6b21';
+      item.summaryNode.appendChild(countSpan);
+    }
+    item.codeNode.textContent = item.content || item.summary || '\u5df2\u4fee\u6539\uff0c\u4f46\u5de5\u5177\u4e8b\u4ef6\u672a\u63d0\u4f9b\u8be6\u7ec6\u5185\u5bb9\u3002';
+    if (typeof hljs !== 'undefined') {
+      try { hljs.highlightElement(item.codeNode); } catch(e) {}
+    }
+  }
+
+  return {
+    add: function(eventData) {
+      var path = extractEditedFilePath(eventData);
+      ensureWrapper();
+      if (!state.items[path]) {
+        state.items[path] = {path: path, count: 0, summary: '', content: '', node: null};
+        state.order.push(path);
+      }
+      var item = state.items[path];
+      item.count += 1;
+      item.toolCallId = eventData.tool_call_id || item.toolCallId || '';
+      item.summary = eventData.summary || item.summary;
+      item.content = eventData.content || item.content;
+      updateSummary();
+      renderFileItem(item);
+      if (container) container.scrollTop = container.scrollHeight;
+    },
+    refine: function(eventData) {
+      var toolCallId = eventData.tool_call_id || '';
+      var paths = state.order.filter(function(path) {
+        var item = state.items[path];
+        return item && item.toolCallId === toolCallId;
+      });
+      if (!paths.length) return false;
+      var item = state.items[paths[0]];
+      item.summary = eventData.summary || item.summary;
+      item.content = eventData.content || item.content;
+      renderFileItem(item);
+      if (container) container.scrollTop = container.scrollHeight;
+      return true;
+    },
+    reset: function() {
+      if (state.wrapper && state.wrapper.parentNode) {
+        state.wrapper.parentNode.removeChild(state.wrapper);
+      }
+      state.items = {};
+      state.order = [];
+      state.wrapper = null;
+      state.summary = null;
+    }
+  };
+}
 
 function renderToolOutput(bubbleDiv, eventData, container) {
   var tool = eventData.tool || '';
@@ -1500,6 +1550,7 @@ async function sendMessage() {
   container.appendChild(bubbleDiv);
   var streamContent = '';
   var statusController = createChatStatusController(typingDiv);
+  var editedFilesController = createEditedFilesController(bubbleDiv, container);
   statusController.setState('thinking');
 
   abortController = new AbortController();
@@ -1582,7 +1633,11 @@ async function sendMessage() {
           } else if (currentEvent === 'tool_output') {
             try {
               var outputData = JSON.parse(dataStr);
-              renderToolOutput(bubbleDiv, outputData, container);
+              if (isEditableToolOutput(outputData)) {
+                editedFilesController.add(outputData);
+              } else if (shouldRenderVerboseToolOutput(outputData)) {
+                renderToolOutput(bubbleDiv, outputData, container);
+              }
             } catch(e) {}
           } else if (currentEvent === 'serial_line') {
             try {
@@ -1606,7 +1661,9 @@ async function sendMessage() {
           } else if (currentEvent === 'tool_output_refine') {
             try {
               var refineData = JSON.parse(dataStr);
-              renderToolOutputRefine(refineData);
+              if (!editedFilesController.refine(refineData)) {
+                renderToolOutputRefine(refineData);
+              }
             } catch(e) {}
           } else if (currentEvent === 'tool_call') {
             try {
@@ -1617,11 +1674,6 @@ async function sendMessage() {
             try {
               var runningChunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: runningChunk.tool || ''});
-              var toolLine = formatToolRunningLine(runningChunk);
-              if (toolLine) {
-                streamContent += '\n\n' + toolLine + '\n\n';
-                renderStreamMarkdown(mdDiv, streamContent, container);
-              }
             } catch(e) {}
           } else if (currentEvent === 'project_created') {
             try {
@@ -1635,30 +1687,23 @@ pendingProjectSelection = pname;
           } else if (currentEvent === 'phase_changed') {
             try {
               var phaseChunk = JSON.parse(dataStr);
-              var phaseLine = '_phase: ' + escapeHtml(phaseChunk.phase || 'runtime');
-              if (phaseChunk.tool) phaseLine += ' · ' + escapeHtml(phaseChunk.tool);
-              phaseLine += '_';
-              streamContent += '\n\n' + phaseLine + '\n\n';
-              renderStreamMarkdown(mdDiv, streamContent, container);
+              statusController.setState('tool_running', {toolName: phaseChunk.tool || phaseChunk.phase || ''});
             } catch(e) {}
           } else if (currentEvent === 'skill_loaded') {
             try {
               var skillChunk = JSON.parse(dataStr);
               var skillName = skillChunk.tool || skillChunk.name || 'skill';
-              streamContent += '\n\n_' + t('chat.toolRunning') + ': skill ' + escapeHtml(skillName) + '_\n\n';
-              renderStreamMarkdown(mdDiv, streamContent, container);
+              statusController.setState('tool_running', {toolName: skillName});
             } catch(e) {}
           } else if (currentEvent === 'lesson_recorded') {
             try {
               var lessonChunk = JSON.parse(dataStr);
-              streamContent += '\n\n_lesson recorded: ' + escapeHtml(lessonChunk.tool || 'lesson_record') + '_\n\n';
-              renderStreamMarkdown(mdDiv, streamContent, container);
+              statusController.setState('tool_running', {toolName: lessonChunk.tool || 'lesson_record'});
             } catch(e) {}
           } else if (currentEvent === 'promotion_applied') {
             try {
               var promotionChunk = JSON.parse(dataStr);
-              streamContent += '\n\n_promotion applied: ' + escapeHtml(promotionChunk.tool || 'promotion') + '_\n\n';
-              renderStreamMarkdown(mdDiv, streamContent, container);
+              statusController.setState('tool_running', {toolName: promotionChunk.tool || 'promotion'});
             } catch(e) {}
           } else if (currentEvent === 'escalation_triggered') {
             try {
@@ -1677,8 +1722,8 @@ pendingProjectSelection = pname;
           } else if (currentEvent === 'log') {
             try {
               var logData = JSON.parse(dataStr);
-              if (logData.message) {
-                var icon = logData.success ? '\u2705' : '\u274C';
+              if (logData.message && logData.success === false) {
+                var icon = '\u274C';
                 streamContent += '\n\n' + icon + ' ' + logData.message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '\n\n';
                 renderStreamMarkdown(mdDiv, streamContent, container);
               }
@@ -1687,6 +1732,7 @@ pendingProjectSelection = pname;
             streamContent = '';
             mdDiv.innerHTML = '';
             resultDiv.innerHTML = '';
+            editedFilesController.reset();
           } else if (currentEvent === 'error') {
             try {
               var chunk = JSON.parse(dataStr);

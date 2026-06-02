@@ -21,7 +21,7 @@ PROJECT_TEMPLATE_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("项目名", "project name", "name"),
     "mcu": ("mcu",),
     "platform": ("平台", "platform"),
-    "runtime": ("运行时", "runtime"),
+    "runtime": ("系统", "运行时", "runtime"),
     "firmware_package": ("固件包", "firmware package"),
     "target": ("目标功能", "target behavior", "target function"),
     "peripherals": ("外设/通信", "peripherals / buses", "peripherals", "buses"),
@@ -84,7 +84,7 @@ def build_project_creation_summary(project_payload: dict[str, str], created_name
         f"项目 `{created_name}` 已创建。",
         f"MCU: {project_payload.get('mcu', '')}",
         f"平台: {project_payload.get('platform', 'stm32cubemx')}",
-        f"运行时: {project_payload.get('runtime', 'baremetal')}",
+        f"系统: {project_payload.get('runtime', 'baremetal')}",
         f"固件包: {project_payload.get('firmware_package', 'STM32Cube_FW_F1')}",
     ]
     if project_payload.get("target"):
@@ -102,7 +102,7 @@ def create_project_from_template(project_payload: dict[str, str], cfg: Any, cm: 
     if platform not in {"stm32cubemx", "stm32firmware"}:
         raise ValueError("平台必须是 stm32cubemx 或 stm32firmware。")
     if runtime not in {"baremetal", "freertos"}:
-        raise ValueError("运行时必须是 baremetal 或 freertos。")
+        raise ValueError("系统必须是 baremetal 或 freertos。")
 
     result = run_init_project(
         workspace=str(cm.workspace_root()),

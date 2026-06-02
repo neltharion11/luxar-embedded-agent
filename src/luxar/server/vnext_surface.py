@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
-from sse_starlette.sse import EventSourceResponse
-import asyncio
-import json
 from sse_starlette.sse import EventSourceResponse
 import asyncio
 import json
@@ -33,7 +29,9 @@ def register_vnext_http_surface(
     workspace_monitor_start,
     workspace_monitor_stop,
     workspace_monitor_status,
+    workspace_hw_probe,
     workspace_probe,
+    workspace_uart_gate,
     skills_list,
     skill_view,
     skill_manage,
@@ -162,69 +160,30 @@ def register_vnext_http_surface(
                 await asyncio.sleep(0.2)
         return EventSourceResponse(event_stream())
 
-    @app.get("/api/drivers")
-    def api_list_drivers():
-        from pathlib import Path as _P
-        _root = _P(__file__).resolve().parent.parent.parent.parent
-        _dr = _root / "workspace" / "driver_library" / "generated"
-        if not _dr.exists():
-            return {"drivers": []}
-        drivers = []
-        for periph_dir in sorted(_dr.iterdir()):
-            if not periph_dir.is_dir():
-                continue
-            peripheral = periph_dir.name
-            for vendor_dir in sorted(periph_dir.iterdir()):
-                if not vendor_dir.is_dir():
-                    continue
-                vendor = vendor_dir.name
-                for drv_dir in sorted(vendor_dir.iterdir()):
-                    if not drv_dir.is_dir():
-                        continue
-                    files = []
-                    for f in sorted(drv_dir.iterdir()):
-                        if f.suffix in (".c", ".h"):
-                            files.append({"name": f.name, "size": f.stat().st_size})
-                    if files:
-                        drivers.append({"name": drv_dir.name, "peripheral": peripheral, "vendor": vendor, "files": files})
-        return {"drivers": drivers}
-
-    
-    @app.delete("/api/projects/{name}")
-    def api_delete_project(name: str):
-        import shutil
-        target = cm.workspace_root() / name
-        if not target.exists():
-            raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
-        try:
-            shutil.rmtree(target)
-            return {"success": True, "project": name}
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
-
-    @app.post("/api/projects/import")
-    def api_import_project(body: dict):
-        import shutil, json as _json
-        source = str(body.get("source_path", "") or body.get("path", "")).strip()
-        if not source:
-            raise HTTPException(status_code=400, detail="source_path or path is required")
-        name = str(body.get("name", "")).strip() or Path(source).name
-        src = Path(source)
-        if not src.exists():
-            raise HTTPException(status_code=404, detail=f"Source path not found: {source}")
-        dst = cm.workspace_root() / name
-        if dst.exists():
-            raise HTTPException(status_code=409, detail=f"Project '{name}' already exists")
-        shutil.copytree(src, dst)
-        from luxar.core.project_detector import detect_project
-        detected = detect_project(str(dst))
-        meta = {"name": name, **detected}
-        (dst / ".agent_project.json").write_text(_json.dumps(meta, indent=2), encoding="utf-8")
-        return {"success": True, "project": meta}
-
     @app.post("/api/workspace/probe")
     def api_workspace_probe(body: dict):
         result = workspace_probe(project=str(body.get("project", "")), probe_type=str(body.get("probe_type", "i2c")))
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/hw-probe")
+    def api_workspace_hw_probe(body: dict):
+        result = workspace_hw_probe(
+            project=str(body.get("project", "")),
+            probe=str(body.get("probe", "stlink")),
+            address=str(body.get("address", "0x08000000")),
+            words=int(body.get("words", 1)),
+        )
+        return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+
+    @app.post("/api/workspace/uart-gate")
+    def api_workspace_uart_gate(body: dict):
+        result = workspace_uart_gate(
+            project=str(body.get("project", "")),
+            usart=str(body.get("usart", "")),
+            tx_pin=str(body.get("tx_pin", "")),
+            rx_pin=str(body.get("rx_pin", "")),
+            baudrate=int(body.get("baudrate", 115200)),
+        )
         return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
 
     @app.get("/api/skills")
@@ -267,18 +226,4 @@ def register_vnext_http_surface(
             baudrate=int(body.get("baudrate", 115200)),
         )
 
-
-    @app.get("/api/pick-files")
-    def api_pick_files():
-        """Open a tkinter file/directory picker dialog and return selected paths."""
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        paths = list(filedialog.askopenfilenames(
-            title="Select files to attach",
-        ))
-        root.destroy()
-        return {"paths": paths}
 

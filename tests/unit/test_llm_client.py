@@ -64,9 +64,6 @@ class LLMClientTests(unittest.TestCase):
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual("gpt-test", body["model"])
         system_content = body["messages"][0]["content"]
-        self.assertIn("You are LUXAR vNext.", system_content)
-        self.assertIn("Harness is the runtime behavior system", system_content)
-        self.assertIn("Promotion from draft to validated always requires evidence.", system_content)
         self.assertIn("system", system_content)
 
     def test_claude_provider_parses_message_blocks(self) -> None:

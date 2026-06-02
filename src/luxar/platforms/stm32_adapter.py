@@ -91,7 +91,7 @@ class STM32CubeMXAdapter(PlatformAdapter):
         preset_name = self._detect_cmake_preset(project)
         if preset_name is not None:
             env = os.environ.copy()
-            if self.toolchain_manager is not None:
+            if self.toolchain_manager is not None and not self._is_cubemx_project(project):
                 arm_gcc_bin = self.toolchain_manager.resolve_arm_gcc_bin_dir()
                 if arm_gcc_bin:
                     env["PATH"] = arm_gcc_bin + os.pathsep + env.get("PATH", "")
@@ -353,22 +353,16 @@ class STM32CubeMXAdapter(PlatformAdapter):
 
     def flash(self, project_path: str, probe: str | None = None) -> FlashResult:
         project = Path(project_path)
-        openocd_bin = (
-            self.toolchain_manager.resolve_openocd()
-            if self.toolchain_manager is not None
-            else shutil.which("openocd")
-        )
-        programmer_cli = (
-            self.toolchain_manager.resolve_programmer_cli()
-            if self.toolchain_manager is not None
-            else None
-        )
+        use_cubemx_tools = self._is_cubemx_project(project)
+        openocd_bin = self._resolve_flash_tool("openocd", use_cubemx_tools)
+        programmer_cli = self._resolve_flash_tool("STM32_Programmer_CLI", use_cubemx_tools)
         if openocd_bin is None and programmer_cli is None:
+            tool_hint = "CubeMX/CubeCLT PATH" if use_cubemx_tools else "bundled toolchains or PATH"
             return FlashResult(
                 success=False,
                 command=[],
                 return_code=-1,
-                stderr="Neither `openocd` nor `STM32_Programmer_CLI` is available in bundled toolchains or PATH.",
+                stderr=f"Neither `openocd` nor `STM32_Programmer_CLI` is available in {tool_hint}.",
             )
 
         candidates = self._find_flash_artifacts(project)
@@ -381,13 +375,16 @@ class STM32CubeMXAdapter(PlatformAdapter):
             )
 
         artifact = candidates[0]
-        # 1) Try probe-rs first (modern, cross-platform, no external deps)
-        chip = self._detect_chip_from_build(project)
-        probe_rs_result = self._flash_with_probe_rs(project, artifact, chip)
-        if probe_rs_result is not None:
-            return probe_rs_result
+        # 1) Try probe-rs first for LUXAR-native firmware projects. CubeMX
+        # projects intentionally use CubeMX/CubeCLT tools without changing the
+        # generated toolchain environment.
+        if not use_cubemx_tools:
+            chip = self._detect_chip_from_build(project)
+            probe_rs_result = self._flash_with_probe_rs(project, artifact, chip)
+            if probe_rs_result is not None:
+                return probe_rs_result
 
-        # 2) Fallback: STM32_Programmer_CLI
+        # 2) STM32_Programmer_CLI
         if programmer_cli is not None:
             probe_inventory = self._list_stlink_probes(programmer_cli, project)
             flash_artifact = artifact
@@ -658,7 +655,39 @@ class STM32CubeMXAdapter(PlatformAdapter):
         except Exception as exc:
             import logging
             logging.getLogger('luxar').debug('probe-rs flash attempt failed: %s', exc)
-            return None
+        return None
+
+    def _is_cubemx_project(self, project: Path) -> bool:
+        meta_file = project / ".agent_project.json"
+        if meta_file.exists():
+            try:
+                data = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+            if str(data.get("platform", "")).strip().lower() == "stm32cubemx":
+                return True
+            if str(data.get("project_mode", "")).strip().lower() == "cubemx":
+                return True
+        return bool(list(project.glob("*.ioc")))
+
+    def _resolve_flash_tool(self, tool: str, cubemx_tools: bool) -> str | None:
+        if tool == "openocd":
+            if cubemx_tools:
+                return shutil.which("openocd")
+            return (
+                self.toolchain_manager.resolve_openocd()
+                if self.toolchain_manager is not None
+                else shutil.which("openocd")
+            )
+        if tool == "STM32_Programmer_CLI":
+            if cubemx_tools:
+                return shutil.which("STM32_Programmer_CLI") or shutil.which("STM32_Programmer_CLI.exe")
+            return (
+                self.toolchain_manager.resolve_programmer_cli()
+                if self.toolchain_manager is not None
+                else shutil.which("STM32_Programmer_CLI") or shutil.which("STM32_Programmer_CLI.exe")
+            )
+        return None
 
     def _detect_cmake_preset(self, project: Path) -> str | None:
         presets_file = project / "CMakePresets.json"

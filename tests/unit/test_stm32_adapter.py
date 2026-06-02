@@ -100,7 +100,7 @@ class STM32AdapterBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             project = root / "Demo"
-            build_dir = project / "build"
+            build_dir = project / "build" / "Debug"
             cmake_dir = project / "cmake"
             project.mkdir(parents=True, exist_ok=True)
             build_dir.mkdir(parents=True, exist_ok=True)
@@ -160,13 +160,57 @@ class STM32AdapterBuildTests(unittest.TestCase):
             self.assertFalse(result.success)
             self.assertTrue(any("UART_HandleTypeDef" in item for item in result.errors))
 
+    def test_cubemx_preset_build_does_not_inject_luxar_toolchain_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "CubeDemo"
+            project.mkdir(parents=True, exist_ok=True)
+            (project / ".agent_project.json").write_text(
+                '{"platform":"stm32cubemx","project_mode":"cubemx","runtime":"freertos"}',
+                encoding="utf-8",
+            )
+            (project / "demo.ioc").write_text("ProjectManager.DeviceId=STM32F103C8T6\n", encoding="utf-8")
+            (project / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.22)\nproject(CubeDemo C ASM)\n",
+                encoding="utf-8",
+            )
+            (project / "CMakePresets.json").write_text(
+                '{"version":3,"configurePresets":[{"name":"Debug","generator":"Ninja","binaryDir":"${sourceDir}/build/Debug"}],"buildPresets":[{"name":"Debug","configurePreset":"Debug"}]}',
+                encoding="utf-8",
+            )
+
+            tool_bin = root / "workspace" / "toolchains" / "gcc-arm" / "bin"
+            tool_bin.mkdir(parents=True, exist_ok=True)
+            (tool_bin / "arm-none-eabi-gcc.exe").write_text("", encoding="utf-8")
+            ninja_bin = root / "workspace" / "toolchains" / "ninja"
+            ninja_bin.mkdir(parents=True, exist_ok=True)
+            (ninja_bin / "ninja.exe").write_text("", encoding="utf-8")
+            cmake_bin = root / "workspace" / "toolchains" / "cmake" / "bin"
+            cmake_bin.mkdir(parents=True, exist_ok=True)
+            (cmake_bin / "cmake.exe").write_text("", encoding="utf-8")
+
+            config = AgentConfig()
+            manager = ToolchainManager(config=config, project_root=root)
+            adapter = STM32CubeMXAdapter(toolchain_manager=manager)
+
+            configure = mock.Mock(returncode=0, stdout="", stderr="")
+            build = mock.Mock(returncode=0, stdout="", stderr="")
+            with mock.patch("luxar.platforms.stm32_adapter.subprocess.run", side_effect=[configure, build]) as run_mock:
+                result = adapter.build(str(project))
+
+            self.assertTrue(result.success)
+            configure_env_path = run_mock.call_args_list[0].kwargs["env"].get("PATH", "")
+            self.assertNotIn(str(tool_bin), configure_env_path)
+            self.assertNotIn(str(ninja_bin), configure_env_path)
+            self.assertEqual([str(cmake_bin / "cmake.exe"), "--preset", "Debug", "-S", str(project)], run_mock.call_args_list[0].args[0])
+
 
 class STM32AdapterFlashTests(unittest.TestCase):
     def test_flash_augments_probe_missing_when_stlink_is_listed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             project = root / "Demo"
-            build_dir = project / "build"
+            build_dir = project / "build" / "Debug"
             build_dir.mkdir(parents=True, exist_ok=True)
             artifact = build_dir / "demo.elf"
             artifact.write_text("", encoding="utf-8")
@@ -214,6 +258,46 @@ class STM32AdapterFlashTests(unittest.TestCase):
             for call in run_mock.call_args_list:
                 self.assertEqual("utf-8", call.kwargs.get("encoding"))
                 self.assertEqual("replace", call.kwargs.get("errors"))
+
+    def test_cubemx_flash_uses_path_programmer_not_bundled_probe_rs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "CubeDemo"
+            build_dir = project / "build" / "Debug"
+            build_dir.mkdir(parents=True, exist_ok=True)
+            (project / ".agent_project.json").write_text(
+                '{"platform":"stm32cubemx","project_mode":"cubemx"}',
+                encoding="utf-8",
+            )
+            (project / "demo.ioc").write_text("ProjectManager.DeviceId=STM32F103C8T6\n", encoding="utf-8")
+            (build_dir / "demo.elf").write_text("", encoding="utf-8")
+
+            bundled_programmer = root / "workspace" / "toolchains" / "programmer" / "bin"
+            bundled_programmer.mkdir(parents=True, exist_ok=True)
+            (bundled_programmer / "STM32_Programmer_CLI.exe").write_text("", encoding="utf-8")
+            bundled_probe_rs = root / "workspace" / "toolchains" / "probe-rs" / "bin"
+            bundled_probe_rs.mkdir(parents=True, exist_ok=True)
+            (bundled_probe_rs / "probe-rs.exe").write_text("", encoding="utf-8")
+
+            config = AgentConfig()
+            manager = ToolchainManager(config=config, project_root=root)
+            adapter = STM32CubeMXAdapter(toolchain_manager=manager)
+
+            def which(name: str) -> str | None:
+                if name in {"STM32_Programmer_CLI", "STM32_Programmer_CLI.exe"}:
+                    return r"C:\CubeCLT\STM32_Programmer_CLI.exe"
+                return None
+
+            list_result = mock.Mock(returncode=0, stdout="ST-LINK SN : 12345678", stderr="")
+            flash_result = mock.Mock(returncode=0, stdout="ok", stderr="")
+            with mock.patch("luxar.platforms.stm32_adapter.shutil.which", side_effect=which), mock.patch(
+                "luxar.platforms.stm32_adapter.subprocess.run", side_effect=[list_result, flash_result]
+            ) as run_mock:
+                result = adapter.flash(str(project))
+
+            self.assertTrue(result.success)
+            self.assertEqual(r"C:\CubeCLT\STM32_Programmer_CLI.exe", run_mock.call_args_list[1].args[0][0])
+            self.assertNotIn("probe-rs", " ".join(run_mock.call_args_list[0].args[0]).lower())
 
 
 class STM32AdapterMonitorTests(unittest.TestCase):

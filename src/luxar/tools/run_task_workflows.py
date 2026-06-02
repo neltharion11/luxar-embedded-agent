@@ -23,7 +23,7 @@ def stream_project_status(
         mode="status",
         intent=execution_plan.intent.intent_type,
         execution_plan=execution_plan,
-        message=f"当前项目是 {project.name}，MCU 是 {project.mcu}，平台是 {project.platform}，运行时是 {project.runtime}。",
+        message=f"当前项目是 {project.name}，MCU 是 {project.mcu}，平台是 {project.platform}，系统是 {project.runtime}。",
         project=project.model_dump(mode="json"),
     )
     yield stream_event(

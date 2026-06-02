@@ -106,6 +106,8 @@ class ProjectConfig(BaseModel):
     mcu: str = ""
     ioc_file: str = ""
     firmware_package: str = ""
+    family: str = ""
+    device_define: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
 
 

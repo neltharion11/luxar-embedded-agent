@@ -8,7 +8,7 @@ from luxar.core.config_manager import AgentConfig
 from luxar.core.llm_client import LLMClient, LLMClientError
 from luxar.models.schemas import SkillArtifact
 SKILL_EVOLUTION_SYSTEM_PROMPT = """
-你是 LUXAR 0.2.2 runtime 中的 skill-evolution worker。
+你是 LUXAR 0.2.3 runtime 中的 skill-evolution worker。
 负责把项目经验沉淀成可复用的 skill 草稿。
 输出必须务实、可复用、避免项目私货，优先总结接口模式、约束、调试经验和边界条件。
 不要把一次性失败噪声写进正式 skill；更适合的内容应进入 lesson 或 harness。
@@ -27,7 +27,7 @@ SKILL_EVOLUTION_PROMPT = """
 【平台】
 {platforms}
 
-【运行时】
+【系统】
 {runtimes}
 
 【来源项目】
@@ -192,7 +192,7 @@ This skill captures reusable guidance for building and reviewing {protocol.upper
 - Protocol: {protocol.upper()}
 - Validated device example: {device_name}
 - Platforms: {", ".join(platforms) or "unknown"}
-- Runtimes: {", ".join(runtimes) or "unknown"}
+- Systems: {", ".join(runtimes) or "unknown"}
 - Validation source: {source_project}
 
 ## Interface Pattern

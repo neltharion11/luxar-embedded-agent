@@ -37,8 +37,10 @@ from luxar.tools.workspace_tool import (
     workspace_monitor_start,
     workspace_monitor_stop,
     workspace_monitor_status,
+    workspace_hw_probe,
     workspace_probe,
     workspace_status,
+    workspace_uart_gate,
 )
 from luxar.server.legacy_surface import (
     normalize_project_name,
@@ -150,7 +152,7 @@ async def _execute_tool_with_timeout(name: str, args: dict, cfg: Any, cm: Config
 
 
 def _legacy_http_surface_enabled() -> bool:
-    return os.getenv(LEGACY_HTTP_SURFACE_ENV, "1").strip() == "1"
+    return os.getenv(LEGACY_HTTP_SURFACE_ENV, "0").strip() == "1"
 
 
 _conversation_state = ConversationState()
@@ -244,11 +246,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
             MonitorManager.instance().stop()
             _conversation_state.close()
 
-    app = FastAPI(title="Luxar API", version="0.2.2", lifespan=lifespan)
+    app = FastAPI(title="Luxar API", version="0.2.3", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://127.0.0.1",
+            "http://127.0.0.1:8000",
+            "http://localhost",
+            "http://localhost:8000",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -284,7 +291,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         workspace_monitor_start=workspace_monitor_start,
         workspace_monitor_stop=workspace_monitor_stop,
         workspace_monitor_status=workspace_monitor_status,
+        workspace_hw_probe=workspace_hw_probe,
         workspace_probe=workspace_probe,
+        workspace_uart_gate=workspace_uart_gate,
         workspace_status=workspace_status,
         skills_list=vnext_skills_list,
         skill_view=skill_view,

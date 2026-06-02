@@ -7,6 +7,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 
+def _redact_config(payload: dict) -> dict:
+    redacted = dict(payload)
+    if isinstance(redacted.get("api_keys"), dict):
+        redacted["api_keys"] = {
+            key: ("***" if value else "")
+            for key, value in redacted["api_keys"].items()
+        }
+    return redacted
+
+
 def register_app_shell_surface(app: FastAPI, *, cfg, cm) -> None:
     ui_dir = Path(__file__).resolve().parent.parent.parent.parent / "ui" / "public"
     if ui_dir.exists():
@@ -21,7 +31,7 @@ def register_app_shell_surface(app: FastAPI, *, cfg, cm) -> None:
 
     @app.get("/api/config")
     def get_config():
-        return cfg.model_dump(mode="json")
+        return _redact_config(cfg.model_dump(mode="json"))
 
     @app.put("/api/config")
     async def update_config(body: dict):

@@ -52,7 +52,7 @@ class ToolchainManager:
 
     def resolve_probe_rs(self) -> str | None:
         return self._resolve_binary(
-            explicit=self.config.toolchains.probe_rs,
+            explicit=getattr(self.config.toolchains, "probe_rs", ""),
             bundled_relatives=[
                 "probe-rs/bin/probe-rs.exe",
                 "probe-rs/bin/probe-rs",
@@ -62,7 +62,7 @@ class ToolchainManager:
 
     def resolve_platformio(self) -> str | None:
         return self._resolve_binary(
-            explicit=self.config.toolchains.platformio,
+            explicit=getattr(self.config.toolchains, "platformio", ""),
             bundled_relatives=["platformio/platformio.exe","platformio/platformio"],
             fallback_name="platformio",
         )
@@ -123,5 +123,4 @@ class ToolchainManager:
             ],
             fallback_name=tool_name,
         )
-
 
