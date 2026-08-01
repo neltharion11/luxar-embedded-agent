@@ -18,3 +18,8 @@ Path → EspIdfPort → BuildEvidence
 
 Verified on 2026-08-01: Port imports succeed, no provider/tool leakage, and the 15-test suite remains green.
 
+## Fake Adapters
+
+三个 Fake 通过构造函数接收预设 Domain 对象并记录调用。`FakeEspIdf` 依次返回配置的 `BuildEvidence`，支持稳定验证失败后重试成功；证据耗尽时抛出测试配置错误，不静默编造工具事实。
+
+Verified on 2026-08-01: 4 adapter contract tests and 19 total tests pass.

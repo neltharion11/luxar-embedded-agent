@@ -20,7 +20,9 @@ The project now distinguishes an intended action (`ExecutionPlan`), an observed 
 
 The application-owned Ports for requirement parsing, planning, and ESP-IDF building are complete. Core layers contain no DeepSeek, OpenAI-compatible client, subprocess, LangGraph, or API-key dependencies.
 
-Next: implement deterministic Fake Adapters that satisfy the same Ports and make every external result controllable in tests.
+Deterministic Fake Adapters now satisfy the three Ports, record calls, and provide controlled requirement, plan, and build evidence. Adapter suite: 4 passed; full suite: 19 passed.
+
+Next: define LangGraph `WorkflowState` for changing business progress and `RuntimeContext` for injected Parser, Planner, ESP-IDF, and project-path dependencies.
 
 ## Authorship contract
 
