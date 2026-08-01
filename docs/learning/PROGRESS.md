@@ -16,7 +16,9 @@ The formal Python package baseline and the first Domain object, `FirmwareRequire
 
 ## Next technical slice
 
-Model the difference between an intended action (`ExecutionPlan`), an observed tool fact (`BuildEvidence`), and a normalized failure (`WorkflowError`).
+The project now distinguishes an intended action (`ExecutionPlan`), an observed tool fact (`BuildEvidence`), and a normalized failure (`WorkflowError`). The complete Domain suite passes 15 tests.
+
+Next: define application-owned Ports for requirement parsing, planning, and ESP-IDF building so Graph nodes depend on capabilities rather than DeepSeek or CLI implementations.
 
 ## Authorship contract
 
