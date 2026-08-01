@@ -35,7 +35,7 @@ START → analyze_requirement
 
 ## Next production slices
 
-1. `DeepSeekRequirementParser`, `DeepSeekPlanner`, and `DeepSeekRepairPlanner` with mocked API-response tests.
+1. `DeepSeekRequirementParser`, `DeepSeekPlanner`, and `DeepSeekRepairPlanner` through an OpenAI-compatible client pointed exclusively at the DeepSeek API. See `docs/superpowers/specs/2026-08-01-luxar-deepseek-adapters-design.md`.
 2. `LocalWorkspaceAdapter` with resolved-path containment, file allowlists, and size limits.
 3. ESP-IDF CLI Adapter with GCC/CMake/linker diagnostic parsing into `BuildDiagnostic`.
 

@@ -6,6 +6,8 @@
 
 > **2026-08-01 修订：** 源码修复闭环已由学习者确认。`BuildDiagnostic`、`RepairPlan`、`RepairPlanner`、`WorkspacePort`、`repair_project` 和修订后的路由规则以 `2026-08-01-luxar-repair-loop-design.md` 为权威依据。
 
+> **2026-08-01 DeepSeek 修订：** 真实模型接入的客户端、配置、错误、结构化输出、测试和冒烟边界以 `2026-08-01-luxar-deepseek-adapters-design.md` 为权威依据。
+
 ## 1. 目标与边界
 
 在 `C:\tmp\luxar-langgraph` 建立一个完全独立、可测试、可渐进迁移的新版 LUXAR。旧仓库 `C:\Users\Gugugu\Documents\Codex\LUXAR` 只作为既有行为和接口证据，不被新项目导入或修改；`C:\tmp\luxar-from-zero` 保留为 Lessons 0–2 的学习记录。

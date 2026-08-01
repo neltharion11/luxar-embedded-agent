@@ -63,6 +63,15 @@ Result: 65 passed. Core-layer searches found no old learning-package imports and
 
 Next: implement the DeepSeek Adapter slice, beginning with a shared OpenAI-compatible DeepSeek client boundary and mocked structured-output tests for requirement parsing, planning, and repair planning.
 
+The DeepSeek Adapter architecture is now approved. It uses the `openai` Python package only as an OpenAI-compatible transport pointed at `https://api.deepseek.com`, with current `deepseek-v4-flash` and `deepseek-v4-pro` models. Default tests remain offline; one real requirement-parsing smoke test is explicitly opt-in.
+
+Authoritative DeepSeek documents:
+
+- `docs/superpowers/specs/2026-08-01-luxar-deepseek-adapters-design.md`
+- `docs/superpowers/plans/2026-08-01-luxar-deepseek-adapters-plan.md`
+
+Next: add settings, dependencies, and the stable capability-error boundary.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
