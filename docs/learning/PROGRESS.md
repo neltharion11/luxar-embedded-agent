@@ -22,7 +22,9 @@ The application-owned Ports for requirement parsing, planning, and ESP-IDF build
 
 Deterministic Fake Adapters now satisfy the three Ports, record calls, and provide controlled requirement, plan, and build evidence. Adapter suite: 4 passed; full suite: 19 passed.
 
-Next: define LangGraph `WorkflowState` for changing business progress and `RuntimeContext` for injected Parser, Planner, ESP-IDF, and project-path dependencies.
+`WorkflowState` and frozen `RuntimeContext` are complete. The State holds business progress; the Context injects Parser, Planner, ESP-IDF, and project path without provider leakage. Full suite: 20 passed.
+
+Next: implement LangGraph nodes that use `Runtime[RuntimeContext]` to call Ports and return minimal State updates.
 
 ## Authorship contract
 
