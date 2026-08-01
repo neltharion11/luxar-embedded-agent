@@ -1,0 +1,2 @@
+"""Business models and invariants."""
+
