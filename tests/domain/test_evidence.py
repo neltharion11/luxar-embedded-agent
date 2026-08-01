@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from luxar.domain.evidence import BuildEvidence
+from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
 
 
 def test_successful_build_evidence_preserves_executed_command() -> None:
@@ -55,3 +55,64 @@ def test_build_evidence_requires_an_executed_command() -> None:
     with pytest.raises(ValidationError):
         BuildEvidence(success=False, command=[], return_code=-1)
 
+
+def test_build_diagnostic_preserves_source_location() -> None:
+    diagnostic = BuildDiagnostic(
+        file="main/main.c",
+        line=42,
+        column=5,
+        severity="error",
+        code="undeclared_identifier",
+        message="'gpio_num' undeclared",
+    )
+    evidence = BuildEvidence(
+        success=False,
+        command=["idf.py", "build"],
+        return_code=1,
+        error_category="source",
+        diagnostics=[diagnostic],
+    )
+
+    assert evidence.diagnostics == [diagnostic]
+    assert evidence.diagnostics[0].file == "main/main.c"
+    assert evidence.diagnostics[0].line == 42
+    assert evidence.diagnostics[0].column == 5
+
+
+@pytest.mark.parametrize(("line", "column"), [(0, 1), (1, 0)])
+def test_build_diagnostic_rejects_zero_source_positions(
+    line: int,
+    column: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        BuildDiagnostic(
+            line=line,
+            column=column,
+            severity="error",
+            message="compiler error",
+        )
+
+
+def test_build_diagnostic_rejects_empty_message() -> None:
+    with pytest.raises(ValidationError):
+        BuildDiagnostic(severity="error", message="")
+
+
+def test_build_evidence_diagnostics_defaults_are_independent() -> None:
+    first = BuildEvidence(
+        success=True,
+        command=["idf.py", "build"],
+        return_code=0,
+    )
+    second = BuildEvidence(
+        success=True,
+        command=["idf.py", "build"],
+        return_code=0,
+    )
+
+    first.diagnostics.append(
+        BuildDiagnostic(severity="warning", message="unused variable")
+    )
+
+    assert len(first.diagnostics) == 1
+    assert second.diagnostics == []

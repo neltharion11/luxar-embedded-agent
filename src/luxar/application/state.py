@@ -6,6 +6,7 @@ from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan
 from luxar.domain.requirements import FirmwareRequirement
+from luxar.domain.repairs import RepairPlan
 
 
 WorkflowStatus = Literal[
@@ -14,6 +15,7 @@ WorkflowStatus = Literal[
     "planned",
     "building",
     "retrying",
+    "repaired",
     "completed",
     "failed",
 ]
@@ -29,3 +31,5 @@ class WorkflowState(TypedDict, total=False):
     max_attempts: int
     status: WorkflowStatus
     trace: list[str]
+    repair_plan: RepairPlan
+    changed_files: list[str]

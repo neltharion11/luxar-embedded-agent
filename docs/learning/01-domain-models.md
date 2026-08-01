@@ -24,6 +24,8 @@ Verified on 2026-08-01: `4 passed`.
 
 ## BuildEvidence
 
+`BuildEvidence` 现在通过 `diagnostics: list[BuildDiagnostic]` 保存结构化编译器事实。每条诊断可以记录项目文件、从 1 开始的行列位置、warning/error 严重性、可选诊断码和非空消息。`stderr_summary` 仍保留无法完全结构化的构建上下文；DeepSeek 可以读取这些证据，但不能生成或篡改构建证据。
+
 `BuildEvidence` 保存参数化命令、退出码、输出摘要和错误类别。模型不能创建可信构建证据；只有执行工具的 Adapter 可以产生它。模型级后置验证器保证成功标志、退出码和错误类别互相一致。
 
 ## WorkflowError

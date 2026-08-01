@@ -1,5 +1,7 @@
 # 新版 LUXAR 企业纵向切片实施与教学计划
 
+> **2026-08-01 计划修订：** 原 Task 8 中“可重试源码错误直接重新构建”和原 Task 9 的六节点拓扑已废止。当前检查点之后必须转入 `2026-08-01-luxar-repair-loop-plan.md`，实现结构化诊断、受限完整文件修复和七节点 Graph。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task in the learner-owned repository. Do not delegate the learner's core coding exercises to subagents. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在独立仓库中完成一条从自然语言任务到结构化构建证据的可运行企业纵向切片，同时让学习者掌握 Agent 边界、LangGraph 运行时依赖注入、领域建模、Ports/Adapters、节点、路由和分层测试。

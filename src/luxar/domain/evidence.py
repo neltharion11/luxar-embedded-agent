@@ -5,6 +5,15 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class BuildDiagnostic(BaseModel):
+    file: str | None = None
+    line: int | None = Field(default=None, ge=1)
+    column: int | None = Field(default=None, ge=1)
+    severity: Literal["warning", "error"]
+    code: str | None = None
+    message: str = Field(min_length=1)
+
+
 class BuildEvidence(BaseModel):
     success: bool
     command: list[str] = Field(min_length=1)
@@ -18,6 +27,7 @@ class BuildEvidence(BaseModel):
         "timeout",
         "unknown",
     ] | None = None
+    diagnostics: list[BuildDiagnostic] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_result_consistency(self) -> BuildEvidence:
