@@ -18,7 +18,9 @@ The formal Python package baseline and the first Domain object, `FirmwareRequire
 
 The project now distinguishes an intended action (`ExecutionPlan`), an observed tool fact (`BuildEvidence`), and a normalized failure (`WorkflowError`). The complete Domain suite passes 15 tests.
 
-Next: define application-owned Ports for requirement parsing, planning, and ESP-IDF building so Graph nodes depend on capabilities rather than DeepSeek or CLI implementations.
+The application-owned Ports for requirement parsing, planning, and ESP-IDF building are complete. Core layers contain no DeepSeek, OpenAI-compatible client, subprocess, LangGraph, or API-key dependencies.
+
+Next: implement deterministic Fake Adapters that satisfy the same Ports and make every external result controllable in tests.
 
 ## Authorship contract
 
