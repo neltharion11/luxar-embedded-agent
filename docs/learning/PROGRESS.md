@@ -82,6 +82,10 @@ All 30 Python source files now begin with a Chinese module description and inclu
 
 Next: implement `DeepSeekRequirementParser`, the first business Adapter that converts a JSON dictionary into a validated LUXAR Domain object.
 
+`DeepSeekRequirementParser` is complete. It sends the current Pydantic JSON Schema and JSON-encoded user task through the configured fast model, preserves explicit missing fields, and converts unsupported/missing/mistyped output into a sanitized `invalid_schema` capability error. Parser suite: 6 passed; full offline suite: 99 passed.
+
+Next: implement `DeepSeekPlanner`, converting a validated requirement into a validated ordered `ExecutionPlan`.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
