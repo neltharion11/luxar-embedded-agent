@@ -38,13 +38,13 @@
 - `DeepSeekSettings(BaseSettings)` exposes secret-safe API key, base URL, fast model, repair model, and positive timeout.
 - `CapabilityError(RuntimeError)` exposes stable `category`, `message`, and `retryable` fields.
 
-- [ ] Codex adds `openai>=2,<3` and `pydantic-settings>=2,<3` dependencies and installs the editable project.
-- [ ] Codex teaches `BaseSettings`, environment prefixes, `SecretStr`, and why no `.env` is generated.
-- [ ] Learner implements `DeepSeekSettings` with `SettingsConfigDict(env_prefix="DEEPSEEK_", extra="ignore")`.
-- [ ] Codex teaches stable capability exceptions versus SDK exception leakage.
-- [ ] Learner implements `CapabilityErrorCategory` and `CapabilityError`.
-- [ ] Codex adds tests for defaults, environment overrides, missing keys, secret-safe repr, categories, and retryability.
-- [ ] Run focused tests and save `feat: configure DeepSeek capability boundary`.
+- [x] Codex adds `openai>=2,<3` and `pydantic-settings>=2,<3` dependencies and installs the editable project.
+- [x] Codex teaches `BaseSettings`, environment prefixes, `SecretStr`, and why no `.env` is generated.
+- [x] Learner implements `DeepSeekSettings` with `SettingsConfigDict(env_prefix="DEEPSEEK_", extra="ignore")`.
+- [x] Codex teaches stable capability exceptions versus SDK exception leakage.
+- [x] Learner implements `CapabilityErrorCategory` and `CapabilityError`.
+- [x] Codex adds tests for defaults, environment overrides, missing keys, secret-safe repr, categories, and retryability.
+- [x] Run focused tests and save `feat: configure DeepSeek capability boundary`.
 
 ---
 
@@ -70,14 +70,14 @@ class JsonCompletionClient(Protocol):
     ) -> dict[str, object]: ...
 ```
 
-- [ ] Teach SDK wrapper versus business Adapter and constructor injection of a mocked SDK object.
-- [ ] Learner defines `JsonCompletionClient` and `DeepSeekJsonClient`.
-- [ ] Client sends Chat Completions messages and `response_format={"type": "json_object"}`.
-- [ ] Client rejects missing choices, empty content, invalid JSON, and non-object JSON through `CapabilityError`.
-- [ ] Client maps SDK authentication, timeout, rate-limit, connection, and status errors without raw sensitive bodies.
-- [ ] Learner implements a sequenced `FakeJsonCompletionClient` with call recording.
-- [ ] Codex adds all success/error mapping tests and verifies no network call occurs.
-- [ ] Run focused tests and save `feat: wrap DeepSeek JSON completions`.
+- [x] Teach SDK wrapper versus business Adapter and constructor injection of a mocked SDK object.
+- [x] Learner defines `JsonCompletionClient` and `DeepSeekJsonClient`.
+- [x] Client sends Chat Completions messages and `response_format={"type": "json_object"}`.
+- [x] Client rejects missing choices, empty content, invalid JSON, and non-object JSON through `CapabilityError`.
+- [x] Client maps SDK authentication, timeout, rate-limit, connection, and status errors without raw sensitive bodies.
+- [x] Learner implements a sequenced `FakeJsonCompletionClient` with call recording.
+- [x] Codex adds all success/error mapping tests and verifies no network call occurs.
+- [x] Run focused tests and save `feat: wrap DeepSeek JSON completions`.
 
 ---
 
@@ -94,12 +94,12 @@ class JsonCompletionClient(Protocol):
 - Implements existing `RequirementParser.parse(task_text) -> FirmwareRequirement`.
 - Constructor receives `JsonCompletionClient` and model name.
 
-- [ ] Teach schema-guided JSON output and why JSON validity is weaker than Domain validity.
-- [ ] Learner builds a narrow system prompt containing `FirmwareRequirement.model_json_schema()`.
-- [ ] Learner serializes the user task through `json.dumps` and validates with `FirmwareRequirement.model_validate()`.
-- [ ] Invalid schema becomes `CapabilityError(category="invalid_schema", retryable=False)`.
-- [ ] Codex tests complete and incomplete requirements, prompt/model recording, unsupported platform, missing required fields, and extra prose avoidance.
-- [ ] Run focused and full tests; save `feat: parse firmware requirements with DeepSeek`.
+- [x] Teach schema-guided JSON output and why JSON validity is weaker than Domain validity.
+- [x] Learner builds a narrow system prompt containing `FirmwareRequirement.model_json_schema()`.
+- [x] Learner serializes the user task through `json.dumps` and validates with `FirmwareRequirement.model_validate()`.
+- [x] Invalid schema becomes `CapabilityError(category="invalid_schema", retryable=False)`.
+- [x] Codex tests complete and incomplete requirements, prompt/model recording, unsupported platform, missing required fields, and extra prose avoidance.
+- [x] Run focused and full tests; save `feat: parse firmware requirements with DeepSeek`.
 
 ---
 
@@ -115,11 +115,11 @@ class JsonCompletionClient(Protocol):
 - Implements existing `Planner.create_plan(requirement) -> ExecutionPlan`.
 - Constructor receives `JsonCompletionClient` and model name.
 
-- [ ] Teach validated input serialization and action-vocabulary enforcement.
-- [ ] Learner sends `requirement.model_dump(mode="json")` and `ExecutionPlan.model_json_schema()`.
-- [ ] Learner validates with `ExecutionPlan.model_validate()` and normalizes schema errors.
-- [ ] Codex tests valid ordered steps, empty plans, unsupported actions, and exact client calls.
-- [ ] Run focused and full tests; save `feat: create execution plans with DeepSeek`.
+- [x] Teach validated input serialization and action-vocabulary enforcement.
+- [x] Learner sends `requirement.model_dump(mode="json")` and `ExecutionPlan.model_json_schema()`.
+- [x] Learner validates with `ExecutionPlan.model_validate()` and normalizes schema errors.
+- [x] Codex tests valid ordered steps, empty plans, unsupported actions, and exact client calls.
+- [x] Run focused and full tests; save `feat: create execution plans with DeepSeek`.
 
 ---
 
@@ -135,11 +135,11 @@ class JsonCompletionClient(Protocol):
 - Implements existing four-argument `RepairPlanner.create_repair(...) -> RepairPlan`.
 - Constructor receives `JsonCompletionClient` and repair model name.
 
-- [ ] Trace requirement, plan, evidence/diagnostics, and project files into one JSON user payload.
-- [ ] Learner includes `RepairPlan.model_json_schema()` and requires complete-file replacements.
-- [ ] Learner validates with `RepairPlan.model_validate()`; unsafe or duplicate paths become non-retryable `invalid_schema` errors.
-- [ ] Codex tests diagnostic/file propagation, complete replacement content, path rejection, and exact repair-model selection.
-- [ ] Run focused and full tests; save `feat: plan evidence-driven repairs with DeepSeek`.
+- [x] Trace requirement, plan, evidence/diagnostics, and project files into one JSON user payload.
+- [x] Learner includes `RepairPlan.model_json_schema()` and requires complete-file replacements.
+- [x] Learner validates with `RepairPlan.model_validate()`; unsafe or duplicate paths become non-retryable `invalid_schema` errors.
+- [x] Codex tests diagnostic/file propagation, complete replacement content, path rejection, and exact repair-model selection.
+- [x] Run focused and full tests; save `feat: plan evidence-driven repairs with DeepSeek`.
 
 ---
 
@@ -155,11 +155,11 @@ class JsonCompletionClient(Protocol):
 
 - Produces a composition function that receives `EspIdfPort`, `WorkspacePort`, and `project_path`, loads settings, builds one shared client, constructs three DeepSeek Adapters, and returns `RuntimeContext`.
 
-- [ ] Teach composition root and prove why Graph code must not import DeepSeek.
-- [ ] Learner implements production Context construction with fast model for requirement/planning and repair model for repair.
-- [ ] Codex tests exact Adapter/client identity and models without network access.
-- [ ] Re-run Graph topology test unchanged.
-- [ ] Save `feat: compose DeepSeek runtime adapters`.
+- [x] Teach composition root and prove why Graph code must not import DeepSeek.
+- [x] Learner implements production Context construction with fast model for requirement/planning and repair model for repair.
+- [x] Codex tests exact Adapter/client identity and models without network access.
+- [x] Re-run Graph topology test unchanged.
+- [x] Save `feat: compose DeepSeek runtime adapters`.
 
 ---
 
@@ -194,4 +194,3 @@ class JsonCompletionClient(Protocol):
 5. The existing compiled Graph and topology test remain unchanged.
 6. SDK and output failures become stable capability errors.
 7. The learner can trace one natural-language task from Runtime Context through DeepSeek JSON into validated State.
-

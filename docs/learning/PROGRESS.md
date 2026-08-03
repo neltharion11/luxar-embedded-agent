@@ -1,6 +1,6 @@
 # LUXAR Enterprise Learning Progress
 
-Updated: 2026-08-01
+Updated: 2026-08-03
 
 ## Current milestone
 
@@ -93,6 +93,10 @@ Next: implement `DeepSeekRepairPlanner`, carrying build diagnostics and validate
 `DeepSeekRepairPlanner` is complete. It sends validated requirement/plan/evidence/file data through the configured repair model, explicitly treats logs and source as untrusted data, and validates complete-file replacements through the existing path invariants. Tests prove absolute paths, parent traversal, duplicate targets, and empty repairs are rejected even when the model violates the prompt. Repair Adapter suite: 6 passed; full offline suite: 110 passed.
 
 Next: add the composition root that constructs one shared DeepSeek client and injects the three production model Adapters into the unchanged Runtime Context and Graph.
+
+The DeepSeek composition root is complete. It creates or accepts one shared JSON Client, assigns the fast model to requirement parsing and execution planning, assigns the repair model to evidence-driven repair, and injects those Adapters together with the ESP-IDF and Workspace Ports into `RuntimeContext`. Offline wiring tests prove exact object identity and model selection; the unchanged Graph topology test still passes. Focused suite: 3 passed.
+
+Next: add the explicitly opt-in real DeepSeek smoke test, then design the smallest centralized `CapabilityError` to `WorkflowError` application boundary before learner implementation.
 
 ## Authorship contract
 
