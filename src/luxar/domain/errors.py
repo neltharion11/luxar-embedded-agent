@@ -8,13 +8,14 @@ from pydantic import BaseModel
 
 
 class WorkflowError(BaseModel):
-    # Literal 把阶段和类别限制在 Graph 已知的有限集合内，便于可靠路由和展示。
     stage: Literal[
         "requirement_analysis",
         "planning",
         "project_creation",
         "build",
+        "repair",
     ]
+
     category: Literal[
         "model_output",
         "environment",
@@ -22,7 +23,11 @@ class WorkflowError(BaseModel):
         "linker",
         "timeout",
         "unknown",
+        "authentication",
+        "rate_limit",
+        "service",
     ]
+
     message: str
     retryable: bool
     user_suggestion: str = ""

@@ -35,7 +35,7 @@
 - `WorkflowError.category` additionally accepts `"authentication"`, `"rate_limit"`, and `"service"`.
 - Existing stages and categories remain valid.
 
-- [ ] **Step 1: Codex adds failing vocabulary tests**
+- [x] **Step 1: Codex adds failing vocabulary tests**
 
 Add parameterized construction tests equivalent to:
 
@@ -64,7 +64,7 @@ def test_workflow_error_accepts_model_capability_failures(
     assert error.category == category
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -74,11 +74,11 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: the new cases fail with Pydantic literal-validation errors because the vocabulary is not yet extended.
 
-- [ ] **Step 3: Teach the Domain change**
+- [x] **Step 3: Teach the Domain change**
 
 Explain that `Literal` is a runtime vocabulary boundary through Pydantic, not merely an editor hint here. The new words describe provider-independent operational failures and do not mention DeepSeek.
 
-- [ ] **Step 4: Learner extends the two `Literal` lists**
+- [x] **Step 4: Learner extends the two `Literal` lists**
 
 The resulting fields are:
 
@@ -103,11 +103,11 @@ category: Literal[
 ]
 ```
 
-- [ ] **Step 5: Run focused and full tests**
+- [x] **Step 5: Run focused and full tests**
 
 Expected: the Domain tests and all existing tests pass.
 
-- [ ] **Step 6: Save the Domain vocabulary checkpoint**
+- [x] **Step 6: Save the Domain vocabulary checkpoint**
 
 Commit only the Domain model and its tests as:
 
