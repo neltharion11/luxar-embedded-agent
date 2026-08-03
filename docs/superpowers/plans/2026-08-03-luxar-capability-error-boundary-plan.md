@@ -280,7 +280,7 @@ feat: handle capability failures at workflow boundary
 - Default test execution skips without network access.
 - Explicit execution uses `DeepSeekSettings`, `DeepSeekJsonClient`, and `DeepSeekRequirementParser` directly.
 
-- [ ] **Step 1: Codex writes the smoke gate and one-call assertion**
+- [x] **Step 1: Codex writes the smoke gate and one-call assertion**
 
 The test uses both conditions:
 
@@ -299,15 +299,15 @@ pytestmark = pytest.mark.skipif(
 
 The request is a minimal ESP32 GPIO-blink requirement. Assertions inspect only the validated `FirmwareRequirement`, never the raw response or secret.
 
-- [ ] **Step 2: Run the smoke file without opt-in**
+- [x] **Step 2: Run the smoke file without opt-in**
 
 Expected: one skipped test and zero network calls.
 
-- [ ] **Step 3: Run the complete offline suite**
+- [x] **Step 3: Run the complete offline suite**
 
 Expected: all ordinary tests pass and the smoke remains skipped.
 
-- [ ] **Step 4: Do not run the real request unless the learner explicitly enables it**
+- [x] **Step 4: Do not run the real request unless the learner explicitly enables it**
 
 If both environment values are present but the learner has not explicitly requested quota use, leave the test skipped and report the exact opt-in command instead.
 
@@ -322,7 +322,7 @@ If both environment values are present but the learner has not explicitly reques
 - Codex modifies: `docs/superpowers/plans/2026-08-01-luxar-deepseek-adapters-plan.md`
 - Codex modifies: this plan
 
-- [ ] **Step 1: Document the production entry chain**
+- [x] **Step 1: Document the production entry chain**
 
 Record:
 
@@ -333,19 +333,19 @@ run_workflow(initial_state=..., context=...) -> WorkflowState
 
 Explain the smoke opt-in without including an actual API key.
 
-- [ ] **Step 2: Run dependency and secret-leak searches**
+- [x] **Step 2: Run dependency and secret-leak searches**
 
 Verify only `src/luxar/adapters/deepseek/` imports `openai`. Search tracked files for common API-key prefixes and confirm no secret value, raw response body, or local absolute repair path was added.
 
-- [ ] **Step 3: Run final verification**
+- [x] **Step 3: Run final verification**
 
 Run the complete required pytest command and `git diff --check`. Read the exit code and exact pass/skip totals before claiming completion.
 
-- [ ] **Step 4: Synchronize both plans and learning progress**
+- [x] **Step 4: Synchronize both plans and learning progress**
 
 Mark completed checkboxes, record the verified counts, and identify the next enterprise slice without asking the learner to edit Markdown.
 
-- [ ] **Step 5: Save the completed DeepSeek Adapter slice**
+- [x] **Step 5: Save the completed DeepSeek Adapter slice**
 
 Commit documentation and final test adjustments as:
 

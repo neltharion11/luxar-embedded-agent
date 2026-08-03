@@ -98,6 +98,12 @@ The DeepSeek composition root is complete. It creates or accepts one shared JSON
 
 Next: add the explicitly opt-in real DeepSeek smoke test, then design the smallest centralized `CapabilityError` to `WorkflowError` application boundary before learner implementation.
 
+The centralized model-capability error boundary is complete. `run_workflow()` consumes full State snapshots, catches `CapabilityError` once outside the seven business nodes, maps it to fixed application-owned `WorkflowError` text, and returns an explicit failed State. Tests prove requirement, plan, build evidence, diagnostics, and attempts survive failures at later stages. Runner suite: 14 passed.
+
+The optional real DeepSeek requirement-parser smoke test is present and guarded by both `DEEPSEEK_API_KEY` and `LUXAR_RUN_DEEPSEEK_SMOKE=1`. It was collected but intentionally not sent. Final complete offline verification for the DeepSeek Adapter slice: 130 passed, 1 skipped. Dependency searches found exactly one application `CapabilityError` catch and only one `openai` import location under the DeepSeek client package.
+
+Next enterprise slice: implement a path-contained `LocalWorkspaceAdapter`, then a real ESP-IDF CLI Adapter, while continuing to teach the complete Agent call chain through production-quality code.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.

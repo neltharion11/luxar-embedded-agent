@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-03
 
-**Status:** Approved in teaching; pending written-spec review
+**Status:** Approved and implemented
 
 **Repository:** `C:\tmp\luxar-langgraph`
 

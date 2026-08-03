@@ -177,13 +177,13 @@ class JsonCompletionClient(Protocol):
 - Smoke test skips unless both explicit environment conditions are true.
 - Stable `CapabilityError` becomes a sanitized `WorkflowError` and explicit failed State without provider leakage.
 
-- [ ] Codex writes the opt-in smoke test; it sends one minimal requirement request and never prints the key or raw response.
-- [ ] Teach centralized capability-error handling and select the smallest LangGraph-compatible boundary.
-- [ ] Learner implements the approved error-to-State path.
-- [ ] Codex tests authentication/timeout/service/schema failure termination and evidence preservation.
-- [ ] Run the full offline suite and dependency-leak searches.
-- [ ] If explicitly enabled by the learner, run the one-call real smoke test.
-- [ ] Record final checkpoint and save `feat: complete DeepSeek adapter slice`.
+- [x] Codex writes the opt-in smoke test; it sends one minimal requirement request and never prints the key or raw response.
+- [x] Teach centralized capability-error handling and select the smallest LangGraph-compatible boundary.
+- [x] Learner implements the approved error-to-State path.
+- [x] Codex tests authentication/timeout/service/schema failure termination and evidence preservation.
+- [x] Run the full offline suite and dependency-leak searches.
+- [x] If explicitly enabled by the learner, run the one-call real smoke test. It remained intentionally disabled because the learner did not request quota use.
+- [x] Record final checkpoint and save `feat: complete DeepSeek adapter slice`.
 
 ## Final Gate
 
