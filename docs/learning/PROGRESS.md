@@ -90,6 +90,10 @@ Next: implement `DeepSeekPlanner`, converting a validated requirement into a val
 
 Next: implement `DeepSeekRepairPlanner`, carrying build diagnostics and validated project files into a complete-file `RepairPlan`.
 
+`DeepSeekRepairPlanner` is complete. It sends validated requirement/plan/evidence/file data through the configured repair model, explicitly treats logs and source as untrusted data, and validates complete-file replacements through the existing path invariants. Tests prove absolute paths, parent traversal, duplicate targets, and empty repairs are rejected even when the model violates the prompt. Repair Adapter suite: 6 passed; full offline suite: 110 passed.
+
+Next: add the composition root that constructs one shared DeepSeek client and injects the three production model Adapters into the unchanged Runtime Context and Graph.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
