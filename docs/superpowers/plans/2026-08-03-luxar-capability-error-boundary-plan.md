@@ -140,7 +140,7 @@ def run_workflow(
 ) -> WorkflowState: ...
 ```
 
-- [ ] **Step 1: Codex adds failing pure-mapping tests**
+- [x] **Step 1: Codex adds failing pure-mapping tests**
 
 Cover this exact mapping:
 
@@ -167,7 +167,7 @@ Test stage selection with three States:
 
 Each test injects a sensitive marker into `CapabilityError.message` and asserts that marker is absent from `WorkflowError.message` and `user_suggestion`.
 
-- [ ] **Step 2: Codex adds failing Runner integration tests**
+- [x] **Step 2: Codex adds failing Runner integration tests**
 
 Use test-local Port implementations that raise configured `CapabilityError` values. Prove:
 
@@ -177,7 +177,7 @@ Use test-local Port implementations that raise configured `CapabilityError` valu
 - success still reaches `status="completed"`;
 - the returned trace ends in `"failed"` for handled failures.
 
-- [ ] **Step 3: Run the focused test and verify RED**
+- [x] **Step 3: Run the focused test and verify RED**
 
 Run:
 
@@ -187,7 +187,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: collection fails because `luxar.application.runner` does not exist.
 
-- [ ] **Step 4: Teach the Runner call chain and syntax**
+- [x] **Step 4: Teach the Runner call chain and syntax**
 
 Explain:
 
@@ -204,7 +204,7 @@ run_workflow
 
 Also explain generator iteration, `try/except`, dictionary unpacking order, and why `latest_state` starts as a copy of `initial_state`.
 
-- [ ] **Step 5: Learner implements fixed-message mapping**
+- [x] **Step 5: Learner implements fixed-message mapping**
 
 Use application-owned dictionaries for category, message, and suggestion. Do not copy `error.message`. Preserve only `error.retryable`.
 
@@ -219,7 +219,7 @@ else:
     stage = "repair"
 ```
 
-- [ ] **Step 6: Learner implements the one-catch Runner**
+- [x] **Step 6: Learner implements the one-catch Runner**
 
 The implementation follows this exact control flow:
 
@@ -251,15 +251,15 @@ except CapabilityError as error:
 return latest_state
 ```
 
-- [ ] **Step 7: Run focused tests and inspect visible output**
+- [x] **Step 7: Run focused tests and inspect visible output**
 
 Expected: all Runner cases pass without a network call. Explain each pytest case and the State it proves.
 
-- [ ] **Step 8: Re-run the unchanged Graph topology test and full suite**
+- [x] **Step 8: Re-run the unchanged Graph topology test and full suite**
 
 Expected: topology remains unchanged and the complete offline suite passes.
 
-- [ ] **Step 9: Save the Runner checkpoint**
+- [x] **Step 9: Save the Runner checkpoint**
 
 Commit the Runner and tests as:
 
