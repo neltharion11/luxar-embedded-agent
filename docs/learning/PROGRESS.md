@@ -86,6 +86,10 @@ Next: implement `DeepSeekRequirementParser`, the first business Adapter that con
 
 Next: implement `DeepSeekPlanner`, converting a validated requirement into a validated ordered `ExecutionPlan`.
 
+`DeepSeekPlanner` is complete. It serializes the validated requirement, sends the generated `ExecutionPlan` schema through the selected fast model, preserves ordered supported actions, and rejects empty, unknown, or incomplete steps through a sanitized `invalid_schema` error. Planner suite: 5 passed; full offline suite: 104 passed.
+
+Next: implement `DeepSeekRepairPlanner`, carrying build diagnostics and validated project files into a complete-file `RepairPlan`.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
