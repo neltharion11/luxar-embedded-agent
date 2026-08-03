@@ -1,2 +1,1 @@
-"""Business models and invariants."""
-
+"""领域层：定义 LUXAR 的业务数据结构和不允许被破坏的业务规则。"""

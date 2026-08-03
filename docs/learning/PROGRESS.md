@@ -76,6 +76,8 @@ DeepSeek Task 1 is complete. `DeepSeekSettings` reads a secret-safe key and curr
 
 Next: implement the shared `JsonCompletionClient`, its deterministic Fake, and the production DeepSeek JSON wrapper.
 
+All 30 Python source files now begin with a Chinese module description and include focused beginner comments for validation, typing, dependency injection, State updates, routing, Graph composition, and Fake behavior. `FakeJsonCompletionClient` was also moved into the planned `adapters/deepseek/` package.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.

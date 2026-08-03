@@ -1,3 +1,5 @@
+"""工作流错误领域模型：用稳定业务语言记录失败阶段、类别和恢复建议。"""
+
 from __future__ import annotations
 
 from typing import Literal
@@ -6,6 +8,7 @@ from pydantic import BaseModel
 
 
 class WorkflowError(BaseModel):
+    # Literal 把阶段和类别限制在 Graph 已知的有限集合内，便于可靠路由和展示。
     stage: Literal[
         "requirement_analysis",
         "planning",

@@ -1,2 +1,1 @@
-"""LangGraph workflow orchestration."""
-
+"""应用层：使用 LangGraph 编排节点、状态、路由和运行时依赖。"""

@@ -1,2 +1,1 @@
-"""Application-owned external capability contracts."""
-
+"""Ports 层：声明应用需要哪些外部能力，不关心这些能力由谁具体实现。"""

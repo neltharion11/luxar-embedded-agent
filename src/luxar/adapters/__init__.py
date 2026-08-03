@@ -1,2 +1,1 @@
-"""External capability implementations."""
-
+"""Adapters 层：提供模型、文件系统和构建工具等外部能力的具体实现。"""
