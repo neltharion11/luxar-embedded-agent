@@ -104,6 +104,8 @@ The optional real DeepSeek requirement-parser smoke test is present and guarded 
 
 Next enterprise slice: implement a path-contained `LocalWorkspaceAdapter`, then a real ESP-IDF CLI Adapter, while continuing to teach the complete Agent call chain through production-quality code.
 
+A consolidated Chinese review guide now provides one learning entrypoint for the completed material. It maps English Agent/LangGraph architecture terms to Chinese explanations and real source files, explains the Python syntax used in LUXAR, traces four vertical workflow paths, and summarizes tests, safety boundaries, common misconceptions, and a one-page review checklist. The existing `01` through `07` notes remain as deeper topic chapters.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.

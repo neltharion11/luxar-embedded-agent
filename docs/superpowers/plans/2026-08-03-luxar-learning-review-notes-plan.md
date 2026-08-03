@@ -25,14 +25,14 @@
 
 - Codex 创建：`docs/learning/00-LUXAR-Agent-复习总览.md`
 
-- [ ] 写明当前完成度、复习目标和推荐阅读顺序。
-- [ ] 生成“英文名词、中文名称、通俗解释、LUXAR 位置”对照表，至少覆盖 Agent、Workflow、State Machine、Domain Model、Port、Adapter、Client、SDK、State、Runtime Context、Node、Route、Graph、Bootstrap、Runner、Dependency Injection、Fake、Evidence、Structured Output、JSON Schema、Validation、Error Boundary、Smoke Test。
-- [ ] 解释普通类、`BaseModel`、`Protocol`、`TypedDict`、`dataclass` 的共同点和区别。
-- [ ] 解释 `__future__.annotations`、`Literal`、类型标注与默认值、`self`、`__init__`、泛型、关键字参数、`| None`、列表/字典解包、列表推导、生成器、`try/except`、`raise ... from`、`cast`、Pydantic 常用方法。
-- [ ] 用一个 Mermaid 图表示分层依赖，用文本分别描述正常、澄清、修复、能力异常四条纵向链路。
-- [ ] 解释 pytest 如何真正执行代码，以及单元、契约、拓扑、集成、Smoke Test 的区别。
-- [ ] 总结 Agent 工程中 Prompt 与 Domain 双重约束、路径安全、工具证据、有限重试、依赖隔离、错误脱敏等原则。
-- [ ] 生成一页式复习清单和专题笔记链接。
+- [x] 写明当前完成度、复习目标和推荐阅读顺序。
+- [x] 生成“英文名词、中文名称、通俗解释、LUXAR 位置”对照表，至少覆盖 Agent、Workflow、State Machine、Domain Model、Port、Adapter、Client、SDK、State、Runtime Context、Node、Route、Graph、Bootstrap、Runner、Dependency Injection、Fake、Evidence、Structured Output、JSON Schema、Validation、Error Boundary、Smoke Test。
+- [x] 解释普通类、`BaseModel`、`Protocol`、`TypedDict`、`dataclass` 的共同点和区别。
+- [x] 解释 `__future__.annotations`、`Literal`、类型标注与默认值、`self`、`__init__`、泛型、关键字参数、`| None`、列表/字典解包、列表推导、生成器、`try/except`、`raise ... from`、`cast`、Pydantic 常用方法。
+- [x] 用一个 Mermaid 图表示分层依赖，用文本分别描述正常、澄清、修复、能力异常四条纵向链路。
+- [x] 解释 pytest 如何真正执行代码，以及单元、契约、拓扑、集成、Smoke Test 的区别。
+- [x] 总结 Agent 工程中 Prompt 与 Domain 双重约束、路径安全、工具证据、有限重试、依赖隔离、错误脱敏等原则。
+- [x] 生成一页式复习清单和专题笔记链接。
 
 ---
 
@@ -45,12 +45,12 @@
 - Codex 修改：`docs/superpowers/specs/2026-08-03-luxar-learning-review-notes-design.md`
 - Codex 修改：本计划
 
-- [ ] 在 README 增加总复习入口和专题笔记说明。
-- [ ] 在进度记录中写明总览覆盖范围和当前测试检查点。
-- [ ] 将规格状态更新为已实现，并同步本计划复选框。
-- [ ] 检查总览引用的所有本地文件存在。
-- [ ] 搜索占位符、密钥样式和过时测试数字，运行 `git diff --check`。
-- [ ] 提交为 `docs: consolidate LUXAR Agent learning notes`。
+- [x] 在 README 增加总复习入口和专题笔记说明。
+- [x] 在进度记录中写明总览覆盖范围和当前测试检查点。
+- [x] 将规格状态更新为已实现，并同步本计划复选框。
+- [x] 检查总览引用的所有本地文件存在。
+- [x] 搜索占位符、密钥样式和过时测试数字，运行 `git diff --check`。
+- [x] 提交为 `docs: consolidate LUXAR Agent learning notes`。
 
 ## 验收门槛
 

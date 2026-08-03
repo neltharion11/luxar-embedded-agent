@@ -2,6 +2,10 @@
 
 A clean, enterprise-shaped reconstruction of LUXAR using explicit domain models, Ports and Adapters, structured execution evidence, and LangGraph orchestration.
 
+## Learning notes
+
+Start with the Chinese [LUXAR Agent review guide](docs/learning/00-LUXAR-Agent-复习总览.md). It consolidates English-to-Chinese terminology, Python syntax used by this project, the layered architecture, four end-to-end workflow paths, testing levels, and Agent safety rules. The numbered `docs/learning/01` through `07` files remain focused deep dives.
+
 ## Current milestone
 
 The evidence-driven Agent workflow now supports both deterministic Fakes and
