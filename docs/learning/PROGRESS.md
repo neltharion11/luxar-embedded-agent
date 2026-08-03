@@ -78,6 +78,10 @@ Next: implement the shared `JsonCompletionClient`, its deterministic Fake, and t
 
 All 30 Python source files now begin with a Chinese module description and include focused beginner comments for validation, typing, dependency injection, State updates, routing, Graph composition, and Fake behavior. `FakeJsonCompletionClient` was also moved into the planned `adapters/deepseek/` package.
 
+`DeepSeekJsonClient` is complete. It sends OpenAI-compatible JSON-mode requests to the configured DeepSeek endpoint, disables hidden SDK retries, rejects empty/invalid JSON responses, and normalizes authentication, timeout, rate-limit, connection, 4xx, and 5xx failures without leaking sensitive SDK messages. Client suite: 13 passed; full offline suite: 93 passed.
+
+Next: implement `DeepSeekRequirementParser`, the first business Adapter that converts a JSON dictionary into a validated LUXAR Domain object.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
