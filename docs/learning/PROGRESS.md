@@ -72,6 +72,10 @@ Authoritative DeepSeek documents:
 
 Next: add settings, dependencies, and the stable capability-error boundary.
 
+DeepSeek Task 1 is complete. `DeepSeekSettings` reads a secret-safe key and current model defaults from environment variables; `CapabilityError` provides seven provider-independent failure categories. Focused suite: 12 passed; full offline suite: 77 passed.
+
+Next: implement the shared `JsonCompletionClient`, its deterministic Fake, and the production DeepSeek JSON wrapper.
+
 ## Authorship contract
 
 The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
