@@ -535,3 +535,96 @@ def test_apply_repair_validates_every_target_before_staging(
     assert valid.read_bytes() == b"original"
     assert not (tmp_path / "missing.c").exists()
     assert _staging_files(tmp_path) == []
+
+
+def test_apply_repair_rollback_restores_committed_files_in_reverse_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "first.c"
+    second = tmp_path / "second.c"
+    third = tmp_path / "third.c"
+    first.write_bytes(b"old first")
+    second.write_bytes(b"old second")
+    third.write_bytes(b"old third")
+    repair = _make_repair(
+        ("first.c", "new first"),
+        ("second.c", "new second"),
+        ("third.c", "new third"),
+    )
+    real_replace = os.replace
+    destination_names: list[str] = []
+    sensitive_marker = "SECRET_OS_FAILURE_123"
+
+    def fail_third_replace(
+        source: str | Path,
+        destination: str | Path,
+    ) -> None:
+        destination_names.append(Path(destination).name)
+        if len(destination_names) == 3:
+            raise OSError(sensitive_marker)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "luxar.adapters.local_workspace.os.replace",
+        fail_third_replace,
+    )
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "io"
+    assert captured.value.retryable is True
+    assert sensitive_marker not in captured.value.message
+    assert first.read_bytes() == b"old first"
+    assert second.read_bytes() == b"old second"
+    assert third.read_bytes() == b"old third"
+    assert destination_names == [
+        "first.c",
+        "second.c",
+        "third.c",
+        "second.c",
+        "first.c",
+    ]
+    assert _staging_files(tmp_path) == []
+
+
+def test_apply_repair_reports_sanitized_rollback_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "first.c"
+    second = tmp_path / "second.c"
+    first.write_bytes(b"old first")
+    second.write_bytes(b"old second")
+    repair = _make_repair(
+        ("first.c", "new first"),
+        ("second.c", "new second"),
+    )
+    real_replace = os.replace
+    replace_calls = 0
+    sensitive_marker = "SECRET_ROLLBACK_FAILURE_456"
+
+    def fail_commit_and_rollback(
+        source: str | Path,
+        destination: str | Path,
+    ) -> None:
+        nonlocal replace_calls
+        replace_calls += 1
+        if replace_calls >= 2:
+            raise OSError(sensitive_marker)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "luxar.adapters.local_workspace.os.replace",
+        fail_commit_and_rollback,
+    )
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "rollback_failed"
+    assert captured.value.retryable is False
+    assert sensitive_marker not in captured.value.message
+    assert str(tmp_path) not in captured.value.message
+    assert _staging_files(tmp_path) == []

@@ -465,21 +465,78 @@ class LocalWorkspaceAdapter:
 
         return prepared
 
+    def _rollback_committed(
+        self,
+        root: Path,
+        committed: list[_PreparedReplacement],
+    ) -> None:
+        rollback_failed = False
+
+        # 后提交的文件先恢复，顺序与数据库事务回滚相似。
+        for item in reversed(committed):
+            rollback_staged_path: Path | None = None
+
+            try:
+                _assert_no_link_components(
+                    root,
+                    item.target,
+                )
+
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=item.target.parent,
+                    prefix=".luxar-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as rollback_file:
+                    rollback_staged_path = Path(
+                        rollback_file.name
+                    )
+                    rollback_file.write(
+                        item.original_bytes
+                    )
+                    rollback_file.flush()
+
+                os.replace(
+                    rollback_staged_path,
+                    item.target,
+                )
+                rollback_staged_path = None
+
+            except (OSError, WorkspaceError):
+                # 记住失败，但继续清理并尝试恢复其他文件。
+                rollback_failed = True
+
+            finally:
+                if rollback_staged_path is not None:
+                    try:
+                        rollback_staged_path.unlink(
+                            missing_ok=True
+                        )
+                    except OSError:
+                        rollback_failed = True
+
+        if rollback_failed:
+            raise WorkspaceError(
+                category="rollback_failed",
+                message="工作区修复回滚失败",
+                retryable=False,
+            )
+
     def apply_repair(
         self,
         project_path: Path,
         repair: RepairPlan,
     ) -> list[str]:
         root = _resolve_project_root(project_path)
-
-        # 先验证全部目标。这里失败时，还没有创建临时文件。
         prepared = self._prepare_replacements(
             root,
             repair,
         )
+        committed: list[_PreparedReplacement] = []
 
         try:
-            # Stage：全部新内容先写入各自目标旁边的临时文件。
+            # Stage：所有新内容先写入临时文件。
             for item in prepared:
                 try:
                     with tempfile.NamedTemporaryFile(
@@ -504,7 +561,7 @@ class LocalWorkspaceAdapter:
                         retryable=True,
                     ) from error
 
-            # Commit：只有全部暂存成功后，才替换真实文件。
+            # Commit：全部暂存成功后才开始替换。
             for item in prepared:
                 _assert_no_link_components(
                     root,
@@ -536,6 +593,7 @@ class LocalWorkspaceAdapter:
                         item.target,
                     )
                     item.staged_path = None
+                    committed.append(item)
 
                 except WorkspaceError:
                     raise
@@ -557,8 +615,20 @@ class LocalWorkspaceAdapter:
                 for item in prepared
             ]
 
+        except WorkspaceError as error:
+            if committed:
+                try:
+                    self._rollback_committed(
+                        root,
+                        committed,
+                    )
+                except WorkspaceError as rollback_error:
+                    raise rollback_error from error
+
+            # 回滚成功后，继续抛出最初的安全错误。
+            raise
+
         finally:
-            # 成功替换后临时路径已经不存在；失败时清理尚未使用的临时文件。
             for item in prepared:
                 if item.staged_path is None:
                     continue
@@ -566,5 +636,4 @@ class LocalWorkspaceAdapter:
                 try:
                     item.staged_path.unlink(missing_ok=True)
                 except OSError:
-                    # 清理错误不能覆盖真正的验证或写入错误。
                     pass

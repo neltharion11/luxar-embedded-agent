@@ -440,15 +440,15 @@ feat: apply existing-file workspace repairs
 
 回滚失败：抛出 `WorkspaceError(category="rollback_failed", retryable=False)`。
 
-- [ ] **Step 1: Codex 写后续替换失败的回滚测试**
+- [x] **Step 1: Codex 写后续替换失败的回滚测试**
 
 通过 `monkeypatch` 包装 `luxar.adapters.local_workspace.os.replace`，让第二个正式替换抛出 `OSError`，但允许后续回滚替换执行。断言两个目标都恢复原始字节、异常类别为 `io`、消息不包含注入的敏感异常文字、没有临时文件残留。
 
-- [ ] **Step 2: Codex 写回滚自身失败的测试**
+- [x] **Step 2: Codex 写回滚自身失败的测试**
 
 让第二个正式替换和随后的回滚替换都失败。断言最终类别为 `rollback_failed`、`retryable is False`，消息不包含绝对路径或原始 `OSError` 文本。
 
-- [ ] **Step 3: 运行回滚测试确认 RED**
+- [x] **Step 3: 运行回滚测试确认 RED**
 
 Run:
 
@@ -458,22 +458,22 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: 当前提交失败不会恢复已经替换的第一个文件。
 
-- [ ] **Step 4: 教学异常期间的控制流**
+- [x] **Step 4: 教学异常期间的控制流**
 
 解释已提交目标列表为何与全部目标列表不同、为什么按逆序回滚、
 `raise 新异常 from 原异常` 建立的异常链不会自动进入 State，以及
 `finally` 无论成功或失败都会执行。明确该方案处理普通 Python/I/O
 失败，不宣称断电或进程崩溃下的跨文件事务原子性。
 
-- [ ] **Step 5: 学习者实现回滚**
+- [x] **Step 5: 学习者实现回滚**
 
 提交失败时，对 `committed` 逆序执行：在原父目录新建回滚临时文件、写入保存的原始字节、关闭后 `os.replace` 回目标。若任何回滚步骤失败，记住回滚失败并继续清理剩余临时文件，最终抛出固定的 `rollback_failed`。若回滚全部成功，抛出固定 `io` 错误。
 
-- [ ] **Step 6: 运行整个 LocalWorkspaceAdapter 测试**
+- [x] **Step 6: 运行整个 LocalWorkspaceAdapter 测试**
 
 Expected: 读取、成功写入、拒绝规则、回滚和清理全部通过。
 
-- [ ] **Step 7: 保存回滚检查点**
+- [x] **Step 7: 保存回滚检查点**
 
 Commit:
 
