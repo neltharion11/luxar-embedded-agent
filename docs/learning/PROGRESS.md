@@ -1,10 +1,10 @@
 # LUXAR Enterprise Learning Progress
 
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 ## Current milestone
 
-The learner has completed and compiled the seven-node evidence-driven repair Graph. The Fake-backed vertical slice now runs from natural-language input through requirement parsing, planning, build evidence, bounded repair/retry, and an explicit terminal state.
+The learner has completed the path-contained `LocalWorkspaceAdapter`. The seven-node Graph can now use a real local filesystem capability for bounded source reading and existing-file-only repair while preserving the same Ports, nodes, and routing topology.
 
 ## Verified work
 
@@ -105,6 +105,42 @@ The optional real DeepSeek requirement-parser smoke test is present and guarded 
 Next enterprise slice: implement a path-contained `LocalWorkspaceAdapter`, then a real ESP-IDF CLI Adapter, while continuing to teach the complete Agent call chain through production-quality code.
 
 A consolidated Chinese review guide now provides one learning entrypoint for the completed material. It maps English Agent/LangGraph architecture terms to Chinese explanations and real source files, explains the Python syntax used in LUXAR, traces four vertical workflow paths, and summarizes tests, safety boundaries, common misconceptions, and a one-page review checklist. The existing `01` through `07` notes remain as deeper topic chapters.
+
+## Local Workspace Adapter checkpoint
+
+Authoritative documents:
+
+- `docs/superpowers/specs/2026-08-04-luxar-local-workspace-adapter-design.md`
+- `docs/superpowers/plans/2026-08-04-luxar-local-workspace-adapter-plan.md`
+- `docs/learning/08-local-workspace-adapter.md`
+
+The production-shaped `LocalWorkspaceAdapter` now implements `WorkspacePort`.
+It scans a fixed ESP-IDF source/configuration allowlist in deterministic order,
+prunes generated and tool-owned directories, rejects binary or non-UTF-8 text,
+and enforces default 256 KiB per-file and 1 MiB aggregate budgets.
+
+Domain path normalization is reinforced by strict resolved-path containment and
+symlink/Windows Junction checks immediately around I/O. Complete-file repairs
+can modify only existing allowlisted files. They validate all targets, stage all
+new contents in same-directory temporary files, commit with `os.replace`, and
+reverse-roll back already committed targets after a handled later failure.
+Rollback failure has an explicit non-retryable category.
+
+`WorkspaceError` provides eight stable filesystem-independent categories. The
+single application Runner boundary catches model and workspace capability
+errors, maps them to sanitized `WorkflowError` values, and preserves the latest
+requirement, plan, build evidence, diagnostics, and attempt count. The seven-node
+LangGraph topology is unchanged.
+
+Latest complete verification before documentation-only synchronization:
+`196 passed, 5 skipped`. The skips are the opt-in real DeepSeek smoke and four
+ordinary symlink cases unavailable under current Windows permissions; Windows
+Junction tests executed and passed.
+
+Next enterprise slice: implement `EspIdfCliAdapter`. Its preflight validates the
+ESP-IDF environment and project, runs `idf.py reconfigure`, verifies declared
+dependencies, and only then builds. Dependency downloads remain disabled by
+default and require explicit `allow_dependency_downloads=True` authorization.
 
 ## Authorship contract
 

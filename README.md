@@ -4,12 +4,13 @@ A clean, enterprise-shaped reconstruction of LUXAR using explicit domain models,
 
 ## Learning notes
 
-Start with the Chinese [LUXAR Agent review guide](docs/learning/00-LUXAR-Agent-复习总览.md). It consolidates English-to-Chinese terminology, Python syntax used by this project, the layered architecture, four end-to-end workflow paths, testing levels, and Agent safety rules. The numbered `docs/learning/01` through `07` files remain focused deep dives.
+Start with the Chinese [LUXAR Agent review guide](docs/learning/00-LUXAR-Agent-复习总览.md). It consolidates English-to-Chinese terminology, Python syntax used by this project, the layered architecture, end-to-end workflow paths, testing levels, and Agent safety rules. The numbered `docs/learning/01` through `08` files remain focused deep dives.
 
 ## Current milestone
 
-The evidence-driven Agent workflow now supports both deterministic Fakes and
-production DeepSeek model Adapters:
+The evidence-driven Agent workflow now supports deterministic Fakes,
+production DeepSeek model Adapters, and a path-contained local filesystem
+Workspace Adapter:
 
 ```text
 natural-language task
@@ -24,7 +25,11 @@ natural-language task
 
 LangGraph owns State transitions, conditional routing, the bounded repair loop, and streaming. Domain models own validation. Ports describe external capabilities. Runtime Context can inject either deterministic Fakes or the production DeepSeek requirement, planning, and repair Adapters without changing the Graph topology.
 
-The default suite uses no real model call, filesystem write, or `idf.py`. A centralized application Runner converts model-side capability failures into sanitized failed State values while preserving the latest requirement, plan, build evidence, and diagnostics.
+The default suite uses no real model call, real project write, or `idf.py`.
+Filesystem tests write only pytest temporary directories. A centralized
+application Runner converts model-side and workspace-side capability failures
+into sanitized failed State values while preserving the latest requirement,
+plan, build evidence, and diagnostics.
 
 ## Production entry chain
 
@@ -37,9 +42,9 @@ build_deepseek_runtime_context(...)
 ```
 
 `build_deepseek_runtime_context(...)` selects concrete external capabilities.
-`run_workflow(...)` is the production execution boundary and contains the one
-application-level `CapabilityError` handler. Business nodes remain provider
-independent.
+`run_workflow(...)` is the production execution boundary and contains one
+application-level handler for `CapabilityError` and `WorkspaceError`.
+Business nodes remain provider and filesystem-implementation independent.
 
 ## Core topology
 
@@ -55,9 +60,8 @@ START → analyze_requirement
 
 ## Next production slices
 
-1. `LocalWorkspaceAdapter` with resolved-path containment, file allowlists, and size limits.
-2. ESP-IDF CLI Adapter with GCC/CMake/linker diagnostic parsing into `BuildDiagnostic`.
-3. A real application entrypoint that composes those engineering Adapters with the completed DeepSeek model slice.
+1. ESP-IDF CLI Adapter with environment/dependency preflight, default-disabled dependency downloads, and diagnostic parsing into `BuildDiagnostic`.
+2. A real application entrypoint that composes the Local Workspace and ESP-IDF engineering Adapters with the completed DeepSeek model slice.
 
 ## Development environment
 

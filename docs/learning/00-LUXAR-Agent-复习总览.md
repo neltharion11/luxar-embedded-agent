@@ -6,7 +6,7 @@
 2. 语法地图：Python 写法来自哪里、运行时做什么；
 3. 架构地图：自然语言如何经过 Agent、LangGraph、模型和工程工具变成最终结果。
 
-当前检查点：DeepSeek 模型 Adapter、七节点 LangGraph、证据驱动修复循环、组合根和统一模型错误边界已经完成。最近一次完整离线验证为 `130 passed, 1 skipped`；跳过的是没有获得联网授权的真实 DeepSeek Smoke Test。
+当前检查点：DeepSeek 模型 Adapter、七节点 LangGraph、证据驱动修复循环、真实 `LocalWorkspaceAdapter`、组合根和统一能力错误边界已经完成。最近一次完整验证为 `196 passed, 5 skipped`；跳过项是未授权联网的真实 DeepSeek Smoke Test，以及当前 Windows 权限不能创建的普通 symlink 测试。
 
 ## 一、先记住这句话
 
@@ -32,7 +32,7 @@ LLM 不是整个 Agent。LLM 是 Agent 工作流中的一种能力；真正的 A
 | Domain Model | 领域模型 | 经过业务验证的数据对象 | `FirmwareRequirement`、`ExecutionPlan`、`BuildEvidence` |
 | Application | 应用层 | 编排一次业务用例，不关心具体供应商 | `src/luxar/application/` |
 | Port | 端口、能力接口 | 应用需要什么能力的合同 | `src/luxar/ports/` |
-| Adapter | 适配器 | 用某种具体技术实现 Port | `adapters/deepseek/`、Fake Adapters |
+| Adapter | 适配器 | 用某种具体技术实现 Port | `adapters/deepseek/`、`local_workspace.py`、Fakes |
 | Client | 客户端 | 封装一次外部服务通信 | `DeepSeekJsonClient` |
 | SDK | 软件开发工具包 | 第三方提供的调用库 | `openai` Python 包，指向 DeepSeek API |
 | State | 状态 | 一次任务运行过程中逐步积累的业务数据 | `WorkflowState` |
@@ -57,6 +57,7 @@ LLM 不是整个 Agent。LLM 是 Agent 工作流中的一种能力；真正的 A
 | Invariant | 不变量 | 对象在任何时候都必须成立的规则 | 路径安全、证据一致性、非空计划 |
 | Error Boundary | 错误边界 | 集中把底层异常转换成稳定业务错误 | `application/runner.py` |
 | Capability Error | 能力错误 | 外部能力调用失败的稳定异常 | `ports/errors.py` |
+| Workspace Error | 工作区错误 | 文件路径、编码、容量、I/O 或回滚失败 | `ports/workspace_errors.py` |
 | Workflow Error | 工作流错误 | 可以写入 State、展示和恢复的业务错误 | `domain/errors.py` |
 | Unit Test | 单元测试 | 单独验证一个函数或类 | `tests/domain/`、`tests/application/test_nodes.py` |
 | Contract Test | 合同测试 | 验证实现是否遵守 Port 行为 | `tests/adapters/test_fake_contracts.py` |
@@ -136,7 +137,7 @@ flowchart TD
     ModelAdapters --> Client["DeepSeekJsonClient"]
     Client --> SDK["OpenAI 兼容 SDK"]
     SDK --> API["DeepSeek API"]
-    Ports --> EngineeringAdapters["Workspace / ESP-IDF Adapters"]
+    Ports --> EngineeringAdapters["LocalWorkspaceAdapter / ESP-IDF Adapters"]
     ModelAdapters --> Domain["Pydantic Domain Models"]
     EngineeringAdapters --> Domain
     Domain --> State["WorkflowState"]
@@ -218,14 +219,14 @@ build_project
 
 模型提出修复不等于修复成功。必须重新构建，用新证据证明结果。
 
-### 4. 模型能力异常链路
+### 4. 能力异常链路
 
 ```text
-SDK / JSON / Schema 失败
-→ CapabilityError
+SDK / JSON / Schema 或工作区操作失败
+→ CapabilityError 或 WorkspaceError
 → 异常穿过当前节点
-→ run_workflow 唯一的 except CapabilityError
-→ capability_error_to_workflow_error
+→ run_workflow 唯一的联合 except
+→ 对应的 error_to_workflow_error 转换函数
 → 固定安全 message 和 suggestion
 → 保留 latest_state
 → 返回 status="failed"
@@ -535,13 +536,13 @@ test_runner_...
 | Integration Test | 多层纵向链路是否能一起工作 | `test_fake_vertical_slice.py` |
 | Smoke Test | 最小真实外部调用是否能接通 | DeepSeek requirement smoke |
 
-默认测试使用 Fake，不访问网络、不写真实工程、不运行 `idf.py`。这让测试快速、稳定、可重复。
+默认测试使用 Fake，不访问网络、不写真实工程、不运行 `idf.py`。工作区测试只在 pytest 临时目录中执行真实文件 I/O。这让测试快速、稳定、可重复。
 
 ## 九、Agent 工程必须注意的原则
 
 ### 1. Prompt 不是安全边界
 
-Prompt 可以告诉模型“禁止绝对路径”，但模型可能违反。`RepairPlan` 的路径验证会再次拒绝绝对路径和 `..`。未来真实 Workspace Adapter 写文件前还要解析最终路径并确认它仍在项目根目录下。
+Prompt 可以告诉模型“禁止绝对路径”，但模型可能违反。`RepairPlan` 会拒绝绝对路径和 `..`；真实 `LocalWorkspaceAdapter` 写文件前还会解析最终路径、检查根目录包含关系并拒绝 symlink/Junction。
 
 ```text
 Prompt 约束
@@ -651,6 +652,8 @@ bootstrap.py
 - [ ] 我知道模型输出必须经过 JSON、Schema、Domain 多层验证。
 - [ ] 我知道模型不能伪造 BuildEvidence。
 - [ ] 我知道 Prompt、Domain 路径规则和 Workspace 包含检查是多层安全保障。
+- [ ] 我能解释 validate、stage、commit 和 rollback 四个阶段。
+- [ ] 我知道当前回滚处理普通 I/O 失败，但不宣称断电时跨文件原子性。
 - [ ] 我知道修复循环必须受 `max_attempts` 限制。
 
 ## 十三、专题笔记索引
@@ -662,6 +665,7 @@ bootstrap.py
 - [05：证据驱动修复 Graph](05-repair-graph.md)
 - [06：DeepSeek 结构化输出](06-deepseek-structured-output.md)
 - [07：组合根、Runner 与错误边界](07-runtime-and-error-boundary.md)
+- [08：LocalWorkspaceAdapter 与安全文件副作用](08-local-workspace-adapter.md)
 
 ## 十四、核心源码索引
 
@@ -678,3 +682,4 @@ bootstrap.py
 - [统一 Runner](../../src/luxar/application/runner.py)
 - [DeepSeek 组合根](../../src/luxar/bootstrap.py)
 - [DeepSeek Adapters](../../src/luxar/adapters/deepseek/)
+- [LocalWorkspaceAdapter](../../src/luxar/adapters/local_workspace.py)

@@ -598,15 +598,15 @@ feat: handle workspace failures at workflow boundary
 
 文档记录真实完成状态和测试数字，不改变 Python 运行接口。
 
-- [ ] **Step 1: Codex 生成中文复习笔记**
+- [x] **Step 1: Codex 生成中文复习笔记**
 
 笔记必须解释：Workspace/工作区、Adapter/适配器、allowlist/允许列表、containment/路径包含、symlink/符号链接、junction/目录联接、staging/暂存、commit/提交替换、rollback/回滚、atomicity/原子性、byte budget/字节预算、sanitized error/脱敏错误。包含从 `repair_project` 到真实文件替换再回到 State 的纵向链路。
 
-- [ ] **Step 2: Codex 更新入口文档和进度**
+- [x] **Step 2: Codex 更新入口文档和进度**
 
 README 标明真实 Workspace Adapter 的使用边界；复习总览链接第 08 章；PROGRESS 记录每个检查点、最终测试数量，以及下一切片是具备依赖预检与默认禁止下载策略的 `EspIdfCliAdapter`。
 
-- [ ] **Step 3: Codex 运行安全搜索**
+- [x] **Step 3: Codex 运行安全搜索**
 
 检查：
 
@@ -617,7 +617,7 @@ rg -n "except .*WorkspaceError|except .*CapabilityError" src/luxar/application
 
 人工确认没有字符串前缀路径判断、没有模型写入依赖目录、没有第二个业务异常边界、没有绝对路径进入稳定错误消息。
 
-- [ ] **Step 4: Codex 运行最终验证**
+- [x] **Step 4: Codex 运行最终验证**
 
 Run:
 
@@ -627,7 +627,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 随后运行 `git diff --check` 并检查 `git status --short`。必须读取退出码和实际 pass/skip 数字后才能声明完成；`.vscode/` 保持未追踪且不提交。
 
-- [ ] **Step 5: Codex 同步计划复选框并提交文档**
+- [x] **Step 5: Codex 同步计划复选框并提交文档**
 
 Commit:
 
