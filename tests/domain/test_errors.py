@@ -50,3 +50,14 @@ def test_workflow_error_accepts_model_capability_failures(
 
     assert error.stage == stage
     assert error.category == category
+
+
+def test_workflow_error_accepts_workspace_failure() -> None:
+    error = WorkflowError(
+        stage="repair",
+        category="workspace",  # type: ignore[arg-type]
+        message="项目工作区操作失败",
+        retryable=False,
+    )
+
+    assert error.category == "workspace"

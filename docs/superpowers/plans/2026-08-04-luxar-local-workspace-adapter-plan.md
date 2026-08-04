@@ -94,7 +94,7 @@ WorkspaceErrorCategory = Literal[
 
 `WorkflowError.category` additionally accepts `"workspace"`.
 
-- [ ] **Step 1: Codex 写入失败测试**
+- [x] **Step 1: Codex 写入失败测试**
 
 `tests/ports/test_workspace_errors.py` 用参数化测试构造全部八个类别，并验证 `str(error)`、`category`、`message` 和 `retryable`。`tests/domain/test_errors.py` 增加：
 
@@ -110,7 +110,7 @@ def test_workflow_error_accepts_workspace_failure() -> None:
     assert error.category == "workspace"
 ```
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run:
 
@@ -120,11 +120,11 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: 新异常模块无法导入，且 `"workspace"` 尚未被 `WorkflowError` 接受。
 
-- [ ] **Step 3: 教学错误合同的职责**
+- [x] **Step 3: 教学错误合同的职责**
 
 讲清 `Literal` 规定允许出现的稳定词汇；`RuntimeError` 让对象可被 `raise/except`；三个实例属性让 Application 无需认识 `OSError`、`PermissionError` 等平台异常。这里的 Port 异常描述“能力失败”，Domain 的 `WorkflowError` 描述“整个 Agent 工作流的失败”。
 
-- [ ] **Step 4: 学习者实现 WorkspaceError**
+- [x] **Step 4: 学习者实现 WorkspaceError**
 
 实现内容为：
 
@@ -162,11 +162,11 @@ class WorkspaceError(RuntimeError):
 
 同时在 `WorkflowError.category` 的 `Literal` 中增加 `"workspace"`。
 
-- [ ] **Step 5: 运行聚焦测试确认 GREEN**
+- [x] **Step 5: 运行聚焦测试确认 GREEN**
 
 Expected: 新的 Port 与 Domain 测试全部通过。
 
-- [ ] **Step 6: 保存合同检查点**
+- [x] **Step 6: 保存合同检查点**
 
 Commit:
 

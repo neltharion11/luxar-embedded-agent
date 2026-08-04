@@ -26,6 +26,7 @@ class WorkflowError(BaseModel):
         "authentication",
         "rate_limit",
         "service",
+        "workspace",
     ]
 
     message: str
