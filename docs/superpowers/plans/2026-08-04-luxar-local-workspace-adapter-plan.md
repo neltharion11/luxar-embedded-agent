@@ -365,19 +365,19 @@ feat: read ESP-IDF workspace safely
 
 每个内部待提交项目保存：规范相对路径、解析后的目标 `Path`、原始 `bytes`、替换 `bytes` 和临时文件 `Path`。
 
-- [ ] **Step 1: Codex 写成功替换的失败测试**
+- [x] **Step 1: Codex 写成功替换的失败测试**
 
 覆盖单文件和多文件完整替换，断言：内容实际改变；未在 `RepairPlan` 中出现的文件保持不变；返回路径顺序等于 `repair.replacements` 顺序；没有 `.luxar-*.tmp` 残留。
 
-- [ ] **Step 2: Codex 写“只改已有允许文件”的失败测试**
+- [x] **Step 2: Codex 写“只改已有允许文件”的失败测试**
 
 覆盖：目标不存在、目标是目录、目标后缀不受支持、绝对路径、`..` 越界路径、文件 symlink、父目录 symlink/junction。绝对路径和 `..` 通常先被 `FileReplacement` 的 Pydantic 验证拒绝；Adapter 测试继续证明磁盘层无法被链接绕过。
 
-- [ ] **Step 3: Codex 写替换容量和预验证失败测试**
+- [x] **Step 3: Codex 写替换容量和预验证失败测试**
 
 覆盖：替换内容按 UTF-8 字节超过单文件限制；替换总量超过总限制；原文件超过回滚保存限制；第二个目标无效时第一个目标完全不变且没有临时文件。
 
-- [ ] **Step 4: 运行 apply 聚焦测试确认 RED**
+- [x] **Step 4: 运行 apply 聚焦测试确认 RED**
 
 Run:
 
@@ -387,15 +387,15 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: `apply_repair` 尚未实现或无法完成替换。
 
-- [ ] **Step 5: 教学 validate-stage-commit 调用链**
+- [x] **Step 5: 教学 validate-stage-commit 调用链**
 
 讲清三个阶段的意义：验证阶段不产生副作用；暂存阶段只产生可清理的临时文件；提交阶段才改变真实文件。解释 `NamedTemporaryFile(delete=False, dir=target.parent)`、`flush()`、上下文管理器关闭文件，以及同目录 `os.replace` 为什么比直接 `write_text` 更适合完整文件替换。
 
-- [ ] **Step 6: 学习者实现“全部验证”**
+- [x] **Step 6: 学习者实现“全部验证”**
 
 对全部 replacement：复用 Task 2 的根目录、allowlist、包含关系和链接检查；要求目标存在且是普通文件；将 `replacement.content.encode("utf-8")` 作为新字节；读取原始字节用于回滚；分别限制每个原文件/新内容以及两组总字节数。任一验证失败时不得创建临时文件。
 
-- [ ] **Step 7: 学习者实现“全部暂存”**
+- [x] **Step 7: 学习者实现“全部暂存”**
 
 每个临时文件必须位于其目标的父目录，名称前缀固定为 `.luxar-`、后缀为 `.tmp`。写入、刷新并关闭后才记录该临时路径。暂存阶段的 `OSError` 转换为：
 
@@ -409,15 +409,15 @@ WorkspaceError(
 
 `finally` 清理所有仍存在的临时文件；清理异常不能泄露原始 OS 文本。
 
-- [ ] **Step 8: 学习者实现“提交成功”**
+- [x] **Step 8: 学习者实现“提交成功”**
 
 每次 `os.replace(staged_path, target)` 前重新检查目标的包含关系与链接组件。成功后记录相对路径；全部完成后按 `repair.replacements` 原顺序返回路径。
 
-- [ ] **Step 9: 运行成功与限制测试确认 GREEN**
+- [x] **Step 9: 运行成功与限制测试确认 GREEN**
 
 Expected: 正常替换与所有预验证测试通过，项目外文件、未列入计划的文件及无效计划下的文件均不变。
 
-- [ ] **Step 10: 保存安全写入检查点**
+- [x] **Step 10: 保存安全写入检查点**
 
 Commit:
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
-from luxar.domain.repairs import ProjectFile
+from luxar.domain.repairs import ProjectFile, RepairPlan
 from luxar.ports.workspace_errors import WorkspaceError
 
 
@@ -170,6 +173,68 @@ def _discover_allowed_files(root: Path) -> list[Path]:
     )
 
 
+@dataclass
+class _PreparedReplacement:
+    relative_path: str
+    target: Path
+    original_bytes: bytes
+    replacement_bytes: bytes
+    staged_path: Path | None = None
+
+
+def _resolve_repair_target(
+    root: Path,
+    relative_path: str,
+) -> Path:
+    path_parts = PurePosixPath(relative_path).parts
+
+    if (
+        not _is_allowed_file_name(path_parts[-1])
+        or any(
+            _is_excluded_directory_name(part)
+            for part in path_parts[:-1]
+        )
+    ):
+        raise WorkspaceError(
+            category="unsupported_file",
+            message="修复目标不属于允许的项目源码",
+            retryable=False,
+        )
+
+    target = root.joinpath(*path_parts)
+    _assert_no_link_components(root, target)
+
+    try:
+        if not target.exists() or not target.is_file():
+            raise WorkspaceError(
+                category="invalid_project",
+                message="修复目标必须是已经存在的文件",
+                retryable=False,
+            )
+
+        resolved_target = target.resolve(strict=True)
+        resolved_target.relative_to(root)
+
+    except WorkspaceError:
+        raise
+    except ValueError as error:
+        raise WorkspaceError(
+            category="unsafe_path",
+            message="工作区路径不能离开项目目录",
+            retryable=False,
+        ) from error
+    except (OSError, RuntimeError) as error:
+        raise WorkspaceError(
+            category="io",
+            message="工作区文件检查失败",
+            retryable=True,
+        ) from error
+
+    _assert_no_link_components(root, target)
+
+    return target
+
+
 class LocalWorkspaceAdapter:
     def __init__(
         self,
@@ -299,3 +364,207 @@ class LocalWorkspaceAdapter:
             )
 
         return project_files
+
+    def _prepare_replacements(
+        self,
+        root: Path,
+        repair: RepairPlan,
+    ) -> list[_PreparedReplacement]:
+        prepared: list[_PreparedReplacement] = []
+        original_total_bytes = 0
+        replacement_total_bytes = 0
+
+        for replacement in repair.replacements:
+            target = _resolve_repair_target(
+                root,
+                replacement.path,
+            )
+
+            try:
+                original_stat_size = target.stat().st_size
+            except OSError as error:
+                raise WorkspaceError(
+                    category="io",
+                    message="工作区文件读取失败",
+                    retryable=True,
+                ) from error
+
+            if original_stat_size > self.max_file_bytes:
+                raise WorkspaceError(
+                    category="file_too_large",
+                    message="单个项目文件超过处理上限",
+                    retryable=False,
+                )
+
+            _assert_no_link_components(root, target)
+
+            try:
+                original_bytes = target.read_bytes()
+            except OSError as error:
+                raise WorkspaceError(
+                    category="io",
+                    message="工作区文件读取失败",
+                    retryable=True,
+                ) from error
+
+            replacement_bytes = replacement.content.encode("utf-8")
+
+            if (
+                len(original_bytes) > self.max_file_bytes
+                or len(replacement_bytes) > self.max_file_bytes
+            ):
+                raise WorkspaceError(
+                    category="file_too_large",
+                    message="单个项目文件超过处理上限",
+                    retryable=False,
+                )
+
+            if (
+                b"\x00" in original_bytes
+                or b"\x00" in replacement_bytes
+            ):
+                raise WorkspaceError(
+                    category="invalid_encoding",
+                    message="项目源码必须是 UTF-8 文本",
+                    retryable=False,
+                )
+
+            try:
+                original_bytes.decode(
+                    "utf-8",
+                    errors="strict",
+                )
+            except UnicodeDecodeError as error:
+                raise WorkspaceError(
+                    category="invalid_encoding",
+                    message="项目源码必须是 UTF-8 文本",
+                    retryable=False,
+                ) from error
+
+            original_total_bytes += len(original_bytes)
+            replacement_total_bytes += len(replacement_bytes)
+
+            if (
+                original_total_bytes > self.max_total_bytes
+                or replacement_total_bytes > self.max_total_bytes
+            ):
+                raise WorkspaceError(
+                    category="context_too_large",
+                    message="本次修复文件总量超过处理上限",
+                    retryable=False,
+                )
+
+            prepared.append(
+                _PreparedReplacement(
+                    relative_path=replacement.path,
+                    target=target,
+                    original_bytes=original_bytes,
+                    replacement_bytes=replacement_bytes,
+                )
+            )
+
+        return prepared
+
+    def apply_repair(
+        self,
+        project_path: Path,
+        repair: RepairPlan,
+    ) -> list[str]:
+        root = _resolve_project_root(project_path)
+
+        # 先验证全部目标。这里失败时，还没有创建临时文件。
+        prepared = self._prepare_replacements(
+            root,
+            repair,
+        )
+
+        try:
+            # Stage：全部新内容先写入各自目标旁边的临时文件。
+            for item in prepared:
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        mode="wb",
+                        dir=item.target.parent,
+                        prefix=".luxar-",
+                        suffix=".tmp",
+                        delete=False,
+                    ) as temporary_file:
+                        item.staged_path = Path(
+                            temporary_file.name
+                        )
+                        temporary_file.write(
+                            item.replacement_bytes
+                        )
+                        temporary_file.flush()
+
+                except OSError as error:
+                    raise WorkspaceError(
+                        category="io",
+                        message="工作区文件写入失败",
+                        retryable=True,
+                    ) from error
+
+            # Commit：只有全部暂存成功后，才替换真实文件。
+            for item in prepared:
+                _assert_no_link_components(
+                    root,
+                    item.target,
+                )
+
+                try:
+                    resolved_target = item.target.resolve(
+                        strict=True
+                    )
+                    resolved_target.relative_to(root)
+
+                    if not resolved_target.is_file():
+                        raise WorkspaceError(
+                            category="invalid_project",
+                            message="修复目标必须是已经存在的文件",
+                            retryable=False,
+                        )
+
+                    if item.staged_path is None:
+                        raise WorkspaceError(
+                            category="io",
+                            message="工作区暂存文件无效",
+                            retryable=True,
+                        )
+
+                    os.replace(
+                        item.staged_path,
+                        item.target,
+                    )
+                    item.staged_path = None
+
+                except WorkspaceError:
+                    raise
+                except ValueError as error:
+                    raise WorkspaceError(
+                        category="unsafe_path",
+                        message="工作区路径不能离开项目目录",
+                        retryable=False,
+                    ) from error
+                except OSError as error:
+                    raise WorkspaceError(
+                        category="io",
+                        message="工作区文件写入失败",
+                        retryable=True,
+                    ) from error
+
+            return [
+                item.relative_path
+                for item in prepared
+            ]
+
+        finally:
+            # 成功替换后临时路径已经不存在；失败时清理尚未使用的临时文件。
+            for item in prepared:
+                if item.staged_path is None:
+                    continue
+
+                try:
+                    item.staged_path.unlink(missing_ok=True)
+                except OSError:
+                    # 清理错误不能覆盖真正的验证或写入错误。
+                    pass

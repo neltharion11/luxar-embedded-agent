@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
+from luxar.domain.repairs import FileReplacement, RepairPlan
 from luxar.ports.workspace_errors import WorkspaceError
 
 
@@ -285,3 +286,252 @@ def test_read_project_files_rejects_junction_directory_component(
         LocalWorkspaceAdapter().read_project_files(project)
 
     assert captured.value.category == "unsafe_path"
+
+
+def _make_repair(
+    *replacements: tuple[str, str],
+) -> RepairPlan:
+    return RepairPlan(
+        diagnosis="修复编译错误",
+        replacements=[
+            FileReplacement(path=path, content=content)
+            for path, content in replacements
+        ],
+    )
+
+
+def _staging_files(project: Path) -> list[Path]:
+    return list(project.rglob(".luxar-*.tmp"))
+
+
+def test_apply_repair_replaces_one_existing_file(tmp_path: Path) -> None:
+    source = tmp_path / "main.c"
+    source.write_bytes(b"broken source")
+    repair = _make_repair(("main.c", "fixed source"))
+
+    changed_files = LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert changed_files == ["main.c"]
+    assert source.read_bytes() == b"fixed source"
+    assert _staging_files(tmp_path) == []
+
+
+def test_apply_repair_preserves_plan_order_and_unlisted_files(
+    tmp_path: Path,
+) -> None:
+    main_directory = tmp_path / "main"
+    main_directory.mkdir()
+    first = main_directory / "first.c"
+    second = main_directory / "second.h"
+    untouched = main_directory / "untouched.cpp"
+    first.write_bytes(b"old first")
+    second.write_bytes(b"old second")
+    untouched.write_bytes(b"keep me")
+    repair = _make_repair(
+        ("main/second.h", "new second"),
+        ("main/first.c", "new first"),
+    )
+
+    changed_files = LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert changed_files == ["main/second.h", "main/first.c"]
+    assert first.read_bytes() == b"new first"
+    assert second.read_bytes() == b"new second"
+    assert untouched.read_bytes() == b"keep me"
+    assert _staging_files(tmp_path) == []
+
+
+def test_apply_repair_does_not_create_missing_target(tmp_path: Path) -> None:
+    repair = _make_repair(("main.c", "new source"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "invalid_project"
+    assert not (tmp_path / "main.c").exists()
+    assert _staging_files(tmp_path) == []
+
+
+def test_apply_repair_rejects_directory_as_target(tmp_path: Path) -> None:
+    (tmp_path / "component.c").mkdir()
+    repair = _make_repair(("component.c", "new source"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "invalid_project"
+    assert _staging_files(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "notes.txt",
+        "sdkconfig",
+        "dependencies.lock",
+        "managed_components/vendor/main.c",
+        "build/generated.c",
+        ".hidden/secret.c",
+    ],
+)
+def test_apply_repair_rejects_unsupported_or_excluded_target(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    target = tmp_path.joinpath(*relative_path.split("/"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"original")
+    repair = _make_repair((relative_path, "replacement"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "unsupported_file"
+    assert target.read_bytes() == b"original"
+    assert _staging_files(tmp_path) == []
+
+
+def test_apply_repair_rejects_allowlisted_file_symlink(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"outside")
+    link = tmp_path / "main.c"
+    _create_file_symlink_or_skip(link, outside)
+    repair = _make_repair(("main.c", "replacement"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "unsafe_path"
+    assert outside.read_bytes() == b"outside"
+
+
+def test_apply_repair_rejects_junction_directory_component(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-component"
+    outside.mkdir()
+    outside_source = outside / "main.c"
+    outside_source.write_bytes(b"outside")
+    project = tmp_path / "project"
+    project.mkdir()
+    junction = project / "main"
+    _create_junction_or_skip(junction, outside)
+    repair = _make_repair(("main/main.c", "replacement"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(project, repair)
+
+    assert captured.value.category == "unsafe_path"
+    assert outside_source.read_bytes() == b"outside"
+
+
+def test_apply_repair_enforces_replacement_file_byte_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "main.c"
+    source.write_bytes(b"old")
+    repair = _make_repair(("main.c", "1234"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter(max_file_bytes=3).apply_repair(
+            tmp_path,
+            repair,
+        )
+
+    assert captured.value.category == "file_too_large"
+    assert source.read_bytes() == b"old"
+
+
+def test_apply_repair_counts_replacement_utf8_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "main.c"
+    source.write_bytes(b"old")
+    repair = _make_repair(("main.c", "中"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter(max_file_bytes=2).apply_repair(
+            tmp_path,
+            repair,
+        )
+
+    assert captured.value.category == "file_too_large"
+    assert source.read_bytes() == b"old"
+
+
+def test_apply_repair_enforces_replacement_total_byte_limit(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "a.c").write_bytes(b"old")
+    (tmp_path / "b.c").write_bytes(b"old")
+    repair = _make_repair(("a.c", "123"), ("b.c", "456"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter(max_total_bytes=5).apply_repair(
+            tmp_path,
+            repair,
+        )
+
+    assert captured.value.category == "context_too_large"
+    assert (tmp_path / "a.c").read_bytes() == b"old"
+    assert (tmp_path / "b.c").read_bytes() == b"old"
+
+
+def test_apply_repair_enforces_original_file_byte_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "main.c"
+    source.write_bytes(b"1234")
+    repair = _make_repair(("main.c", "new"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter(max_file_bytes=3).apply_repair(
+            tmp_path,
+            repair,
+        )
+
+    assert captured.value.category == "file_too_large"
+    assert source.read_bytes() == b"1234"
+
+
+def test_apply_repair_rejects_binary_original_file(tmp_path: Path) -> None:
+    source = tmp_path / "main.c"
+    source.write_bytes(b"before\x00after")
+    repair = _make_repair(("main.c", "new source"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "invalid_encoding"
+    assert source.read_bytes() == b"before\x00after"
+
+
+def test_apply_repair_rejects_nul_in_replacement(tmp_path: Path) -> None:
+    source = tmp_path / "main.c"
+    source.write_bytes(b"original")
+    repair = _make_repair(("main.c", "before\x00after"))
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "invalid_encoding"
+    assert source.read_bytes() == b"original"
+
+
+def test_apply_repair_validates_every_target_before_staging(
+    tmp_path: Path,
+) -> None:
+    valid = tmp_path / "valid.c"
+    valid.write_bytes(b"original")
+    repair = _make_repair(
+        ("valid.c", "changed"),
+        ("missing.c", "new file"),
+    )
+
+    with pytest.raises(WorkspaceError) as captured:
+        LocalWorkspaceAdapter().apply_repair(tmp_path, repair)
+
+    assert captured.value.category == "invalid_project"
+    assert valid.read_bytes() == b"original"
+    assert not (tmp_path / "missing.c").exists()
+    assert _staging_files(tmp_path) == []
