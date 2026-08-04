@@ -11,6 +11,7 @@ from luxar.application.context import RuntimeContext
 from luxar.application.runner import (
     capability_error_to_workflow_error,
     run_workflow,
+    workspace_error_to_workflow_error,
 )
 from luxar.application.state import WorkflowState
 from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
@@ -18,6 +19,10 @@ from luxar.domain.plans import ExecutionPlan, PlanStep
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
 from luxar.ports.errors import CapabilityError, CapabilityErrorCategory
+from luxar.ports.workspace_errors import (
+    WorkspaceError,
+    WorkspaceErrorCategory,
+)
 
 
 class RaisingRequirementParser:
@@ -51,6 +56,24 @@ class RaisingRepairPlanner:
         files: list[ProjectFile],
     ) -> RepairPlan:
         raise self.error
+
+
+class RaisingWorkspace:
+    def __init__(self, error: WorkspaceError) -> None:
+        self.error = error
+
+    def read_project_files(
+        self,
+        project_path: Path,
+    ) -> list[ProjectFile]:
+        raise self.error
+
+    def apply_repair(
+        self,
+        project_path: Path,
+        repair: RepairPlan,
+    ) -> list[str]:
+        raise AssertionError("apply_repair must not run after read failure")
 
 
 def make_requirement() -> FirmwareRequirement:
@@ -90,13 +113,15 @@ def make_context(
     planner,
     repair_planner,
     evidence_sequence: list[BuildEvidence],
+    workspace=None,
 ) -> RuntimeContext:
     return RuntimeContext(
         requirement_parser=requirement_parser,
         planner=planner,
         repair_planner=repair_planner,
         espidf=FakeEspIdf(evidence_sequence),
-        workspace=FakeWorkspace(
+        workspace=workspace
+        or FakeWorkspace(
             [ProjectFile(path="main/main.c", content="broken source")]
         ),
         project_path=Path("workspace/blink"),
@@ -321,4 +346,100 @@ def test_runner_keeps_successful_workflow_behavior() -> None:
         "create_plan",
         "build_project",
         "completed",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("category", "retryable"),
+    [
+        ("invalid_project", False),
+        ("unsafe_path", False),
+        ("unsupported_file", False),
+        ("file_too_large", False),
+        ("context_too_large", False),
+        ("invalid_encoding", False),
+        ("io", True),
+        ("rollback_failed", False),
+    ],
+)
+def test_workspace_error_mapping_uses_safe_application_text(
+    category: WorkspaceErrorCategory,
+    retryable: bool,
+) -> None:
+    sensitive_marker = "SECRET_WORKSPACE_DETAIL_789"
+    workspace_error = WorkspaceError(
+        category=category,
+        message=sensitive_marker,
+        retryable=retryable,
+    )
+
+    workflow_error = workspace_error_to_workflow_error(
+        workspace_error
+    )
+
+    assert workflow_error.stage == "repair"
+    assert workflow_error.category == "workspace"
+    assert workflow_error.retryable is retryable
+    assert workflow_error.message
+    assert workflow_error.user_suggestion
+    assert sensitive_marker not in workflow_error.message
+    assert sensitive_marker not in workflow_error.user_suggestion
+
+
+def test_runner_preserves_latest_state_when_workspace_read_fails() -> None:
+    requirement = make_requirement()
+    plan = make_plan()
+    evidence = BuildEvidence(
+        success=False,
+        command=["idf.py", "build"],
+        return_code=1,
+        error_category="source",
+        diagnostics=[
+            BuildDiagnostic(
+                file="main/main.c",
+                line=21,
+                column=9,
+                severity="error",
+                message="undeclared identifier",
+            )
+        ],
+    )
+    context = make_context(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        repair_planner=FakeRepairPlanner(make_repair()),
+        evidence_sequence=[evidence],
+        workspace=RaisingWorkspace(
+            WorkspaceError(
+                category="unsafe_path",
+                message="SECRET_ABSOLUTE_PATH",
+                retryable=False,
+            )
+        ),
+    )
+
+    result = run_workflow(
+        initial_state=WorkflowState(
+            task_text="repair ESP32 firmware",
+            attempts=0,
+            max_attempts=3,
+            trace=[],
+        ),
+        context=context,
+    )
+
+    assert result["requirement"] is requirement
+    assert result["plan"] is plan
+    assert result["build_evidence"] is evidence
+    assert result["build_evidence"].diagnostics[0].line == 21
+    assert result["attempts"] == 1
+    assert result["status"] == "failed"
+    assert result["error"].stage == "repair"
+    assert result["error"].category == "workspace"
+    assert "SECRET_ABSOLUTE_PATH" not in result["error"].message
+    assert result["trace"] == [
+        "analyze_requirement",
+        "create_plan",
+        "build_project",
+        "failed",
     ]

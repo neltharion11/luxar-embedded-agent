@@ -501,7 +501,7 @@ Runner 继续只有一个工作流异常捕获位置：
 except (CapabilityError, WorkspaceError) as error:
 ```
 
-- [ ] **Step 1: Codex 写纯映射失败测试**
+- [x] **Step 1: Codex 写纯映射失败测试**
 
 八个 Workspace 类别都映射到：
 
@@ -517,11 +517,11 @@ WorkflowError(
 
 测试向 `WorkspaceError.message` 注入敏感标记，并断言最终 message/suggestion 不包含该标记。
 
-- [ ] **Step 2: Codex 写 Runner 集成失败测试**
+- [x] **Step 2: Codex 写 Runner 集成失败测试**
 
 提供一个测试本地 `RaisingWorkspace`，在 `read_project_files` 抛出配置好的 `WorkspaceError`。先让 Fake 构建返回含诊断的失败 `BuildEvidence`，再断言结果保留 requirement、plan、evidence、diagnostics 和 attempts，状态为 `failed`，error 为 `stage="repair"`、`category="workspace"`，trace 以 `failed` 结束。
 
-- [ ] **Step 3: 运行 Runner 测试确认 RED**
+- [x] **Step 3: 运行 Runner 测试确认 RED**
 
 Run:
 
@@ -531,15 +531,15 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: `WorkspaceError` 仍会逃出 Runner，或映射函数尚不存在。
 
-- [ ] **Step 4: 教学联合捕获与类型收窄**
+- [x] **Step 4: 教学联合捕获与类型收窄**
 
 讲清 `(CapabilityError, WorkspaceError)` 是 `except` 接受的异常类型元组，不是创建两个异常；`isinstance(error, CapabilityError)` 让 Python 和类型检查器知道应调用哪个转换函数。两个 Port 异常仍共享同一个 Application 边界。
 
-- [ ] **Step 5: 学习者实现安全映射**
+- [x] **Step 5: 学习者实现安全映射**
 
 为八个类别分别定义固定中文消息和建议；不得使用 `error.message`。`workspace_error_to_workflow_error` 固定 `stage="repair"` 和 `category="workspace"`，只保留 `error.retryable`。
 
-- [ ] **Step 6: 学习者扩展唯一捕获边界**
+- [x] **Step 6: 学习者扩展唯一捕获边界**
 
 控制流为：
 
@@ -564,7 +564,7 @@ except (CapabilityError, WorkspaceError) as error:
     )
 ```
 
-- [ ] **Step 7: 运行 Runner、Graph 和完整测试**
+- [x] **Step 7: 运行 Runner、Graph 和完整测试**
 
 Run:
 
@@ -574,7 +574,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 然后运行完整要求命令。Expected: 原 CapabilityError 行为、七节点拓扑与 Fake 纵向链路均保持不变；真实 DeepSeek smoke 默认仍 skip。
 
-- [ ] **Step 8: 保存应用接入检查点**
+- [x] **Step 8: 保存应用接入检查点**
 
 Commit:
 

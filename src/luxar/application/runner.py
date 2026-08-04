@@ -1,4 +1,4 @@
-"""工作流运行边界：统一执行 Graph，并把模型能力异常转换成失败 State。"""
+"""工作流运行边界：统一执行 Graph，并把能力异常转换成失败 State。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from luxar.application.nodes import failed
 from luxar.application.state import WorkflowState
 from luxar.domain.errors import WorkflowError
 from luxar.ports.errors import CapabilityError
+from luxar.ports.workspace_errors import WorkspaceError
 
 
 # 将底层能力错误分类翻译成工作流能够保存的业务分类。
@@ -44,6 +45,30 @@ WORKFLOW_ERROR_SUGGESTIONS = {
 }
 
 
+WORKSPACE_ERROR_MESSAGES = {
+    "invalid_project": "项目目录或修复目标无效",
+    "unsafe_path": "工作区拒绝了不安全的文件路径",
+    "unsupported_file": "修复计划包含不允许修改的文件",
+    "file_too_large": "项目文件超过工作区处理上限",
+    "context_too_large": "项目源码总量超过工作区处理上限",
+    "invalid_encoding": "项目源码不是有效的 UTF-8 文本",
+    "io": "工作区文件操作失败",
+    "rollback_failed": "工作区修复失败且未能完整回滚",
+}
+
+
+WORKSPACE_ERROR_SUGGESTIONS = {
+    "invalid_project": "请检查项目目录和修复目标是否存在",
+    "unsafe_path": "请检查修复计划中的项目相对路径",
+    "unsupported_file": "请仅修改允许的 ESP-IDF 项目源码",
+    "file_too_large": "请缩小单个源码文件或调整工作区限制",
+    "context_too_large": "请缩小本次修复涉及的源码范围",
+    "invalid_encoding": "请将项目源码转换为 UTF-8 文本",
+    "io": "请检查文件权限后重试",
+    "rollback_failed": "请停止自动修复并人工检查工作区文件",
+}
+
+
 def capability_error_to_workflow_error(
     error: CapabilityError,
     state: WorkflowState,
@@ -66,6 +91,24 @@ def capability_error_to_workflow_error(
             "message": WORKFLOW_ERROR_MESSAGES[category],
             "retryable": error.retryable,
             "user_suggestion": WORKFLOW_ERROR_SUGGESTIONS[category],
+        }
+    )
+
+
+def workspace_error_to_workflow_error(
+    error: WorkspaceError,
+) -> WorkflowError:
+    return WorkflowError.model_validate(
+        {
+            "stage": "repair",
+            "category": "workspace",
+            "message": WORKSPACE_ERROR_MESSAGES[
+                error.category
+            ],
+            "retryable": error.retryable,
+            "user_suggestion": WORKSPACE_ERROR_SUGGESTIONS[
+                error.category
+            ],
         }
     )
 
@@ -93,12 +136,17 @@ def run_workflow(
                 snapshot,
             )
 
-    # 整个工作流只有这一处统一捕获 CapabilityError。
-    except CapabilityError as error:
-        workflow_error = capability_error_to_workflow_error(
-            error,
-            latest_state,
-        )
+    # 整个工作流只有这一处统一捕获模型和工作区能力异常。
+    except (CapabilityError, WorkspaceError) as error:
+        if isinstance(error, CapabilityError):
+            workflow_error = capability_error_to_workflow_error(
+                error,
+                latest_state,
+            )
+        else:
+            workflow_error = workspace_error_to_workflow_error(
+                error
+            )
 
         # 复用已有 failed 节点的状态和 trace 更新逻辑。
         failure_update = failed(latest_state)
