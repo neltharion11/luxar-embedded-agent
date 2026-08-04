@@ -198,7 +198,7 @@ feat: define workspace failure contract
 - `_is_link_or_junction(path: Path) -> bool`
 - `_assert_no_link_components(root: Path, target: Path) -> None`
 
-- [ ] **Step 1: Codex 写构造器与正常读取的失败测试**
+- [x] **Step 1: Codex 写构造器与正常读取的失败测试**
 
 覆盖：限制必须是正整数；允许的精确文件名和后缀被读取；返回路径使用 `/`；输出按相对路径排序；中文 UTF-8 内容保持不变。例如：
 
@@ -224,15 +224,15 @@ def test_read_project_files_returns_allowed_files_in_path_order(
     ]
 ```
 
-- [ ] **Step 2: Codex 写过滤与文本安全的失败测试**
+- [x] **Step 2: Codex 写过滤与文本安全的失败测试**
 
 覆盖：排除目录不遍历；`.txt`、`sdkconfig`、`dependencies.lock` 被忽略；允许文件中的 NUL 字节产生 `invalid_encoding`；非法 UTF-8 产生 `invalid_encoding`；单文件实际字节数与总字节数分别触发 `file_too_large` 和 `context_too_large`。
 
-- [ ] **Step 3: Codex 写根目录与链接安全的失败测试**
+- [x] **Step 3: Codex 写根目录与链接安全的失败测试**
 
 覆盖：不存在路径、普通文件充当根目录、根目录本身为 symlink/junction、允许文件为 symlink、根目录内中间目录为 symlink/junction。测试仅在当前系统不能创建相应链接时跳过。
 
-- [ ] **Step 4: 运行聚焦测试确认 RED**
+- [x] **Step 4: 运行聚焦测试确认 RED**
 
 Run:
 
@@ -242,7 +242,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: `LocalWorkspaceAdapter` 尚不存在，测试收集失败。
 
-- [ ] **Step 5: 教学读取调用链和关键语法**
+- [x] **Step 5: 教学读取调用链和关键语法**
 
 讲清：
 
@@ -260,7 +260,7 @@ repair_project
 
 解释 `Path.resolve(strict=True)`、`relative_to`、`suffix.lower()`、字节与字符的差别、`try/except UnicodeDecodeError`，以及为何不能使用字符串 `startswith` 判断路径是否越界。
 
-- [ ] **Step 6: 学习者实现构造器和纯判断函数**
+- [x] **Step 6: 学习者实现构造器和纯判断函数**
 
 常量与规则固定为：
 
@@ -298,7 +298,7 @@ if (
 
 `max_total_bytes` 使用同样规则，防止 `True` 被当作整数 `1`。
 
-- [ ] **Step 7: 学习者实现根目录和链接校验**
+- [x] **Step 7: 学习者实现根目录和链接校验**
 
 `_is_link_or_junction` 同时调用 `path.is_symlink()` 与 Python 3.12 的 `path.is_junction()`。根目录必须先检查原路径是否为链接，再严格 `resolve`。目标安全验证沿着 `root` 到 `target` 的每个词法路径组件检查链接，随后严格解析并执行：
 
@@ -315,7 +315,7 @@ except ValueError as error:
 
 所有外部异常都转换成固定文字，不拼接 `project_path` 或 `str(error)`。
 
-- [ ] **Step 8: 学习者实现 read_project_files**
+- [x] **Step 8: 学习者实现 read_project_files**
 
 扫描必须先过滤排除目录，再拒绝非排除范围内的链接目录；允许文件按 POSIX 相对路径排序。对每个文件先 `stat().st_size` 检查，再 `read_bytes()`，随后用 `len(data)` 复查；总量累计实际字节数。文本检查为：
 
@@ -337,11 +337,11 @@ except UnicodeDecodeError as error:
     ) from error
 ```
 
-- [ ] **Step 9: 运行读取测试确认 GREEN**
+- [x] **Step 9: 运行读取测试确认 GREEN**
 
 Expected: 正常读取、排除、容量、编码、symlink/junction 测试通过；只有系统确实无法创建链接的用例允许 skip。
 
-- [ ] **Step 10: 保存只读工作区检查点**
+- [x] **Step 10: 保存只读工作区检查点**
 
 Commit:
 
