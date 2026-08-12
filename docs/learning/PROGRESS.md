@@ -1,10 +1,10 @@
 # LUXAR Enterprise Learning Progress
 
-Updated: 2026-08-04
+Updated: 2026-08-12
 
 ## Current milestone
 
-The learner has completed the path-contained `LocalWorkspaceAdapter`. The seven-node Graph can now use a real local filesystem capability for bounded source reading and existing-file-only repair while preserving the same Ports, nodes, and routing topology.
+The production-shaped `EspIdfCliAdapter` slice is complete. The unchanged seven-node Graph can now use real ESP-IDF project preflight, dependency authorization, `idf.py reconfigure/build`, sanitized build evidence, and structured diagnostics through the existing `EspIdfPort`.
 
 ## Verified work
 
@@ -142,6 +142,46 @@ ESP-IDF environment and project, runs `idf.py reconfigure`, verifies declared
 dependencies, and only then builds. Dependency downloads remain disabled by
 default and require explicit `allow_dependency_downloads=True` authorization.
 
-## Authorship contract
+## Current learning workflow
 
-The learner writes learning-critical Domain models, Ports, Adapter behavior, State, Runtime Context, nodes, routing decisions, and Graph builders. Codex maintains scaffolding, test fixtures, explanatory documentation, progress records, and commit summaries.
+For the completed ESP-IDF slice, the learner explicitly selected “finish first,
+then study”: Codex completes the approved production code, tests, documentation,
+audit, and commits without interrupting implementation for copy-and-type
+exercises. Teaching then works backward from the verified final code. Markdown
+and progress records always remain Codex-owned.
+
+## ESP-IDF CLI Adapter checkpoint
+
+Authoritative documents:
+
+- `docs/superpowers/specs/2026-08-04-luxar-espidf-cli-adapter-design.md`
+- `docs/superpowers/plans/2026-08-12-luxar-espidf-cli-adapter-plan.md`
+- `docs/learning/09-espidf-cli-adapter.md`
+
+`EspIdfCliAdapter` now validates a real ESP-IDF project root, trusted command
+launcher, manifest encoding/YAML/size, and link/Junction boundaries before
+starting a process. Non-empty component dependencies are rejected before any
+command unless the application explicitly sets `allow_dependency_downloads=True`.
+Safe mode also sends `IDF_COMPONENT_MANAGER=0` in a copied child environment.
+
+The Adapter runs `idf.py reconfigure` before `idf.py build` using a parameter
+list, `shell=False`, validated `cwd`, captured UTF-8 output, separate timeouts,
+and no hidden retry. It classifies dependency, environment, linker, source, and
+unknown failures; extracts GCC/Clang and CMake diagnostics; removes ANSI and
+external absolute paths; and bounds State summaries.
+
+Pre-command failures become sanitized `EspIdfError` values at the single Runner
+boundary. Completed or timed-out commands become factual `BuildEvidence`.
+Bootstrap selects real Workspace and ESP-IDF Adapters by default while preserving
+explicit Fake injection. The seven-node LangGraph topology is unchanged.
+
+Final default verification: `269 collected, 261 passed, 8 skipped`. The real
+DeepSeek and ESP-IDF smokes remain explicitly opt-in; unavailable ordinary
+Windows symlink cases are skipped while Junction safety cases execute and pass.
+Security searches found production `subprocess` only in the ESP-IDF Adapter, no
+shell-string execution, no unsafe YAML loading, and one joint application error
+boundary.
+
+Next enterprise slice: add a real application/CLI entrypoint and explicit
+configuration boundary that composes the completed DeepSeek, Workspace, and
+ESP-IDF capabilities. This is not implemented by the current slice.

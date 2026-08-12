@@ -236,6 +236,24 @@ def test_preflight_enforces_manifest_file_and_total_byte_limits(
     assert total_error.value.category == "invalid_project"
 
 
+def test_preflight_counts_bytes_actually_read_from_manifests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    (project / "idf_component.yml").write_text("{}\n", encoding="utf-8")
+    component = project / "component"
+    component.mkdir()
+    (component / "idf_component.yml").write_text("{}\n", encoding="utf-8")
+
+    adapter = EspIdfCliAdapter(max_manifest_total_bytes=15)
+    monkeypatch.setattr(adapter, "_read_manifest", lambda _path: ({}, 10))
+
+    with pytest.raises(EspIdfError, match="总量"):
+        adapter._preflight(project)
+
+
 def _create_directory_symlink_or_skip(link: Path, target: Path) -> None:
     try:
         os.symlink(target, link, target_is_directory=True)

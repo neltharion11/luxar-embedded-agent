@@ -1,6 +1,6 @@
 # LUXAR EspIdfCliAdapter Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Do not delegate the learner's core coding exercises to subagents. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Do not delegate the learner's core coding exercises to subagents. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 实现一个默认禁止依赖下载、能够安全调用真实 `idf.py reconfigure` 与 `idf.py build`、并把有限且脱敏的终端输出转换成 `BuildEvidence` 的 `EspIdfCliAdapter`。
 
@@ -28,8 +28,8 @@
 - `dependency`、`environment`、`unknown` 进入 `failed`；只有 `source`、`linker` 可进入 `repair_project`；`timeout` 仅在预算内直接重试。
 - 日志进入 State 前必须移除 ANSI 控制符、隐藏项目外绝对路径、限制长度；完整日志持久化不属于本切片。
 - 默认测试不得访问网络，也不得要求本机存在 ESP-IDF；真实构建测试必须显式 opt-in。
-- 学习者只编写有教学价值的错误合同、预检规则、命令编排、解析和应用接入核心代码；Codex 编写全部测试、fixtures、Markdown、进度记录和机械性脚手架。
-- 每次学习者编码前，Codex 必须先用中文讲清调用链、涉及的 Python 语法、对象职责和安全规则。
+- 本切片采用“先完成、后集中学习”：Codex 直接完成已经批准范围内的生产代码、测试、fixtures、Markdown、进度记录和机械性脚手架，不在实现中间要求学习者复制或手写代码。
+- 完整实现、审计和验证完成后，Codex 再以最终代码为准用中文集中讲解调用链、Python 语法、对象职责、安全规则和测试运行方式。
 
 ---
 
@@ -123,7 +123,7 @@ class EspIdfError(RuntimeError):
 
 实例公开 `category`、`message`、`retryable`。`BuildEvidence.error_category` 和 `WorkflowError.category` 均增加 `"dependency"`。
 
-- [ ] **Step 1: Codex 写错误合同和领域词汇的失败测试**
+- [x] **Step 1: Codex 写错误合同和领域词汇的失败测试**
 
 `tests/ports/test_espidf_errors.py` 使用参数化测试验证四个类别及 `str(error)`：
 
@@ -155,7 +155,7 @@ def test_espidf_error_preserves_stable_failure_facts(
 
 领域测试分别构造 `error_category="dependency"` 的失败 `BuildEvidence` 和 `category="dependency"`、`stage="build"` 的 `WorkflowError`。
 
-- [ ] **Step 2: Codex 写 dependency 路由失败测试**
+- [x] **Step 2: Codex 写 dependency 路由失败测试**
 
 在 `tests/application/test_routing.py` 的参数表中增加：
 
@@ -165,7 +165,7 @@ def test_espidf_error_preserves_stable_failure_facts(
 
 它证明增加类别不会增加 Graph 节点或修复分支。
 
-- [ ] **Step 3: 运行聚焦测试确认 RED**
+- [x] **Step 3: 运行聚焦测试确认 RED**
 
 Run:
 
@@ -175,11 +175,11 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: 新异常模块无法导入，并且两个 Pydantic `Literal` 尚不接受 `dependency`。
 
-- [ ] **Step 4: 教学“异常”和“证据”的边界**
+- [x] **Step 4: 教学“异常”和“证据”的边界**
 
 讲清：`EspIdfError` 表示 `idf.py` 没有完成一次可记录的命令；`BuildEvidence` 表示命令已经运行并产生事实。解释 `Literal`、`RuntimeError`、关键字专用参数 `*`、`super().__init__()`，以及为什么不能为“命令根本没启动”伪造 `return_code=1`。
 
-- [ ] **Step 5: 学习者实现 EspIdfError 和两个 dependency 词汇**
+- [x] **Step 5: 学习者实现 EspIdfError 和两个 dependency 词汇**
 
 `src/luxar/ports/espidf_errors.py` 的实现为：
 
@@ -215,11 +215,11 @@ class EspIdfError(RuntimeError):
 
 同时在 `BuildEvidence.error_category` 与 `WorkflowError.category` 的现有 `Literal` 中增加 `"dependency"`。路由实现无需增加新的 `if`：现有默认 `return "failed"` 已满足策略，但学习者要能解释这一事实。
 
-- [ ] **Step 6: 运行聚焦测试确认 GREEN**
+- [x] **Step 6: 运行聚焦测试确认 GREEN**
 
 Expected: 新合同、领域模型和路由测试全部通过。
 
-- [ ] **Step 7: 保存失败词汇检查点**
+- [x] **Step 7: 保存失败词汇检查点**
 
 Commit:
 
@@ -267,7 +267,7 @@ def _discover_manifests(root: Path) -> list[Path]: ...
 def _manifest_has_dependencies(data: object) -> bool: ...
 ```
 
-- [ ] **Step 1: Codex 增加 PyYAML 依赖并安装当前项目**
+- [x] **Step 1: Codex 增加 PyYAML 依赖并安装当前项目**
 
 在 `pyproject.toml` 的运行时依赖中增加：
 
@@ -283,7 +283,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pip install -e .
 
 Expected: editable 安装成功，`python -c "import yaml; print(yaml.__version__)"` 显示 6.x。安装只更新 Conda 环境，不访问 ESP-IDF 组件注册表。
 
-- [ ] **Step 2: Codex 写构造器失败测试**
+- [x] **Step 2: Codex 写构造器失败测试**
 
 覆盖：空命令、含空字符串的命令、布尔值或非正整数限制、非布尔下载授权。有效 `idf_command` 被复制成 tuple，调用方后来修改原 list 不影响 Adapter。
 
@@ -297,11 +297,11 @@ def test_constructor_copies_idf_command() -> None:
     assert adapter.idf_command == ("python", "idf.py")
 ```
 
-- [ ] **Step 3: Codex 写项目和 launcher 预检失败测试**
+- [x] **Step 3: Codex 写项目和 launcher 预检失败测试**
 
 覆盖：根目录不存在、普通文件充当根目录、根目录为 symlink/junction、缺少根 `CMakeLists.txt`、`CMakeLists.txt` 不是普通文件、默认 `idf.py` 无法通过 `shutil.which` 找到、显式绝对 launcher 不存在、显式绝对脚本不存在。异常必须是稳定类别且不包含测试绝对路径或注入的 OS 文本。
 
-- [ ] **Step 4: Codex 写严格依赖授权失败测试**
+- [x] **Step 4: Codex 写严格依赖授权失败测试**
 
 使用 `tmp_path` 创建项目，monkeypatch `shutil.which` 返回测试 launcher。覆盖：
 
@@ -326,7 +326,7 @@ assert captured.value.category == "dependency"
 assert subprocess_calls == []
 ```
 
-- [ ] **Step 5: 运行预检测试确认 RED**
+- [x] **Step 5: 运行预检测试确认 RED**
 
 Run:
 
@@ -336,7 +336,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: `EspIdfCliAdapter` 尚不存在，测试收集失败。
 
-- [ ] **Step 6: 教学构造器与预检调用链**
+- [x] **Step 6: 教学构造器与预检调用链**
 
 讲清：`Sequence[str]` 接受 list/tuple，但内部 tuple 防止外部修改；`shutil.which` 只检查受信任应用配置的首个命令；`yaml.safe_load` 返回 Python 对象后仍需检查顶层和 `dependencies` 类型；`os.walk(..., followlinks=False)` 仍需主动拒绝链接/Junction；`os.environ.copy()` 防止修改整个 Python 进程的环境。
 
@@ -353,7 +353,7 @@ build(project_path)
   → 复制环境并按策略设置 IDF_COMPONENT_MANAGER
 ```
 
-- [ ] **Step 7: 学习者实现构造器与路径/命令验证**
+- [x] **Step 7: 学习者实现构造器与路径/命令验证**
 
 构造器对每个整数限制使用与 Workspace Adapter 相同的“拒绝 bool、要求正整数”规则。`allow_dependency_downloads` 必须满足 `isinstance(value, bool)`。命令验证规则：
 
@@ -376,7 +376,7 @@ elif shutil.which(self.idf_command[0]) is None:
 
 `idf_command[1:]` 中是绝对路径的 token 必须存在且是普通文件；相对 token 由受信任配置负责，不按项目内容解释。
 
-- [ ] **Step 8: 学习者实现安全 manifest 扫描与解析**
+- [x] **Step 8: 学习者实现安全 manifest 扫描与解析**
 
 排除规则与 LocalWorkspaceAdapter 保持一致。扫描只收集精确名 `idf_component.yml`，按项目相对 POSIX 路径排序。读取前后检查实际字节数，拒绝 NUL 并严格 UTF-8 解码。解析为：
 
@@ -414,7 +414,7 @@ return bool(dependencies)
 
 不得把 `str(error)`、路径或 YAML 内容拼入稳定消息。
 
-- [ ] **Step 9: 学习者实现 _preflight 的授权环境**
+- [x] **Step 9: 学习者实现 _preflight 的授权环境**
 
 返回解析后的根目录与复制环境：
 
@@ -434,11 +434,11 @@ else:
     environment.pop("IDF_COMPONENT_MANAGER", None)
 ```
 
-- [ ] **Step 10: 运行预检测试确认 GREEN**
+- [x] **Step 10: 运行预检测试确认 GREEN**
 
 Expected: 构造器、根目录、launcher、YAML、容量、链接与授权测试全部通过；只有当前系统不能创建普通 symlink 的用例允许 skip。
 
-- [ ] **Step 11: 保存依赖预检检查点**
+- [x] **Step 11: 保存依赖预检检查点**
 
 Commit:
 
@@ -479,7 +479,7 @@ def _logical_command(action: str) -> list[str]:
 
 Task 3 暂时把所有普通非零返回码分类为 `unknown`；Task 4 再以纯解析函数替换该分类，并增加诊断。
 
-- [ ] **Step 1: Codex 写两阶段成功和提前终止测试**
+- [x] **Step 1: Codex 写两阶段成功和提前终止测试**
 
 monkeypatch `subprocess.run` 返回预设 `CompletedProcess` 队列。验证：
 
@@ -495,7 +495,7 @@ assert calls[1][0] == [*trusted_prefix, "build"]
 assert evidence.command == ["idf.py", "build"]
 ```
 
-- [ ] **Step 2: Codex 写 subprocess 安全参数测试**
+- [x] **Step 2: Codex 写 subprocess 安全参数测试**
 
 每次调用必须断言：
 
@@ -511,7 +511,7 @@ assert kwargs["check"] is False
 
 同时验证 reconfigure/build 使用各自超时，环境是新字典，且没有修改 `os.environ`。
 
-- [ ] **Step 3: Codex 写超时和启动失败测试**
+- [x] **Step 3: Codex 写超时和启动失败测试**
 
 `subprocess.TimeoutExpired` 分别在两个阶段产生：
 
@@ -528,7 +528,7 @@ BuildEvidence(
 
 超时对象携带的 stdout/stderr 可以是 `str` 或 `bytes`，均必须安全转换。`OSError` 启动失败产生 `EspIdfError(category="process")`，消息不含注入的敏感路径。reconfigure 超时或启动失败后不得运行 build。
 
-- [ ] **Step 4: 运行命令测试确认 RED**
+- [x] **Step 4: 运行命令测试确认 RED**
 
 Run:
 
@@ -538,11 +538,11 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: `build` 尚未完成两阶段编排。
 
-- [ ] **Step 5: 教学 subprocess.run 的参数和返回值**
+- [x] **Step 5: 教学 subprocess.run 的参数和返回值**
 
 解释：参数列表不会再由 PowerShell/CMD 解析；`cwd` 决定 ESP-IDF 项目；`CompletedProcess.returncode` 是真实退出码；stdout/stderr 是两个输出通道；`check=False` 让 Adapter 自己把失败变成领域证据；`TimeoutExpired` 是“已经启动但没有完成”；`OSError` 是“进程无法启动”。
 
-- [ ] **Step 6: 学习者实现 _run_action**
+- [x] **Step 6: 学习者实现 _run_action**
 
 核心调用固定为：
 
@@ -579,7 +579,7 @@ except OSError as error:
 
 普通结果：返回码为 0 时 `success=True` 且类别为 `None`；非零时 `success=False` 且暂为 `unknown`。
 
-- [ ] **Step 7: 学习者完成 build 两阶段编排**
+- [x] **Step 7: 学习者完成 build 两阶段编排**
 
 ```python
 def build(self, project_path: Path) -> BuildEvidence:
@@ -604,11 +604,11 @@ def build(self, project_path: Path) -> BuildEvidence:
 
 这段只做编排，不分析自然语言，也不决定下一个 LangGraph 节点。
 
-- [ ] **Step 8: 运行命令测试确认 GREEN**
+- [x] **Step 8: 运行命令测试确认 GREEN**
 
 Expected: 两阶段、参数安全、提前终止、超时和启动失败全部通过。
 
-- [ ] **Step 9: 保存真实命令检查点**
+- [x] **Step 9: 保存真实命令检查点**
 
 Commit:
 
@@ -650,7 +650,7 @@ BuildErrorCategory = Literal[
 
 `timeout` 继续由异常分支直接产生，不由文本分类器猜测。
 
-- [ ] **Step 1: Codex 写分类优先级失败测试**
+- [x] **Step 1: Codex 写分类优先级失败测试**
 
 参数化覆盖：
 
@@ -664,7 +664,7 @@ file:line:column: error                                   → source
 
 混合输出必须证明优先级：依赖文本同时含 `CMake Error` 仍是 dependency；链接文本同时含普通 `error` 仍是 linker。
 
-- [ ] **Step 2: Codex 写 GCC/Clang 和 CMake 诊断失败测试**
+- [x] **Step 2: Codex 写 GCC/Clang 和 CMake 诊断失败测试**
 
 覆盖：
 
@@ -676,11 +676,11 @@ CMake Error at main/CMakeLists.txt:12 (idf_component_register):
 
 期望得到项目相对 POSIX 路径、从 1 开始的行列号、规范 severity 和非空消息。相同诊断重复出现时只保留一次并保持首次出现顺序。项目外绝对路径的 `BuildDiagnostic.file` 为 `None`。
 
-- [ ] **Step 3: Codex 写日志清理和长度失败测试**
+- [x] **Step 3: Codex 写日志清理和长度失败测试**
 
 验证：ANSI 转义被删除；CRLF 统一成 LF；项目根绝对路径替换成项目相对表示；已识别的 Windows/POSIX 项目外绝对路径替换为 `<external-path>`；输出按 `max_summary_chars` 确定性截断；构造器的小长度值可用于测试。断言 State 摘要中不存在用户目录、ESP-IDF 安装路径和颜色控制码。
 
-- [ ] **Step 4: 运行解析测试确认 RED**
+- [x] **Step 4: 运行解析测试确认 RED**
 
 Run:
 
@@ -690,11 +690,11 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: 当前非零结果仍全部为 `unknown`，且没有结构化诊断。
 
-- [ ] **Step 5: 教学“正则提取”和“LLM 语义修复”的分工**
+- [x] **Step 5: 教学“正则提取”和“LLM 语义修复”的分工**
 
 讲清：正则不是让 Agent 理解代码，而是把编译器固定格式拆成字段；返回码决定成功/失败；关键词和阶段决定错误类别；LLM 只在后续看到结构化 source/linker 证据后推理如何修改源码。解释 raw string、命名捕获组、Windows 盘符中的冒号、`Path.relative_to`、去重集合与保持顺序。
 
-- [ ] **Step 6: 学习者实现清理和分类**
+- [x] **Step 6: 学习者实现清理和分类**
 
 ANSI 模式使用：
 
@@ -704,19 +704,19 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 分类器把 stdout/stderr 拼成小写文本，按严格顺序判断 `dependency → environment → linker → source → unknown`。模式集合以明确短语保存，不使用模糊的单个 `error` 作为 source 依据。
 
-- [ ] **Step 7: 学习者实现诊断解析与路径脱敏**
+- [x] **Step 7: 学习者实现诊断解析与路径脱敏**
 
 GCC/Clang 正则必须从行尾的 `:line[:column]: severity: message` 反向约束，避免 Windows `C:` 盘符破坏文件组。对诊断路径只做词法规范化和项目包含判断，不跟随编译器报告的路径读取文件。CMake 消息取当前行及紧随其后的第一条非空说明作为 message，找不到时使用稳定的 `CMake configuration error`。
 
-- [ ] **Step 8: 学习者把解析器接入 _run_action**
+- [x] **Step 8: 学习者把解析器接入 _run_action**
 
 顺序固定：先对原始 stdout/stderr 分类和解析，再分别生成脱敏摘要。失败 evidence 使用分类结果；成功 evidence 可保留有限成功摘要但 diagnostics 默认为空。超时分支也必须调用同一脱敏函数，不能直接保存异常原文。
 
-- [ ] **Step 9: 运行整个 Adapter 测试确认 GREEN**
+- [x] **Step 9: 运行整个 Adapter 测试确认 GREEN**
 
 Expected: 预检、命令、分类、诊断、脱敏和长度测试全部通过。
 
-- [ ] **Step 10: 保存证据解析检查点**
+- [x] **Step 10: 保存证据解析检查点**
 
 Commit:
 
@@ -769,7 +769,7 @@ def build_deepseek_runtime_context(
 
 显式传入 Fake/自定义对象时保持对象身份；未传时分别创建 `EspIdfCliAdapter` 和 `LocalWorkspaceAdapter`。
 
-- [ ] **Step 1: Codex 写 EspIdfError 映射失败测试**
+- [x] **Step 1: Codex 写 EspIdfError 映射失败测试**
 
 四个类别映射为：
 
@@ -782,11 +782,11 @@ process         → stage=build, category=environment
 
 最终 message/suggestion 必须来自 Application 固定字典，不能包含注入到 `EspIdfError.message` 的敏感标记。`retryable` 保留异常声明。
 
-- [ ] **Step 2: Codex 写 Runner 纵向失败测试**
+- [x] **Step 2: Codex 写 Runner 纵向失败测试**
 
 定义测试 `RaisingEspIdf` 实现 `build()` 并抛出配置错误。完整 Graph 先完成 requirement 和 plan，再在 build 失败。断言结果保留 requirement、plan 和最新 trace，状态为 `failed`，错误阶段是 build，且 `attempts` 不增加——因为节点没有收到任何完成的 BuildEvidence。
 
-- [ ] **Step 3: Codex 写组合根默认与注入测试**
+- [x] **Step 3: Codex 写组合根默认与注入测试**
 
 现有显式 Fake 注入测试保持通过；新增测试验证省略 `espidf/workspace` 时 Context 包含：
 
@@ -798,7 +798,7 @@ assert context.espidf.allow_dependency_downloads is False
 
 另一个测试传入 `allow_dependency_downloads=True` 和自定义 `idf_command`，验证它们只进入新建 Adapter；显式传入 `espidf` 时这些构造参数不替换传入对象。
 
-- [ ] **Step 4: 运行 Runner 和 bootstrap 测试确认 RED**
+- [x] **Step 4: 运行 Runner 和 bootstrap 测试确认 RED**
 
 Run:
 
@@ -808,11 +808,11 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: `EspIdfError` 尚未被统一边界捕获，且组合根仍要求显式提供两个工具 Port。
 
-- [ ] **Step 5: 教学三种错误如何共享一个边界**
+- [x] **Step 5: 教学三种错误如何共享一个边界**
 
 讲清联合 `except` 的 tuple 是允许捕获的异常类型集合；`isinstance` 分支将模型、工作区、ESP-IDF 三种 Port 错误交给各自纯转换函数；`latest_state` 只包含已经成功完成的节点，所以命令前失败不会伪造 attempts 或 evidence。组合根负责选择真实 Adapter，节点仍只认识 Port。
 
-- [ ] **Step 6: 学习者实现安全映射和联合捕获**
+- [x] **Step 6: 学习者实现安全映射和联合捕获**
 
 增加固定字典：
 
@@ -834,7 +834,7 @@ ESPIDF_ERROR_SUGGESTIONS = {
 
 转换函数固定 `stage="build"`，类别按上表映射，禁止使用 `error.message`。
 
-- [ ] **Step 7: 学习者实现正式 Adapter 默认装配**
+- [x] **Step 7: 学习者实现正式 Adapter 默认装配**
 
 在 `bootstrap.py` 导入正式两个 Adapter。创建默认对象的逻辑为：
 
@@ -851,11 +851,11 @@ if workspace is None:
 
 DeepSeek Settings 和共享 Client 的现有装配顺序保持不变。`EspIdfCliAdapter` 构造时不访问文件系统或查找命令，真实检查只在 `build()` 中发生，因此普通 bootstrap 测试不需要安装 ESP-IDF。
 
-- [ ] **Step 8: 运行应用与完整测试确认 GREEN**
+- [x] **Step 8: 运行应用与完整测试确认 GREEN**
 
 先运行聚焦命令，再运行规定的完整测试。Expected: 新错误正确进入 failed State；现有 CapabilityError、WorkspaceError、Fake 纵向链路和七节点拓扑不变。
 
-- [ ] **Step 9: 保存应用接入检查点**
+- [x] **Step 9: 保存应用接入检查点**
 
 Commit:
 
@@ -887,7 +887,7 @@ idf.py 可通过当前已激活环境发现
 
 它使用 pytest `tmp_path` 创建一个无托管依赖的最小 ESP-IDF 项目，只验证默认禁下载模式的 `reconfigure/build` 成功证据。
 
-- [ ] **Step 1: Codex 写默认跳过的真实 smoke 测试**
+- [x] **Step 1: Codex 写默认跳过的真实 smoke 测试**
 
 测试创建：
 
@@ -899,7 +899,7 @@ main/main.c
 
 根文件使用 ESP-IDF 标准 `project.cmake`；`main/main.c` 只包含空的 `app_main`。没有 `idf_component.yml`。未设置开关或找不到 `idf.py` 时使用 `pytest.skip`；不得自动安装 ESP-IDF，不得下载组件，不得使用用户工程。
 
-- [ ] **Step 2: Codex 运行默认完整测试**
+- [x] **Step 2: Codex 运行默认完整测试**
 
 Run:
 
@@ -909,7 +909,7 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 
 Expected: 所有离线测试通过；真实 DeepSeek 与真实 ESP-IDF smoke 默认显示 skip。必须记录实际 collected/pass/skip 数字，不能预先填写结果。
 
-- [ ] **Step 3: Codex 执行结构和安全搜索**
+- [x] **Step 3: Codex 执行结构和安全搜索**
 
 Run:
 
@@ -923,7 +923,7 @@ rg -n "yaml\.load\(" src tests
 
 人工确认：`subprocess` 只在 `adapters/espidf_cli.py`；没有 shell 字符串执行；默认禁下载测试存在；模型不能修改工具依赖目录；Application 只有一个联合异常边界；只使用 `yaml.safe_load`。
 
-- [ ] **Step 4: Codex 生成中文复习笔记**
+- [x] **Step 4: Codex 生成中文复习笔记**
 
 第 09 章必须解释英文名词与中文对应：CLI、subprocess、process、launcher、working directory/cwd、stdout、stderr、return code、timeout、preflight、manifest、dependency resolution、Component Manager、sanitization、diagnostic、classification、smoke test。包含以下三条纵向链路：
 
@@ -935,11 +935,11 @@ rg -n "yaml\.load\(" src tests
 
 笔记还要解释：为什么它仍然是 Agent 而不是简单脚本；哪些判断由 LLM 做、哪些由确定性代码做；`subprocess.run` 各参数的语法；为什么默认禁止下载是权限边界而不是 Prompt。
 
-- [ ] **Step 5: Codex 同步 README、总览和 PROGRESS**
+- [x] **Step 5: Codex 同步 README、总览和 PROGRESS**
 
 只记录真实完成状态、实际测试数字、真实 smoke 的运行条件和下一技术切片。下一切片根据当前总体设计进入“真实 ESP-IDF 最小工程创建/计划审批与持久化”中的优先项，不在本任务预先实施。
 
-- [ ] **Step 6: Codex 运行最终验证和 Git 检查**
+- [x] **Step 6: Codex 运行最终验证和 Git 检查**
 
 再次运行规定完整测试，然后运行：
 
@@ -950,7 +950,7 @@ git status --short
 
 `.vscode/` 必须保持未跟踪且不进入暂存区。读取实际退出码后才能声称完成。
 
-- [ ] **Step 7: Codex 同步计划复选框并提交文档**
+- [x] **Step 7: Codex 同步计划复选框并提交文档**
 
 Commit:
 

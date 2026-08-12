@@ -430,7 +430,7 @@ class EspIdfCliAdapter:
                     retryable=False,
                 )
 
-    def _read_manifest(self, manifest: Path) -> object:
+    def _read_manifest(self, manifest: Path) -> tuple[object, int]:
         try:
             stat_size = manifest.stat().st_size
         except OSError as error:
@@ -472,7 +472,7 @@ class EspIdfCliAdapter:
 
         try:
             text = data.decode("utf-8", errors="strict")
-            return yaml.safe_load(text)
+            return yaml.safe_load(text), len(data)
         except (UnicodeDecodeError, yaml.YAMLError) as error:
             raise EspIdfError(
                 category="invalid_project",
@@ -491,14 +491,8 @@ class EspIdfCliAdapter:
         has_declared_dependencies = False
 
         for manifest in manifests:
-            try:
-                total_bytes += manifest.stat().st_size
-            except OSError as error:
-                raise EspIdfError(
-                    category="invalid_project",
-                    message="ESP-IDF 依赖清单无法读取",
-                    retryable=False,
-                ) from error
+            loaded, actual_bytes = self._read_manifest(manifest)
+            total_bytes += actual_bytes
 
             if total_bytes > self.max_manifest_total_bytes:
                 raise EspIdfError(
@@ -507,7 +501,6 @@ class EspIdfCliAdapter:
                     retryable=False,
                 )
 
-            loaded = self._read_manifest(manifest)
             has_declared_dependencies = (
                 _manifest_has_dependencies(loaded)
                 or has_declared_dependencies
