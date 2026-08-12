@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
-from pathlib import Path
-from typing import Literal, Sequence
+from pathlib import Path, PureWindowsPath
+from typing import Literal, Sequence, TypeAlias
 
 import yaml
 
-from luxar.domain.evidence import BuildEvidence
+from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
 from luxar.ports.espidf_errors import EspIdfError
 
 
@@ -23,6 +24,57 @@ _EXCLUDED_EXACT_DIRECTORIES = frozenset(
         "managed_components",
         "__pycache__",
     }
+)
+
+BuildErrorCategory: TypeAlias = Literal[
+    "dependency",
+    "environment",
+    "source",
+    "linker",
+    "unknown",
+]
+
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"
+)
+_GCC_DIAGNOSTIC_RE = re.compile(
+    r"^(?P<file>.+?):(?P<line>\d+):"
+    r"(?:(?P<column>\d+):)?\s*"
+    r"(?P<severity>fatal error|error|warning):\s*"
+    r"(?P<message>.+?)\s*$"
+)
+_CMAKE_DIAGNOSTIC_RE = re.compile(
+    r"^CMake Error at (?P<file>.+?):(?P<line>\d+)"
+    r"(?:\s+\([^)]+\))?:\s*$"
+)
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(
+    r"(?i)(?<![\w])([A-Z]:[\\/][^\s:]+(?:[\\/][^\s:]+)*)"
+)
+_POSIX_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![\w.])(/(?:[^\s:]+/)*[^\s:]+)"
+)
+
+_DEPENDENCY_SIGNALS = (
+    "failed to resolve component",
+    "component registry",
+    "managed_components",
+    "dependencies.lock",
+    "failed to download component",
+    "cannot establish a connection to the component registry",
+)
+_ENVIRONMENT_SIGNALS = (
+    "could not find ninja",
+    "cmake was not found",
+    "no module named",
+    "idf_path",
+    "toolchain was not found",
+    "compiler is not able to compile",
+)
+_LINKER_SIGNALS = (
+    "undefined reference",
+    "multiple definition",
+    "ld returned",
+    "collect2: error",
 )
 
 
@@ -167,6 +219,142 @@ def _coerce_timeout_output(output: str | bytes | None) -> str:
     if isinstance(output, bytes):
         return output.decode("utf-8", errors="replace")
     return output
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def _path_inside_project(raw_path: str, root: Path) -> str | None:
+    normalized = raw_path.strip().strip('"')
+    root_text = str(root.resolve())
+
+    if re.match(r"^[A-Za-z]:[\\/]", normalized):
+        candidate_parts = PureWindowsPath(normalized).parts
+        root_parts = PureWindowsPath(root_text).parts
+
+        if (
+            len(candidate_parts) >= len(root_parts)
+            and tuple(part.casefold() for part in candidate_parts[: len(root_parts)])
+            == tuple(part.casefold() for part in root_parts)
+        ):
+            return "/".join(candidate_parts[len(root_parts) :]) or None
+        return None
+
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        try:
+            return candidate.relative_to(root).as_posix()
+        except ValueError:
+            return None
+
+    parts = candidate.parts
+    if ".." in parts:
+        return None
+    return candidate.as_posix().lstrip("./") or None
+
+
+def _sanitize_output(text: str, root: Path, max_chars: int) -> str:
+    cleaned = _strip_ansi(text).replace("\r\n", "\n").replace("\r", "\n")
+    root_text = str(root.resolve())
+    root_variants = {
+        root_text,
+        root_text.replace("\\", "/"),
+        root_text.replace("/", "\\"),
+    }
+
+    for variant in sorted(root_variants, key=len, reverse=True):
+        cleaned = re.sub(
+            re.escape(variant) + r"[\\/]?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+
+    cleaned = cleaned.replace("\\", "/")
+    cleaned = _WINDOWS_ABSOLUTE_PATH_RE.sub("<external-path>", cleaned)
+    cleaned = _POSIX_ABSOLUTE_PATH_RE.sub("<external-path>", cleaned)
+
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[:max_chars]
+
+
+def _classify_failure(
+    action: str,
+    stdout: str,
+    stderr: str,
+) -> BuildErrorCategory:
+    combined = f"{stdout}\n{stderr}".casefold()
+
+    if any(signal in combined for signal in _DEPENDENCY_SIGNALS):
+        return "dependency"
+    if any(signal in combined for signal in _ENVIRONMENT_SIGNALS):
+        return "environment"
+    if any(signal in combined for signal in _LINKER_SIGNALS):
+        return "linker"
+    if any(
+        _GCC_DIAGNOSTIC_RE.match(line)
+        for line in _strip_ansi(f"{stdout}\n{stderr}").splitlines()
+    ):
+        return "source"
+    if action == "reconfigure" and "cmake error at" in combined:
+        return "source"
+    return "unknown"
+
+
+def _parse_diagnostics(text: str, root: Path) -> list[BuildDiagnostic]:
+    lines = _strip_ansi(text).replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    diagnostics: list[BuildDiagnostic] = []
+    seen: set[tuple[object, ...]] = set()
+
+    for index, line in enumerate(lines):
+        gcc_match = _GCC_DIAGNOSTIC_RE.match(line)
+        if gcc_match is not None:
+            severity = gcc_match.group("severity")
+            diagnostic = BuildDiagnostic(
+                file=_path_inside_project(gcc_match.group("file"), root),
+                line=int(gcc_match.group("line")),
+                column=(
+                    int(gcc_match.group("column"))
+                    if gcc_match.group("column") is not None
+                    else None
+                ),
+                severity="warning" if severity == "warning" else "error",
+                message=gcc_match.group("message").strip(),
+            )
+        else:
+            cmake_match = _CMAKE_DIAGNOSTIC_RE.match(line)
+            if cmake_match is None:
+                continue
+
+            message = "CMake configuration error"
+            for next_line in lines[index + 1 :]:
+                if next_line.strip():
+                    message = next_line.strip()
+                    break
+
+            diagnostic = BuildDiagnostic(
+                file=_path_inside_project(cmake_match.group("file"), root),
+                line=int(cmake_match.group("line")),
+                column=None,
+                severity="error",
+                message=message,
+            )
+
+        key = (
+            diagnostic.file,
+            diagnostic.line,
+            diagnostic.column,
+            diagnostic.severity,
+            diagnostic.code,
+            diagnostic.message,
+        )
+        if key not in seen:
+            seen.add(key)
+            diagnostics.append(diagnostic)
+
+    return diagnostics
 
 
 class EspIdfCliAdapter:
@@ -365,12 +553,22 @@ class EspIdfCliAdapter:
                 env=environment,
             )
         except subprocess.TimeoutExpired as error:
+            raw_stdout = _coerce_timeout_output(error.stdout)
+            raw_stderr = _coerce_timeout_output(error.stderr)
             return BuildEvidence(
                 success=False,
                 command=_logical_command(action),
                 return_code=-1,
-                stdout_summary=_coerce_timeout_output(error.stdout),
-                stderr_summary=_coerce_timeout_output(error.stderr),
+                stdout_summary=_sanitize_output(
+                    raw_stdout,
+                    root,
+                    self.max_summary_chars,
+                ),
+                stderr_summary=_sanitize_output(
+                    raw_stderr,
+                    root,
+                    self.max_summary_chars,
+                ),
                 error_category="timeout",
             )
         except OSError as error:
@@ -380,22 +578,41 @@ class EspIdfCliAdapter:
                 retryable=True,
             ) from error
 
+        stdout_summary = _sanitize_output(
+            result.stdout,
+            root,
+            self.max_summary_chars,
+        )
+        stderr_summary = _sanitize_output(
+            result.stderr,
+            root,
+            self.max_summary_chars,
+        )
+
         if result.returncode == 0:
             return BuildEvidence(
                 success=True,
                 command=_logical_command(action),
                 return_code=0,
-                stdout_summary=result.stdout,
-                stderr_summary=result.stderr,
+                stdout_summary=stdout_summary,
+                stderr_summary=stderr_summary,
             )
 
         return BuildEvidence(
             success=False,
             command=_logical_command(action),
             return_code=result.returncode,
-            stdout_summary=result.stdout,
-            stderr_summary=result.stderr,
-            error_category="unknown",
+            stdout_summary=stdout_summary,
+            stderr_summary=stderr_summary,
+            error_category=_classify_failure(
+                action,
+                result.stdout,
+                result.stderr,
+            ),
+            diagnostics=_parse_diagnostics(
+                f"{result.stdout}\n{result.stderr}",
+                root,
+            ),
         )
 
     def build(self, project_path: Path) -> BuildEvidence:

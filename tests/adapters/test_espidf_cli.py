@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from luxar.adapters.espidf_cli import EspIdfCliAdapter
+from luxar.adapters.espidf_cli import (
+    EspIdfCliAdapter,
+    _classify_failure,
+    _parse_diagnostics,
+    _sanitize_output,
+)
 from luxar.ports.espidf_errors import EspIdfError
 
 
@@ -432,3 +437,125 @@ def test_process_start_failure_is_sanitized(
 
     assert captured.value.category == "process"
     assert "SECRET_EXECUTABLE_PATH" not in captured.value.message
+
+
+@pytest.mark.parametrize(
+    ("action", "stdout", "stderr", "expected"),
+    [
+        ("reconfigure", "CMake Error", "Failed to resolve component", "dependency"),
+        ("reconfigure", "", "Could not find Ninja", "environment"),
+        ("build", "error", "undefined reference to `app_wifi_init`", "linker"),
+        ("build", "main/main.c:4:2: error: broken", "", "source"),
+        ("build", "", "unrecognized failure", "unknown"),
+    ],
+)
+def test_failure_classification_uses_stable_priority(
+    action: str,
+    stdout: str,
+    stderr: str,
+    expected: str,
+) -> None:
+    assert _classify_failure(action, stdout, stderr) == expected
+
+
+def test_parse_diagnostics_extracts_locations_and_deduplicates(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    windows_root = str(root).replace("/", "\\")
+    gcc_line = (
+        f"{windows_root}\\main\\main.c:42:17: error: expected ';'\n"
+    )
+    text = (
+        gcc_line
+        + "main/component.cpp:8: warning: unused variable\n"
+        + "CMake Error at main/CMakeLists.txt:12 (idf_component_register):\n"
+        + "  Missing source file\n"
+        + gcc_line
+    )
+
+    diagnostics = _parse_diagnostics(text, root)
+
+    assert [item.model_dump() for item in diagnostics] == [
+        {
+            "file": "main/main.c",
+            "line": 42,
+            "column": 17,
+            "severity": "error",
+            "code": None,
+            "message": "expected ';'",
+        },
+        {
+            "file": "main/component.cpp",
+            "line": 8,
+            "column": None,
+            "severity": "warning",
+            "code": None,
+            "message": "unused variable",
+        },
+        {
+            "file": "main/CMakeLists.txt",
+            "line": 12,
+            "column": None,
+            "severity": "error",
+            "code": None,
+            "message": "Missing source file",
+        },
+    ]
+
+
+def test_parse_diagnostics_omits_external_absolute_file(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    diagnostics = _parse_diagnostics(
+        "C:/Espressif/framework/components/foo.c:7:3: error: external failure",
+        root,
+    )
+    assert diagnostics[0].file is None
+
+
+def test_sanitize_output_removes_ansi_paths_and_truncates(tmp_path: Path) -> None:
+    root = tmp_path / "SECRET_PROJECT"
+    root.mkdir()
+    text = (
+        f"\x1b[31m{root / 'main' / 'main.c'}: error\x1b[0m\r\n"
+        "C:/Espressif/SECRET_TOOL/tool.py failed\r\n"
+        + ("x" * 100)
+    )
+
+    sanitized = _sanitize_output(text, root, 80)
+
+    assert "\x1b" not in sanitized
+    assert "\r" not in sanitized
+    assert str(root) not in sanitized
+    assert "SECRET_TOOL" not in sanitized
+    assert "main/main.c" in sanitized
+    assert len(sanitized) <= 80
+
+
+def test_failed_build_uses_classification_diagnostics_and_sanitized_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "SECRET_PROJECT")
+    absolute_source = project / "main" / "main.c"
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[-1] == "reconfigure":
+            return subprocess.CompletedProcess(command, 0, stdout="configured", stderr="")
+        return subprocess.CompletedProcess(
+            command,
+            2,
+            stdout="",
+            stderr=f"\x1b[31m{absolute_source}:9:4: error: broken source\x1b[0m",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    evidence = EspIdfCliAdapter(max_summary_chars=200).build(project)
+
+    assert evidence.error_category == "source"
+    assert evidence.diagnostics[0].file == "main/main.c"
+    assert evidence.diagnostics[0].line == 9
+    assert str(project) not in evidence.stderr_summary
+    assert "\x1b" not in evidence.stderr_summary
