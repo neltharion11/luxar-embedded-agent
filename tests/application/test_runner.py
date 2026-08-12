@@ -9,6 +9,7 @@ from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
 from luxar.application.context import RuntimeContext
 from luxar.application.runner import (
+    WorkflowProgress,
     capability_error_to_workflow_error,
     run_workflow,
     workspace_error_to_workflow_error,
@@ -524,3 +525,117 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
         "create_plan",
         "failed",
     ]
+
+
+def test_runner_reports_safe_progress_for_complete_repair_loop() -> None:
+    requirement = make_requirement()
+    failed_evidence = BuildEvidence(
+        success=False,
+        command=["idf.py", "build"],
+        return_code=1,
+        error_category="source",
+    )
+    succeeded_evidence = BuildEvidence(
+        success=True,
+        command=["idf.py", "build"],
+        return_code=0,
+    )
+    events: list[WorkflowProgress] = []
+    context = make_context(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(make_plan()),
+        repair_planner=FakeRepairPlanner(make_repair()),
+        evidence_sequence=[failed_evidence, succeeded_evidence],
+    )
+
+    result = run_workflow(
+        initial_state=WorkflowState(
+            task_text="SECRET_TASK_TEXT",
+            attempts=0,
+            max_attempts=3,
+            trace=[],
+        ),
+        context=context,
+        progress_reporter=events.append,
+    )
+
+    assert result["status"] == "completed"
+    assert events == [
+        WorkflowProgress("requirement", "需求分析完成", 0),
+        WorkflowProgress("planning", "执行计划已生成", 0),
+        WorkflowProgress("build", "已完成第 1 次构建", 1),
+        WorkflowProgress("repair", "已应用受限制的源码修复", 1),
+        WorkflowProgress("build", "已完成第 2 次构建", 2),
+        WorkflowProgress("completed", "工作流执行成功", 2),
+    ]
+    assert set(vars(events[0])) == {"stage", "message", "attempts"}
+    assert "SECRET_TASK_TEXT" not in repr(events)
+    assert str(context.project_path) not in repr(events)
+
+
+def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
+    events: list[WorkflowProgress] = []
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(make_requirement()),
+        planner=FakePlanner(make_plan()),
+        repair_planner=FakeRepairPlanner(make_repair()),
+        espidf=RaisingEspIdf(
+            EspIdfError(
+                category="dependency",
+                message="SECRET_MANIFEST",
+                retryable=False,
+            )
+        ),
+        workspace=FakeWorkspace([]),
+        project_path=Path("SECRET_PROJECT_PATH"),
+    )
+
+    result = run_workflow(
+        initial_state=WorkflowState(
+            task_text="build firmware",
+            attempts=0,
+            max_attempts=3,
+            trace=[],
+        ),
+        context=context,
+        progress_reporter=events.append,
+    )
+
+    assert result["status"] == "failed"
+    assert events == [
+        WorkflowProgress("requirement", "需求分析完成", 0),
+        WorkflowProgress("planning", "执行计划已生成", 0),
+        WorkflowProgress("failed", "工作流执行失败", 0),
+    ]
+    assert "SECRET_MANIFEST" not in repr(events)
+    assert "SECRET_PROJECT_PATH" not in repr(events)
+
+
+def test_runner_does_not_normalize_reporter_exception() -> None:
+    reporter_error = CapabilityError(
+        category="service",
+        message="REPORTER_PROGRAMMING_ERROR",
+        retryable=False,
+    )
+
+    def raising_reporter(_: WorkflowProgress) -> None:
+        raise reporter_error
+
+    context = make_context(
+        requirement_parser=FakeRequirementParser(make_requirement()),
+        planner=FakePlanner(make_plan()),
+        repair_planner=FakeRepairPlanner(make_repair()),
+        evidence_sequence=[],
+    )
+
+    with pytest.raises(CapabilityError) as captured:
+        run_workflow(
+            initial_state=WorkflowState(
+                task_text="build firmware",
+                trace=[],
+            ),
+            context=context,
+            progress_reporter=raising_reporter,
+        )
+
+    assert captured.value is reporter_error

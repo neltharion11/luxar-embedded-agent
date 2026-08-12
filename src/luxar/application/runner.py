@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal, cast
 
 from luxar.application.context import RuntimeContext
 from luxar.application.graph import build_graph
@@ -86,6 +88,68 @@ ESPIDF_ERROR_SUGGESTIONS = {
 }
 
 
+ProgressStage = Literal[
+    "requirement",
+    "planning",
+    "build",
+    "repair",
+    "clarification",
+    "completed",
+    "failed",
+]
+
+
+@dataclass(frozen=True)
+class WorkflowProgress:
+    """只向展示层报告固定阶段文字和构建次数，不暴露完整 State。"""
+
+    stage: ProgressStage
+    message: str
+    attempts: int
+
+
+ProgressReporter = Callable[[WorkflowProgress], None]
+
+
+_PROGRESS_BY_NODE: dict[
+    str,
+    tuple[ProgressStage, str],
+] = {
+    "analyze_requirement": ("requirement", "需求分析完成"),
+    "create_plan": ("planning", "执行计划已生成"),
+    "repair_project": ("repair", "已应用受限制的源码修复"),
+    "request_clarification": ("clarification", "需要补充需求信息"),
+    "completed": ("completed", "工作流执行成功"),
+    "failed": ("failed", "工作流执行失败"),
+}
+
+
+def _progress_from_state(state: WorkflowState) -> WorkflowProgress | None:
+    trace = state.get("trace", [])
+    if not trace:
+        return None
+
+    node = trace[-1]
+    attempts = state.get("attempts", 0)
+    if node == "build_project":
+        return WorkflowProgress(
+            stage="build",
+            message=f"已完成第 {attempts} 次构建",
+            attempts=attempts,
+        )
+
+    configured = _PROGRESS_BY_NODE.get(node)
+    if configured is None:
+        return None
+
+    stage, message = configured
+    return WorkflowProgress(
+        stage=stage,
+        message=message,
+        attempts=attempts,
+    )
+
+
 def capability_error_to_workflow_error(
     error: CapabilityError,
     state: WorkflowState,
@@ -156,6 +220,7 @@ def run_workflow(
     *,
     initial_state: WorkflowState,
     context: RuntimeContext,
+    progress_reporter: ProgressReporter | None = None,
 ) -> WorkflowState:
     # 先复制初始 State。即使第一个节点立刻失败，task_text 也不会丢失。
     latest_state = cast(
@@ -163,44 +228,58 @@ def run_workflow(
         dict(initial_state),
     )
 
-    try:
-        # stream_mode="values" 会在每个节点成功后给出完整 State 快照。
-        for snapshot in build_graph().stream(
+    # 显式调用 next()，让能力异常捕获只包住 Graph，而不包住展示层 reporter。
+    snapshots = iter(
+        build_graph().stream(
             initial_state,
             context=context,
             stream_mode="values",
-        ):
+        )
+    )
+    last_trace_length = len(latest_state.get("trace", []))
+
+    while True:
+        try:
+            snapshot = next(snapshots)
+        except StopIteration:
+            break
+        # 整个工作流只有这一处统一捕获三种能力异常。
+        except (CapabilityError, WorkspaceError, EspIdfError) as error:
+            if isinstance(error, CapabilityError):
+                workflow_error = capability_error_to_workflow_error(
+                    error,
+                    latest_state,
+                )
+            elif isinstance(error, WorkspaceError):
+                workflow_error = workspace_error_to_workflow_error(error)
+            else:
+                workflow_error = espidf_error_to_workflow_error(error)
+
+            failure_update = failed(latest_state)
             latest_state = cast(
                 WorkflowState,
-                snapshot,
+                {
+                    **latest_state,
+                    "error": workflow_error,
+                    **failure_update,
+                },
             )
 
-    # 整个工作流只有这一处统一捕获模型和工作区能力异常。
-    except (CapabilityError, WorkspaceError, EspIdfError) as error:
-        if isinstance(error, CapabilityError):
-            workflow_error = capability_error_to_workflow_error(
-                error,
-                latest_state,
-            )
-        elif isinstance(error, WorkspaceError):
-            workflow_error = workspace_error_to_workflow_error(
-                error
-            )
-        else:
-            workflow_error = espidf_error_to_workflow_error(
-                error
-            )
+            if progress_reporter is not None:
+                progress = _progress_from_state(latest_state)
+                if progress is not None:
+                    progress_reporter(progress)
+            return latest_state
 
-        # 复用已有 failed 节点的状态和 trace 更新逻辑。
-        failure_update = failed(latest_state)
+        latest_state = cast(WorkflowState, snapshot)
+        trace_length = len(latest_state.get("trace", []))
+        if trace_length <= last_trace_length:
+            continue
+        last_trace_length = trace_length
 
-        return cast(
-            WorkflowState,
-            {
-                **latest_state,
-                "error": workflow_error,
-                **failure_update,
-            },
-        )
+        if progress_reporter is not None:
+            progress = _progress_from_state(latest_state)
+            if progress is not None:
+                progress_reporter(progress)
 
     return latest_state
