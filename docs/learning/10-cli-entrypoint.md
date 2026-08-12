@@ -525,3 +525,415 @@ pyproject.toml 声明命令映射
 
 > `luxar` 是打包系统生成的操作系统命令入口；`main()` 才是我们编写的 Python
 > 展示边界；LangGraph 要等 `main()` 完成参数处理和对象装配后才会真正执行。
+
+---
+
+## 十四、逐行教学二：终端参数怎样进入 LangGraph
+
+这一节追踪下面这条数据链：
+
+```text
+终端字符串
+→ argparse 解析并检查
+→ args（Namespace 参数对象）
+→ Bootstrap 装配 context（工具箱）
+→ initial_state（任务状态）
+→ Runner 启动 LangGraph
+```
+
+先区分三个容易混淆的对象：
+
+```text
+args           用户怎样要求本次程序运行
+context        本次运行可以调用哪些真实能力
+initial_state  Agent 当前知道哪些任务数据
+```
+
+### 14.1 `build_parser()` 是命令格式说明书
+
+```python
+parser = argparse.ArgumentParser(
+    prog="luxar",
+    description="运行 LUXAR ESP-IDF Agent 工作流",
+)
+```
+
+`ArgumentParser` 创建一个参数解析器。这里没有解析任何实际命令，只是在定义：
+
+```text
+程序在帮助中叫什么：luxar
+程序是做什么的：运行 LUXAR ESP-IDF Agent 工作流
+```
+
+接着定义子命令：
+
+```python
+subcommands = parser.add_subparsers(dest="command", required=True)
+run_parser = subcommands.add_parser("run", help="运行一个固件任务")
+```
+
+这表示不能只输入 `luxar`，还必须选择一个动作。当前只有 `run`：
+
+```powershell
+luxar run ...
+```
+
+`dest="command"` 表示解析后将子命令保存在 `args.command` 中；这里它的值是
+`"run"`。`required=True` 表示不写子命令就是参数错误。
+
+为什么保留子命令结构？因为将来可以自然增加：
+
+```text
+luxar run
+luxar inspect
+luxar doctor
+```
+
+而不必创造 `luxar-run`、`luxar-inspect` 等互不相关的入口。
+
+### 14.2 每个 `add_argument()` 在规定什么
+
+项目路径：
+
+```python
+run_parser.add_argument("--project", type=Path, required=True)
+```
+
+含义是：
+
+```text
+--project       参数名称
+type=Path       把收到的字符串转换成 pathlib.Path
+required=True   用户必须提供
+```
+
+因此终端里的：
+
+```text
+"C:\projects\blink"
+```
+
+被转换为近似：
+
+```python
+Path("C:/projects/blink")
+```
+
+`type=Path` 只负责类型转换，不负责保证目录存在，所以 `main()` 后面仍要检查：
+
+```python
+if not project.exists() or not project.is_dir():
+```
+
+任务文字：
+
+```python
+run_parser.add_argument("--task")
+```
+
+没有指定 `type` 时，值默认是字符串；没有提供时则是 `None`。普通模式允许
+`None`，因为程序会稍后调用 `input()` 询问用户。
+
+最大构建次数：
+
+```python
+run_parser.add_argument(
+    "--max-attempts",
+    type=_positive_integer,
+    default=3,
+)
+```
+
+`argparse` 会把终端字符串交给 `_positive_integer()`：
+
+```python
+def _positive_integer(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("必须是正整数")
+    return parsed
+```
+
+所以这里发生的是：
+
+```text
+终端 "5"  → int("5") → Python 整数 5
+终端 "0"  → 主动抛出参数错误
+终端 "abc" → int 转换失败，再翻译成参数错误
+未提供     → 使用整数 3
+```
+
+两个开关参数：
+
+```python
+run_parser.add_argument(
+    "--allow-dependency-downloads",
+    action="store_true",
+)
+run_parser.add_argument("--json", action="store_true")
+```
+
+`store_true` 表示用户写了开关就是 `True`，没写就是 `False`：
+
+```text
+没有 --json  → args.json == False
+带有 --json  → args.json == True
+```
+
+这和 `--task` 不同：开关后面不需要再跟 `true`。
+
+### 14.3 `parse_args()` 返回的 `args` 是什么
+
+```python
+args = build_parser().parse_args(argv)
+```
+
+它返回 `argparse.Namespace`，可以把它理解为“参数收纳盒”。例如：
+
+```python
+main([
+    "run",
+    "--project", "C:/projects/blink",
+    "--task", "修复 GPIO",
+    "--max-attempts", "5",
+    "--allow-dependency-downloads",
+])
+```
+
+解析结果近似为：
+
+```python
+Namespace(
+    command="run",
+    project=Path("C:/projects/blink"),
+    task="修复 GPIO",
+    max_attempts=5,
+    allow_dependency_downloads=True,
+    json=False,
+)
+```
+
+所以后面可以使用属性访问：
+
+```python
+args.project
+args.task
+args.max_attempts
+```
+
+它不是字典，因此这里不是 `args["project"]`。`Namespace` 也不是 LangGraph
+对象，只属于 Python 标准库 `argparse`。
+
+### 14.4 为什么解析成功以后还要检查
+
+`argparse` 只能验证命令结构和声明过的类型。例如它能发现：
+
+```text
+漏写 --project
+--max-attempts 不是正整数
+传入了未知参数
+```
+
+但下面这些是 LUXAR 自己的运行规则：
+
+```python
+if not project.exists() or not project.is_dir():
+    return 2
+
+if args.json and args.task is None:
+    return 2
+```
+
+第一条需要访问文件系统；第二条是我们的产品设计——JSON 模式用于自动化，不能
+突然停下来等待人工输入。因此这些检查属于 `main()` 的展示边界，而不是
+`argparse` 的通用职责。
+
+### 14.5 任务文字为什么要 `strip()`
+
+```python
+task = args.task if args.task is not None else input("请输入固件需求：")
+task = task.strip()
+if not task:
+    return 2
+```
+
+条件表达式从左到右读：
+
+```text
+如果用户提供了 --task → 使用 args.task
+否则                    → 调用 input() 交互询问
+```
+
+`strip()` 去掉字符串首尾空白：
+
+```text
+"  闪烁 GPIO 2  " → "闪烁 GPIO 2"
+"      "           → ""
+```
+
+第二个例子最终是假值，因此会被判定为空需求。这样不会把一串空格交给 LLM。
+
+### 14.6 `args` 怎样分流成 `context` 和 `initial_state`
+
+完成输入检查后，并不是把整个 `args` 都扔给 LangGraph，而是分成两类。
+
+第一类是运行能力配置，交给 Bootstrap：
+
+```python
+context = build_deepseek_runtime_context(
+    project_path=project,
+    allow_dependency_downloads=args.allow_dependency_downloads,
+)
+```
+
+Bootstrap（组合根）会创建并连接：
+
+```text
+DeepSeekJsonClient
+DeepSeekRequirementParser
+DeepSeekPlanner
+DeepSeekRepairPlanner
+EspIdfCliAdapter
+LocalWorkspaceAdapter
+```
+
+最后把这些对象装入 `RuntimeContext`。它相当于本次 Agent 运行使用的“工具箱”。
+
+这里还有一条重要安全链：
+
+```text
+用户显式写 --allow-dependency-downloads
+→ args.allow_dependency_downloads == True
+→ Bootstrap 传给 EspIdfCliAdapter
+→ Adapter 才允许解析时下载依赖
+```
+
+没有这个开关时默认是 `False`。LLM 自己不能修改这项授权。
+
+第二类是任务数据，组成初始 State：
+
+```python
+initial_state = WorkflowState(
+    task_text=task,
+    attempts=0,
+    max_attempts=args.max_attempts,
+    trace=[],
+)
+```
+
+这里的数据含义是：
+
+```text
+task_text    要解决的自然语言任务
+attempts     当前还没有构建，所以是 0
+max_attempts 本次最多允许构建几次
+trace        还没有执行任何节点，所以是空列表
+```
+
+注意 `context` 和 `state` 的区别：
+
+```text
+context 放“会做事的对象”   例如 parser、planner、workspace、espidf
+state   放“流动的任务数据” 例如 requirement、plan、evidence、attempts
+```
+
+LangGraph 节点读取 State，并通过 Runtime 中的 Context 调用工具。工具不需要被塞进
+State，也不会随着每一步快照反复复制。
+
+### 14.7 Runner 才是进入 LangGraph 的应用入口
+
+```python
+result = run_workflow(
+    initial_state=initial_state,
+    context=context,
+    progress_reporter=None if args.json else _report_progress,
+)
+```
+
+这里传入三样东西：
+
+```text
+initial_state      Agent 从什么数据开始
+context            Agent 能调用什么能力
+progress_reporter  中途怎样向人报告进度
+```
+
+普通模式传 `_report_progress`，所以终端能看到阶段提示；JSON 模式传 `None`，防止
+进度文字污染供程序读取的 JSON。
+
+Runner 内部才执行：
+
+```python
+build_graph().stream(
+    initial_state,
+    context=context,
+    stream_mode="values",
+)
+```
+
+因此职责链是：
+
+```text
+CLI        处理不可信输入和展示
+Bootstrap  创建并连接真实对象
+Runner     统一运行、进度和异常边界
+Graph      调度节点与状态流转
+Node       完成一个业务步骤
+Port       规定节点需要的能力合同
+Adapter    连接 DeepSeek、文件系统、idf.py 等外部世界
+```
+
+CLI 没有直接调用 DeepSeek，也没有直接调用 `idf.py`，更没有自己决定下一个节点。
+
+### 14.8 现有测试怎样证明这条链
+
+测试没有真的调用 DeepSeek，而是替换两个边界函数：
+
+```python
+monkeypatch.setattr(cli, "build_deepseek_runtime_context", fake_bootstrap)
+monkeypatch.setattr(cli, "run_workflow", fake_runner)
+```
+
+然后调用：
+
+```python
+cli.main([
+    "run",
+    "--project", str(tmp_path),
+    "--max-attempts", "5",
+])
+```
+
+Fake Bootstrap 记录自己收到的参数，Fake Runner 记录自己收到的 State 与 Context。
+断言最终确认：
+
+```python
+calls["bootstrap"] == {
+    "project_path": tmp_path,
+    "allow_dependency_downloads": False,
+}
+
+runner_call["initial_state"] == {
+    "task_text": "闪烁 GPIO 2",
+    "attempts": 0,
+    "max_attempts": 5,
+    "trace": [],
+}
+```
+
+这类测试的价值不是证明 DeepSeek 可用，而是精确证明 CLI 没有接错线：参数转换、
+默认授权、任务清理和 State 初始化都符合设计。
+
+### 14.9 本节记忆模型
+
+```text
+args           = 用户这一次怎样启动程序
+context        = Agent 这一次拥有哪些工具
+initial_state  = Agent 这一次从哪些数据开始
+result         = LangGraph 最终返回的 State
+```
+
+最核心的一句话：
+
+> `argparse` 只把终端文本整理成可信的 Python 参数；CLI 再把这些参数分流为
+> RuntimeContext 和 WorkflowState，最后由 Runner 正式启动 LangGraph。
