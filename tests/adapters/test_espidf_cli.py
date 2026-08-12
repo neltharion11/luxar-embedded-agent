@@ -290,3 +290,145 @@ def test_preflight_rejects_linked_manifest_directory(
     with pytest.raises(EspIdfError) as captured:
         EspIdfCliAdapter()._preflight(project)
     assert captured.value.category == "invalid_project"
+
+
+def test_build_runs_reconfigure_then_build_and_returns_logical_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="Project build complete",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    adapter = EspIdfCliAdapter(
+        idf_command=("trusted-python", "trusted-idf.py"),
+        reconfigure_timeout_seconds=11,
+        build_timeout_seconds=22,
+    )
+
+    evidence = adapter.build(project)
+
+    assert [call[0] for call in calls] == [
+        ["trusted-python", "trusted-idf.py", "reconfigure"],
+        ["trusted-python", "trusted-idf.py", "build"],
+    ]
+    assert calls[0][1]["timeout"] == 11
+    assert calls[1][1]["timeout"] == 22
+    assert evidence.success is True
+    assert evidence.command == ["idf.py", "build"]
+    assert evidence.return_code == 0
+
+
+def test_reconfigure_failure_prevents_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 2, stdout="", stderr="failure")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    evidence = EspIdfCliAdapter().build(project)
+
+    assert calls == [["idf.py", "reconfigure"]]
+    assert evidence.success is False
+    assert evidence.command == ["idf.py", "reconfigure"]
+    assert evidence.return_code == 2
+    assert evidence.error_category == "unknown"
+
+
+def test_build_uses_safe_subprocess_arguments_and_copied_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    original_environment = os.environ.copy()
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    EspIdfCliAdapter().build(project)
+
+    assert os.environ == original_environment
+    for kwargs in calls:
+        assert kwargs["cwd"] == project.resolve()
+        assert kwargs["shell"] is False
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        assert kwargs["check"] is False
+        assert kwargs["env"] is not os.environ
+
+
+@pytest.mark.parametrize("action", ["reconfigure", "build"])
+def test_timeout_returns_evidence_and_stops_current_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    call_count = 0
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        nonlocal call_count
+        call_count += 1
+        if command[-1] == action:
+            raise subprocess.TimeoutExpired(
+                command,
+                timeout=1,
+                output=b"partial stdout",
+                stderr=b"partial stderr",
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    evidence = EspIdfCliAdapter().build(project)
+
+    assert evidence.success is False
+    assert evidence.command == ["idf.py", action]
+    assert evidence.return_code == -1
+    assert evidence.error_category == "timeout"
+    assert "partial stdout" in evidence.stdout_summary
+    assert call_count == (1 if action == "reconfigure" else 2)
+
+
+def test_process_start_failure_is_sanitized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+
+    def fake_run(*_: object, **__: object) -> subprocess.CompletedProcess[str]:
+        raise OSError("SECRET_EXECUTABLE_PATH")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(EspIdfError) as captured:
+        EspIdfCliAdapter().build(project)
+
+    assert captured.value.category == "process"
+    assert "SECRET_EXECUTABLE_PATH" not in captured.value.message

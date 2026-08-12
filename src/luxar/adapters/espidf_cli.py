@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 
 import yaml
 
+from luxar.domain.evidence import BuildEvidence
 from luxar.ports.espidf_errors import EspIdfError
 
 
@@ -153,6 +155,18 @@ def _manifest_has_dependencies(data: object) -> bool:
         )
 
     return bool(dependencies)
+
+
+def _logical_command(action: str) -> list[str]:
+    return ["idf.py", action]
+
+
+def _coerce_timeout_output(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output
 
 
 class EspIdfCliAdapter:
@@ -328,3 +342,78 @@ class EspIdfCliAdapter:
             environment["IDF_COMPONENT_MANAGER"] = "0"
 
         return root, environment
+
+    def _run_action(
+        self,
+        *,
+        action: Literal["reconfigure", "build"],
+        root: Path,
+        environment: dict[str, str],
+        timeout_seconds: int,
+    ) -> BuildEvidence:
+        try:
+            result = subprocess.run(
+                [*self.idf_command, action],
+                cwd=root,
+                shell=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=timeout_seconds,
+                env=environment,
+            )
+        except subprocess.TimeoutExpired as error:
+            return BuildEvidence(
+                success=False,
+                command=_logical_command(action),
+                return_code=-1,
+                stdout_summary=_coerce_timeout_output(error.stdout),
+                stderr_summary=_coerce_timeout_output(error.stderr),
+                error_category="timeout",
+            )
+        except OSError as error:
+            raise EspIdfError(
+                category="process",
+                message="ESP-IDF 进程无法启动",
+                retryable=True,
+            ) from error
+
+        if result.returncode == 0:
+            return BuildEvidence(
+                success=True,
+                command=_logical_command(action),
+                return_code=0,
+                stdout_summary=result.stdout,
+                stderr_summary=result.stderr,
+            )
+
+        return BuildEvidence(
+            success=False,
+            command=_logical_command(action),
+            return_code=result.returncode,
+            stdout_summary=result.stdout,
+            stderr_summary=result.stderr,
+            error_category="unknown",
+        )
+
+    def build(self, project_path: Path) -> BuildEvidence:
+        root, environment = self._preflight(project_path)
+
+        reconfigure = self._run_action(
+            action="reconfigure",
+            root=root,
+            environment=environment,
+            timeout_seconds=self.reconfigure_timeout_seconds,
+        )
+
+        if not reconfigure.success:
+            return reconfigure
+
+        return self._run_action(
+            action="build",
+            root=root,
+            environment=environment,
+            timeout_seconds=self.build_timeout_seconds,
+        )
