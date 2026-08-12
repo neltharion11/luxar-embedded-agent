@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from luxar.application.runner import WorkflowProgress, run_workflow
 from luxar.application.state import WorkflowState
@@ -62,13 +63,94 @@ def _report_progress(progress: WorkflowProgress) -> None:
     )
 
 
-def _temporary_result_output(state: WorkflowState, json_mode: bool) -> None:
-    """Task 3 会把这里替换为正式中文摘要和稳定 JSON 外壳。"""
+def _exit_code_for_state(state: WorkflowState) -> int:
+    return {
+        "completed": 0,
+        "needs_clarification": 3,
+        "failed": 4,
+    }.get(state.get("status"), 4)
+
+
+def _serialize_model(value: BaseModel | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return value.model_dump(mode="json")
+
+
+def _state_to_json_envelope(state: WorkflowState) -> dict[str, object]:
+    return {
+        "status": state.get("status", "failed"),
+        "exit_code": _exit_code_for_state(state),
+        "attempts": state.get("attempts", 0),
+        "requirement": _serialize_model(state.get("requirement")),
+        "plan": _serialize_model(state.get("plan")),
+        "build_evidence": _serialize_model(state.get("build_evidence")),
+        "repair_plan": _serialize_model(state.get("repair_plan")),
+        "changed_files": list(state.get("changed_files", [])),
+        "error": _serialize_model(state.get("error")),
+        "trace": list(state.get("trace", [])),
+    }
+
+
+def _format_human_result(state: WorkflowState) -> str:
+    status = state.get("status")
+    lines: list[str]
+
+    if status == "completed":
+        lines = [
+            "LUXAR 执行成功",
+            "状态：completed",
+            f"构建次数：{state.get('attempts', 0)}",
+        ]
+        changed_files = state.get("changed_files", [])
+        if changed_files:
+            lines.append("修改文件：")
+            lines.extend(f"  - {path}" for path in changed_files)
+        evidence = state.get("build_evidence")
+        if evidence is not None:
+            lines.append(f"最终命令：{' '.join(evidence.command)}")
+            lines.append(f"返回码：{evidence.return_code}")
+        return "\n".join(lines)
+
+    if status == "needs_clarification":
+        lines = ["LUXAR 需要更多信息", "状态：needs_clarification"]
+        requirement = state.get("requirement")
+        missing_fields = (
+            requirement.missing_fields if requirement is not None else []
+        )
+        if missing_fields:
+            lines.append("缺少字段：")
+            lines.extend(f"  - {field}" for field in missing_fields)
+        return "\n".join(lines)
+
+    lines = ["LUXAR 执行失败", "状态：failed"]
+    error = state.get("error")
+    if error is not None:
+        lines.extend(
+            [
+                f"阶段：{error.stage}",
+                f"类别：{error.category}",
+                f"原因：{error.message}",
+            ]
+        )
+        if error.user_suggestion:
+            lines.append(f"建议：{error.user_suggestion}")
+    return "\n".join(lines)
+
+
+def _print_result(state: WorkflowState, json_mode: bool) -> None:
+    """只输出已经通过应用和 Adapter 边界的最终业务结果。"""
 
     if json_mode:
-        print('{"status":"%s"}' % state.get("status", "failed"))
+        print(
+            json.dumps(
+                _state_to_json_envelope(state),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
     else:
-        print(f"LUXAR 状态：{state.get('status', 'failed')}")
+        print(_format_human_result(state))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -114,9 +196,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("操作已取消", file=sys.stderr)
         return 130
 
-    _temporary_result_output(result, args.json)
-    return {
-        "completed": 0,
-        "needs_clarification": 3,
-        "failed": 4,
-    }.get(result.get("status"), 4)
+    _print_result(result, args.json)
+    return _exit_code_for_state(result)

@@ -8,6 +8,9 @@ import pytest
 
 from luxar import cli
 from luxar.application.state import WorkflowState
+from luxar.domain.errors import WorkflowError
+from luxar.domain.evidence import BuildEvidence
+from luxar.domain.requirements import FirmwareRequirement
 
 
 @pytest.mark.parametrize(
@@ -164,3 +167,174 @@ def test_keyboard_interrupt_returns_130(
 
     assert result == 130
     assert "操作已取消" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_code", "expected_text"),
+    [
+        (
+            WorkflowState(
+                status="completed",
+                attempts=2,
+                changed_files=["main/main.c"],
+                build_evidence=BuildEvidence(
+                    success=True,
+                    command=["idf.py", "build"],
+                    return_code=0,
+                ),
+                trace=[],
+            ),
+            0,
+            ["LUXAR 执行成功", "构建次数：2", "main/main.c", "idf.py build"],
+        ),
+        (
+            WorkflowState(
+                status="needs_clarification",
+                requirement=FirmwareRequirement(
+                    target="esp32",
+                    feature="gpio_blink",
+                    missing_fields=["gpio"],
+                ),
+                trace=[],
+            ),
+            3,
+            ["LUXAR 需要更多信息", "缺少字段", "gpio"],
+        ),
+        (
+            WorkflowState(
+                status="failed",
+                error=WorkflowError(
+                    stage="build",
+                    category="dependency",
+                    message="项目依赖需要显式授权后才能解析",
+                    retryable=False,
+                    user_suggestion="请确认依赖来源后显式允许依赖下载",
+                ),
+                trace=[],
+            ),
+            4,
+            ["LUXAR 执行失败", "阶段：build", "类别：dependency", "建议："],
+        ),
+    ],
+)
+def test_human_output_and_exit_code_by_final_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    state: WorkflowState,
+    expected_code: int,
+    expected_text: list[str],
+) -> None:
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", lambda **_: state)
+
+    result = cli.main(["run", "--project", str(tmp_path), "--task", "build"])
+
+    captured = capsys.readouterr()
+    assert result == expected_code
+    assert all(text in captured.out for text in expected_text)
+
+
+def test_ordinary_progress_uses_stderr_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_runner(**kwargs: object) -> WorkflowState:
+        reporter = kwargs["progress_reporter"]
+        assert callable(reporter)
+        reporter(cli.WorkflowProgress("requirement", "需求分析完成", 0))
+        return WorkflowState(status="completed", attempts=0, trace=[])
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", fake_runner)
+
+    cli.main(["run", "--project", str(tmp_path), "--task", "build"])
+
+    captured = capsys.readouterr()
+    assert "[需求] 需求分析完成" in captured.err
+    assert "[需求]" not in captured.out
+    assert "LUXAR 执行成功" in captured.out
+
+
+def test_json_mode_emits_one_stable_document_without_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    evidence = BuildEvidence(
+        success=True,
+        command=["idf.py", "build"],
+        return_code=0,
+        stdout_summary="safe summary",
+    )
+
+    def fake_runner(**kwargs: object) -> WorkflowState:
+        assert kwargs["progress_reporter"] is None
+        return WorkflowState(
+            status="completed",
+            attempts=1,
+            build_evidence=evidence,
+            changed_files=[],
+            trace=["analyze_requirement", "completed"],
+            task_text="SECRET_TASK_MUST_NOT_SERIALIZE",
+        )
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", fake_runner)
+
+    result = cli.main(
+        ["run", "--project", str(tmp_path), "--task", "build", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    document = json.loads(captured.out)
+    assert result == 0
+    assert captured.err == ""
+    assert document == {
+        "status": "completed",
+        "exit_code": 0,
+        "attempts": 1,
+        "requirement": None,
+        "plan": None,
+        "build_evidence": evidence.model_dump(mode="json"),
+        "repair_plan": None,
+        "changed_files": [],
+        "error": None,
+        "trace": ["analyze_requirement", "completed"],
+    }
+    assert "SECRET_TASK_MUST_NOT_SERIALIZE" not in captured.out
+    assert captured.out.count("{") >= 1
+
+
+def test_json_failed_state_is_stdout_business_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    error = WorkflowError(
+        stage="build",
+        category="environment",
+        message="ESP-IDF 构建环境不可用",
+        retryable=False,
+        user_suggestion="请检查环境",
+    )
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(
+        cli,
+        "run_workflow",
+        lambda **_: WorkflowState(status="failed", error=error, trace=["failed"]),
+    )
+
+    result = cli.main(
+        ["run", "--project", str(tmp_path), "--task", "build", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 4
+    assert captured.err == ""
+    assert json.loads(captured.out)["error"] == error.model_dump(mode="json")
