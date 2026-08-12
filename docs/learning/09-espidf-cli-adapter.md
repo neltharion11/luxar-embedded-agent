@@ -189,3 +189,548 @@ DeepSeekRepairPlanner；路径包含、文件类型、大小和只改已有文�
 - 默认下载禁令是构造配置和进程环境的双重强制，不是自然语言约定。
 - LLM 负责语义转换和修复推理；确定性代码负责权限、路径、分类、验证与路由。
 - 编译成功必须由真实返回码和证据证明，不能由模型宣称。
+
+---
+
+## 十、逐行教学一：对象如何从 Bootstrap 到达真实 `idf.py`
+
+这一节回答：`build_project` 没有导入 `EspIdfCliAdapter`，为什么仍然能执行
+真实构建？
+
+### 10.1 完整对象链
+
+```text
+bootstrap 创建 EspIdfCliAdapter
+→ 保存到 RuntimeContext.espidf
+→ LangGraph 调用 build_project(state, runtime)
+→ 节点取得 runtime.context.espidf
+→ 调用 espidf.build(project_path)
+→ 真实对象执行 EspIdfCliAdapter.build()
+→ 返回 BuildEvidence
+→ 节点把 Evidence 写入 WorkflowState
+→ route_after_build 根据 Evidence 路由
+```
+
+在 `bootstrap.py` 中：
+
+```python
+if espidf is None:
+    espidf = EspIdfCliAdapter(
+        idf_command=idf_command,
+        allow_dependency_downloads=allow_dependency_downloads,
+    )
+```
+
+正式运行没有传入 `espidf` 时，组合根创建真实 Adapter。测试传入
+`FakeEspIdf` 时，`espidf is None` 为假，因此保留 Fake。
+
+随后把对象放入 Context：
+
+```python
+return RuntimeContext(
+    requirement_parser=requirement_parser,
+    planner=planner,
+    repair_planner=repair_planner,
+    espidf=espidf,
+    workspace=workspace,
+    project_path=project_path,
+)
+```
+
+`RuntimeContext` 的声明是：
+
+```python
+@dataclass(frozen=True)
+class RuntimeContext:
+    espidf: EspIdfPort
+    project_path: Path
+```
+
+`frozen=True` 防止工作流运行中意外把工具换掉。`espidf: EspIdfPort` 是类型
+合同，不要求对象必须继承某个基类；对象只要提供兼容的 `build()` 方法即可。
+
+Port 的合同为：
+
+```python
+class EspIdfPort(Protocol):
+    def build(self, project_path: Path) -> BuildEvidence:
+        ...
+```
+
+因此下面两个对象都可以放进去：
+
+```text
+EspIdfCliAdapter.build(Path) → BuildEvidence
+FakeEspIdf.build(Path)       → BuildEvidence
+```
+
+节点代码：
+
+```python
+def build_project(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    espidf = runtime.context.espidf
+    project_path = runtime.context.project_path
+    evidence = espidf.build(project_path)
+```
+
+`Runtime[...]` 是 LangGraph 的包装类型；方括号中的 `RuntimeContext` 是我们
+自己的类型参数。可以把多层访问画成：
+
+```text
+runtime                       LangGraph 传入的 Runtime 对象
+└─ context                    Runtime 自带的 context 属性
+   └─ espidf                  我们在 RuntimeContext 中声明的字段
+      └─ build(project_path)  实际注入对象提供的方法
+```
+
+所以 `espidf` 不是 LangGraph 自带的能力。LangGraph 只负责把 `context` 送到
+节点；Context 里面装哪些对象由 LUXAR 的组合根决定。
+
+节点收到 Evidence 后返回最小 State 更新：
+
+```python
+return {
+    "build_evidence": evidence,
+    "attempts": state.get("attempts", 0) + 1,
+    "status": "building",
+    "trace": [*state.get("trace", []), "build_project"],
+}
+```
+
+LangGraph 合并更新后调用 `route_after_build()`：成功进入 `completed`；
+source/linker 进入 `repair_project`；timeout 在预算内重新进入 `build_project`；
+dependency/environment/unknown 进入 `failed`。
+
+这里的关键设计是依赖倒置：节点依赖稳定 Port，Bootstrap 才依赖具体 Adapter。
+更换 CLI 实现或使用 Fake 都不需要修改节点和 Graph。
+
+## 十一、逐行教学二：`_preflight()` 前置检查
+
+`preflight` 可以理解为“起飞前检查”。它解决的不是如何编译，而是：
+
+> 在产生任何真实工程副作用前，当前项目、命令、权限和环境是否可信？
+
+函数签名：
+
+```python
+def _preflight(
+    self,
+    project_path: Path,
+) -> tuple[Path, dict[str, str]]:
+```
+
+返回一个二元组：验证后的项目根 `Path`，以及交给子进程的环境变量字典。
+
+### 11.1 验证工程根和命令
+
+```python
+root = _resolve_project_root(project_path)
+self._validate_command()
+```
+
+根目录必须存在、必须是目录、不能是 symlink/Junction，并且根
+`CMakeLists.txt` 必须是普通文件。`resolve(strict=True)` 得到真实存在的规范
+路径。绝对路径只在 Adapter 内部作为可信 `cwd` 和路径包含判断，不直接进入
+State。
+
+默认命令前缀是单元素元组：
+
+```python
+idf_command = ("idf.py",)
+```
+
+单元素元组必须有尾部逗号；`("idf.py")` 只是字符串。相对 launcher 通过
+`shutil.which()` 在当前 `PATH` 中查找；显式绝对 launcher 则必须是现有普通
+文件。失败产生稳定脱敏的 `EspIdfError(category="environment")`。
+
+### 11.2 发现并读取 Manifest
+
+```python
+manifests = _discover_manifests(root)
+```
+
+递归搜索精确名称 `idf_component.yml`，但不进入 `.git`、编辑器目录、隐藏
+目录、`build`、`build_*`、`managed_components` 和 `__pycache__`。发现顺序
+按项目相对 POSIX 路径排序，保证相同输入得到相同处理顺序。
+
+```python
+for manifest in manifests:
+    loaded, actual_bytes = self._read_manifest(manifest)
+    total_bytes += actual_bytes
+```
+
+`loaded, actual_bytes = ...` 是元组拆包。读取函数在读取前后检查单文件大小，
+拒绝 NUL、非 UTF-8 和无效 YAML，并返回真正读取的字节数。总预算也按实际
+字节累加，而不是按字符数或不可靠的预估值。
+
+```python
+loaded = yaml.safe_load(text)
+```
+
+YAML 解析后的类型仍需检查。合法 YAML 不等于合法 ESP-IDF 清单；列表、非
+mapping 的 `dependencies` 等结构会被拒绝。不能改用不安全的 `yaml.load()`。
+
+### 11.3 汇总多个清单中的依赖
+
+```python
+has_declared_dependencies = (
+    _manifest_has_dependencies(loaded)
+    or has_declared_dependencies
+)
+```
+
+项目可能有多个组件清单。只要任意清单出现非空 `dependencies`，变量就保持
+`True`。它等价于更长的：
+
+```python
+if _manifest_has_dependencies(loaded):
+    has_declared_dependencies = True
+```
+
+### 11.4 权限检查与环境副本
+
+```python
+if has_declared_dependencies and not self.allow_dependency_downloads:
+    raise EspIdfError(category="dependency", ...)
+```
+
+“存在依赖”和“没有授权”同时成立时，在任何 `idf.py` 命令之前失败。授权只能
+由应用装配参数提供，不能来自 task text、Prompt、模型响应或 State。
+
+```python
+environment = os.environ.copy()
+```
+
+复制环境是为了不修改当前 Python 进程的全局 `os.environ`。安全模式设置：
+
+```python
+environment["IDF_COMPONENT_MANAGER"] = "0"
+```
+
+显式授权时则删除复制环境中可能继承的禁用值：
+
+```python
+environment.pop("IDF_COMPONENT_MANAGER", None)
+```
+
+`pop` 的第二个参数 `None` 表示键不存在时不报错。
+
+这里形成两层确定性防护：扫描清单提前给出明确错误，子进程环境进一步关闭
+Component Manager。两层都由代码强制执行，比只在 Prompt 里提醒更可靠。
+
+最后：
+
+```python
+return root, environment
+```
+
+调用者使用：
+
+```python
+root, environment = self._preflight(project_path)
+```
+
+只有拿到这两个返回值，才会进入真实命令阶段。
+
+## 十二、逐行教学三：`_run_action()` 与执行结果
+
+`_preflight()` 判断命令能否开始；`_run_action()` 记录开始后实际发生了什么。
+
+```python
+def _run_action(
+    self,
+    *,
+    action: Literal["reconfigure", "build"],
+    root: Path,
+    environment: dict[str, str],
+    timeout_seconds: int,
+) -> BuildEvidence:
+```
+
+独立的 `*` 表示后续参数必须使用名称传入，减少路径、动作和超时位置传错的
+风险。`Literal` 向编辑器和类型检查器声明合法动作只有两个。
+
+### 12.1 真正启动进程
+
+```python
+result = subprocess.run(
+    [*self.idf_command, action],
+    cwd=root,
+    shell=False,
+    capture_output=True,
+    text=True,
+    encoding="utf-8",
+    errors="replace",
+    check=False,
+    timeout=timeout_seconds,
+    env=environment,
+)
+```
+
+若命令前缀为 `("idf.py",)`、动作为 `"build"`，列表展开结果就是
+`["idf.py", "build"]`。`shell=False` 不让 PowerShell/CMD 二次解释命令
+字符串；`cwd` 固定工程根；`capture_output` 捕获 stdout/stderr；`check=False`
+允许 Adapter 自己处理非零返回码。
+
+命令正常结束会返回 `CompletedProcess`。即使编译失败，它仍可能“正常结束”：
+
+```text
+进程成功启动并退出 ≠ 工程构建成功
+```
+
+工程结果由 `result.returncode` 判断：0 成功，非零失败。`result.stdout` 和
+`result.stderr` 是两个输出通道；真实工具不保证诊断只出现在 stderr，所以
+分类和解析同时读取二者。
+
+### 12.2 三类运行结果
+
+普通成功：
+
+```python
+BuildEvidence(
+    success=True,
+    command=["idf.py", action],
+    return_code=0,
+)
+```
+
+普通失败：进程结束并给出非零返回码，Adapter 分类输出、解析诊断，返回
+`success=False` 的 Evidence。
+
+超时：
+
+```python
+except subprocess.TimeoutExpired as error:
+```
+
+进程已经启动却没有按时结束，因此仍然存在可观察的执行事实，使用
+`BuildEvidence(return_code=-1, error_category="timeout")`。异常中的输出可能
+是 `str`、`bytes` 或 `None`，需要先统一成字符串并脱敏。
+
+启动失败：
+
+```python
+except OSError as error:
+    raise EspIdfError(category="process", ...) from error
+```
+
+进程根本没有成功启动，因此不能伪造 BuildEvidence。`raise ... from error`
+保留内部调试因果链，但对外只暴露稳定消息。
+
+边界可以记为：
+
+| 事实 | 表达方式 |
+|---|---|
+| 项目或命令预检失败 | `EspIdfError` |
+| 进程无法启动 | `EspIdfError` |
+| 进程返回 0 | 成功 `BuildEvidence` |
+| 进程返回非 0 | 失败 `BuildEvidence` |
+| 进程启动后超时 | timeout `BuildEvidence` |
+
+`_logical_command()` 只保存 `["idf.py", action]`，不把本机 Python、ESP-IDF
+安装目录等绝对路径写入 State。
+
+## 十三、逐行教学四：日志分类与诊断解析
+
+终端输出本质上只是字符串。LangGraph 不能可靠地直接根据几千行文字路由，
+RepairPlanner 也更适合接收“文件、行号、错误信息”这类结构化数据。因此
+Adapter 要把原始日志转换为两种信息：
+
+```text
+error_category  → 决定是否修复、重试或失败
+diagnostics     → 告诉修复模型具体文件和位置
+```
+
+### 13.1 为什么这里不用 LLM 分类
+
+这些判断具有稳定工程规则：返回码、编译器格式、明确错误短语、权限策略。
+如果每次都问 LLM，会增加网络开销、随机性和把日志中的恶意文本当指令的风险。
+
+分工是：
+
+```text
+确定性代码：判断失败类别、提取固定格式字段、执行权限和路由
+LLM：结合 Requirement、Plan、源码和结构化 Diagnostic 推理怎样改代码
+```
+
+### 13.2 `_classify_failure()`
+
+```python
+combined = f"{stdout}\n{stderr}".casefold()
+```
+
+f-string 把两个输出拼接；`casefold()` 生成适合不区分大小写比较的文本，比单纯
+`lower()` 更面向 Unicode。随后按固定优先级检查：
+
+```python
+if any(signal in combined for signal in _DEPENDENCY_SIGNALS):
+    return "dependency"
+```
+
+这里同时出现了三个语法：
+
+- `for signal in ...` 逐个取出已知短语；
+- `signal in combined` 判断短语是否存在；
+- `any(...)` 只要任意一个判断为真就返回真。
+
+优先级为：
+
+```text
+dependency → environment → linker → source → unknown
+```
+
+顺序很重要。例如依赖解析失败的日志也可能包含 `CMake Error`；如果先判断
+CMake，就可能把权限/依赖问题错误送去修改源码。链接器日志也常包含普通
+`error`，所以 linker 必须在 source 之前。
+
+源码判断没有使用模糊的单词 `error`，而是逐行要求匹配 GCC/Clang 诊断格式：
+
+```python
+if any(
+    _GCC_DIAGNOSTIC_RE.match(line)
+    for line in _strip_ansi(f"{stdout}\n{stderr}").splitlines()
+):
+    return "source"
+```
+
+`splitlines()` 拆成行；括号里的表达式是生成器表达式，不会先创建整个布尔
+列表；`any()` 找到首个匹配即可停止。实在没有可信模式才返回 `unknown`，不
+猜测为可修复错误。
+
+### 13.3 GCC/Clang 正则怎样拆字段
+
+典型输入：
+
+```text
+C:\project\main\main.c:42:17: error: expected ';'
+```
+
+正则使用命名捕获组，概念上拆成：
+
+```text
+file     = C:\project\main\main.c
+line     = 42
+column   = 17
+severity = error
+message  = expected ';'
+```
+
+读取字段：
+
+```python
+gcc_match.group("file")
+gcc_match.group("line")
+```
+
+正则得到的数字仍是字符串，因此转换：
+
+```python
+line=int(gcc_match.group("line"))
+```
+
+可选列号使用条件表达式：
+
+```python
+column=(
+    int(gcc_match.group("column"))
+    if gcc_match.group("column") is not None
+    else None
+)
+```
+
+它可以读成：“有 column 就转成整数，否则保存 None”。`fatal error` 也规范
+成领域模型允许的 `severity="error"`。
+
+### 13.4 CMake 诊断为什么读取下一条非空行
+
+CMake 常输出：
+
+```text
+CMake Error at main/CMakeLists.txt:12 (idf_component_register):
+  Component requirement was not found
+```
+
+第一行给出文件和行号，具体说明在后续行。因此代码先给稳定默认消息，然后
+向后寻找第一条非空说明：
+
+```python
+message = "CMake configuration error"
+for next_line in lines[index + 1:]:
+    if next_line.strip():
+        message = next_line.strip()
+        break
+```
+
+`lines[index + 1:]` 是列表切片，表示当前行之后的所有行；`strip()` 去除首尾
+空白；`break` 找到第一条后停止循环。
+
+### 13.5 为什么诊断路径可能变成 `None`
+
+```python
+file=_path_inside_project(raw_file, root)
+```
+
+项目内绝对路径转换成相对 POSIX 路径，例如 `main/main.c`。相对路径包含
+`..`，或者绝对路径位于项目外，则返回 `None`。
+
+保留行号和消息、隐藏外部文件名，比把整条诊断丢掉更有价值：模型仍知道发生
+了什么，但不会得到用户目录或工具链安装路径。这个函数只做词法判断，不根据
+日志中的路径读取文件。
+
+### 13.6 去重为什么同时需要 list 和 set
+
+编译日志可能重复同一诊断。代码使用：
+
+```python
+diagnostics: list[BuildDiagnostic] = []
+seen: set[tuple[object, ...]] = set()
+```
+
+`list` 保持首次出现顺序，`set` 快速判断是否已经出现。每条诊断的字段组成
+不可变 tuple 作为 key：
+
+```python
+if key not in seen:
+    seen.add(key)
+    diagnostics.append(diagnostic)
+```
+
+只用 set 会失去明确的输出顺序；只用 list 查重则每次都要线性比较。
+
+### 13.7 `_sanitize_output()` 和结构化诊断的区别
+
+`diagnostics` 是给程序和修复模型使用的结构化字段；`stdout_summary`、
+`stderr_summary` 是给人和模型补充上下文的有限文本。
+
+文本清理顺序：
+
+```text
+移除 ANSI 控制符
+→ CRLF/CR 统一为 LF
+→ 删除项目根绝对前缀
+→ Windows 分隔符统一为 /
+→ 其他绝对路径替换为 <external-path>
+→ 截断到 max_summary_chars
+```
+
+它不会修改原始编译器进程，只决定什么信息可以进入 State。当前切片不持久化
+完整原始日志。
+
+最终失败 Evidence 同时带有：
+
+```python
+BuildEvidence(
+    success=False,
+    return_code=result.returncode,
+    error_category=_classify_failure(...),
+    diagnostics=_parse_diagnostics(...),
+    stdout_summary=stdout_summary,
+    stderr_summary=stderr_summary,
+)
+```
+
+到这里，终端字符串已经变成 LangGraph 能稳定路由、RepairPlanner 能安全使用
+的领域事实。
