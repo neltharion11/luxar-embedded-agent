@@ -16,6 +16,9 @@ dependencies = [
     "PyYAML>=6,<7",
 ]
 
+[project.scripts]
+luxar = "luxar.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<9",
