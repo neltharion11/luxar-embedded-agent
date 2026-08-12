@@ -25,6 +25,7 @@ class BuildEvidence(BaseModel):
     stderr_summary: str = ""
     error_category: Literal[
         "environment",
+        "dependency",
         "source",
         "linker",
         "timeout",

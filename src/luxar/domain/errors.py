@@ -19,6 +19,7 @@ class WorkflowError(BaseModel):
     category: Literal[
         "model_output",
         "environment",
+        "dependency",
         "source",
         "linker",
         "timeout",

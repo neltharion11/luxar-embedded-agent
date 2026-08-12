@@ -61,3 +61,14 @@ def test_workflow_error_accepts_workspace_failure() -> None:
     )
 
     assert error.category == "workspace"
+
+
+def test_workflow_error_accepts_dependency_failure() -> None:
+    error = WorkflowError(
+        stage="build",
+        category="dependency",
+        message="项目依赖未满足",
+        retryable=False,
+    )
+
+    assert error.category == "dependency"

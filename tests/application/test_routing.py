@@ -55,6 +55,7 @@ def test_successful_final_attempt_routes_to_completed() -> None:
         ("source", 1, 3, "repair_project"),
         ("linker", 2, 3, "repair_project"),
         ("timeout", 1, 2, "build_project"),
+        ("dependency", 1, 3, "failed"),
         ("environment", 1, 3, "failed"),
         ("unknown", 1, 3, "failed"),
         (None, 1, 3, "failed"),

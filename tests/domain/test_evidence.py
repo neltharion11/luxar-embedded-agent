@@ -29,6 +29,17 @@ def test_failed_build_evidence_preserves_failure_facts() -> None:
     assert evidence.error_category == "source"
 
 
+def test_failed_build_evidence_accepts_dependency_failure() -> None:
+    evidence = BuildEvidence(
+        success=False,
+        command=["idf.py", "reconfigure"],
+        return_code=1,
+        error_category="dependency",
+    )
+
+    assert evidence.error_category == "dependency"
+
+
 @pytest.mark.parametrize(
     ("success", "return_code", "error_category"),
     [
