@@ -4,7 +4,7 @@ A clean, enterprise-shaped reconstruction of LUXAR using explicit domain models,
 
 ## Learning notes
 
-Start with the Chinese [LUXAR Agent review guide](docs/learning/00-LUXAR-Agent-复习总览.md). It consolidates English-to-Chinese terminology, Python syntax used by this project, the layered architecture, end-to-end workflow paths, testing levels, and Agent safety rules. The numbered `docs/learning/01` through `09` files remain focused deep dives.
+Start with the Chinese [LUXAR Agent review guide](docs/learning/00-LUXAR-Agent-复习总览.md). It consolidates English-to-Chinese terminology, Python syntax used by this project, the layered architecture, end-to-end workflow paths, testing levels, and Agent safety rules. The numbered `docs/learning/01` through `10` files remain focused deep dives.
 
 ## Current milestone
 
@@ -65,10 +65,18 @@ bounded sanitized logs into `BuildEvidence` and `BuildDiagnostic`. Dependency
 downloads remain forbidden by default and require explicit application-level
 authorization.
 
-## Next production slice
+## Command-line entrypoint
 
-A real CLI/application entrypoint that collects explicit configuration and runs
-the completed DeepSeek, Workspace, and ESP-IDF Adapters together.
+After editable installation and activation of the configured environment:
+
+```bat
+luxar run --project C:\projects\blink --task "修复 ESP32 GPIO 工程"
+```
+
+Omit `--task` in ordinary mode to enter it interactively. Use `--json` only with
+an explicit task for a stable machine-readable result. Dependency downloads are
+forbidden unless `--allow-dependency-downloads` is explicitly supplied. Model
+secrets remain environment-backed and never appear as CLI arguments.
 
 ## Development environment
 

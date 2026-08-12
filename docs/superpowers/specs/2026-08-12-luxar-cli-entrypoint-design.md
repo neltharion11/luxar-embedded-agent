@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-12
 
-**Status:** Approved design, pending written-spec review
+**Status:** Approved and implemented
 
 **Scope:** A production-shaped command-line entrypoint for the existing DeepSeek + LangGraph + Workspace + ESP-IDF workflow
 

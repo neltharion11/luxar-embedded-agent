@@ -60,6 +60,25 @@ def test_json_mode_requires_task_without_calling_input(
     assert "JSON 模式必须提供 --task" in capsys.readouterr().err
 
 
+def test_main_rejects_whitespace_only_task_before_bootstrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "build_deepseek_runtime_context",
+        lambda **_: (_ for _ in ()).throw(AssertionError("bootstrap must not run")),
+    )
+
+    result = cli.main(
+        ["run", "--project", str(tmp_path), "--task", "   "]
+    )
+
+    assert result == 2
+    assert "固件需求不能为空" in capsys.readouterr().err
+
+
 def test_ordinary_mode_prompts_for_missing_task_and_builds_initial_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

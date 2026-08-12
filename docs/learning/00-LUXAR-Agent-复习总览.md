@@ -6,7 +6,7 @@
 2. 语法地图：Python 写法来自哪里、运行时做什么；
 3. 架构地图：自然语言如何经过 Agent、LangGraph、模型和工程工具变成最终结果。
 
-当前检查点：DeepSeek 模型 Adapter、七节点 LangGraph、证据驱动修复循环、真实 `LocalWorkspaceAdapter`、真实 `EspIdfCliAdapter`、组合根和统一能力错误边界已经完成。最近一次完整验证为 `261 passed, 8 skipped`；跳过项包括默认未授权的真实 DeepSeek/ESP-IDF Smoke Test，以及当前 Windows 权限不能创建的普通 symlink 测试。
+当前检查点：DeepSeek 模型 Adapter、七节点 LangGraph、证据驱动修复循环、真实 `LocalWorkspaceAdapter`、真实 `EspIdfCliAdapter`、安全进度 Runner 和可安装的 `luxar run` CLI 已经完成。最近一次完整验证为 `282 passed, 8 skipped`；跳过项包括默认未授权的真实 DeepSeek/ESP-IDF Smoke Test，以及当前 Windows 权限不能创建的普通 symlink 测试。
 
 ## 一、先记住这句话
 
@@ -63,7 +63,7 @@ LLM 不是整个 Agent。LLM 是 Agent 工作流中的一种能力；真正的 A
 | Contract Test | 合同测试 | 验证实现是否遵守 Port 行为 | `tests/adapters/test_fake_contracts.py` |
 | Integration Test | 集成测试 | 多层一起运行，验证纵向链路 | `tests/integration/test_fake_vertical_slice.py` |
 | Smoke Test | 冒烟测试 | 用最小真实调用验证外部系统能接通 | `tests/smoke/` |
-| CLI | 命令行接口 | 用参数调用工程工具 | `adapters/espidf_cli.py` |
+| CLI | 命令行接口 | 把终端输入转换成应用调用并展示结果 | `src/luxar/cli.py` |
 | Preflight | 前置检查 | 命令启动前检查项目、环境、依赖和权限 | `EspIdfCliAdapter._preflight()` |
 | Checkpoint | 检查点、持久化快照 | 保存 Graph 运行位置以便恢复 | LangGraph 能力；当前生产持久化尚未实现 |
 

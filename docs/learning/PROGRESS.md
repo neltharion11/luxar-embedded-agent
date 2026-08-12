@@ -185,3 +185,32 @@ boundary.
 Next enterprise slice: add a real application/CLI entrypoint and explicit
 configuration boundary that composes the completed DeepSeek, Workspace, and
 ESP-IDF capabilities. This is not implemented by the current slice.
+
+## CLI entrypoint checkpoint
+
+Authoritative documents:
+
+- `docs/superpowers/specs/2026-08-12-luxar-cli-entrypoint-design.md`
+- `docs/superpowers/plans/2026-08-12-luxar-cli-entrypoint-plan.md`
+- `docs/learning/10-cli-entrypoint.md`
+
+The editable package now exposes `luxar run`. The CLI requires an explicit
+project path, accepts or interactively asks for a task in ordinary mode, forbids
+interactive JSON mode, and passes dependency-download authority only from an
+explicit flag. Secrets remain environment-backed.
+
+Runner progress is an immutable safe event containing only stage, fixed message,
+and attempt count. Ordinary progress goes to stderr; final Chinese summaries go
+to stdout. JSON mode installs no reporter and emits one allowlisted document.
+Exit codes distinguish success, startup errors, clarification, workflow failure,
+and Ctrl+C.
+
+Editable installation and both help commands succeeded. Complete verification
+after final synchronization: `290 collected, 282 passed, 8 skipped`.
+Static searches found no Graph, subprocess, YAML, OpenAI client, or API-key
+dependency in the CLI; the seven-node topology and single Runner capability
+boundary remain intact.
+
+Next enterprise slice: design LangGraph checkpoint persistence and human
+approval before expanding the Agent with resumable interaction. No persistence
+or approval is implemented in the CLI slice.

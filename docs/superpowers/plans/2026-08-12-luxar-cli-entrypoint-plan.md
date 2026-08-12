@@ -21,13 +21,13 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 - Modify: `src/luxar/application/runner.py`
 - Modify: `tests/application/test_runner.py`
 
-- [ ] 写失败测试：完整修复链按节点顺序产生固定 `WorkflowProgress`，对象只含 `stage/message/attempts`。
-- [ ] 写失败测试：命令前 Port 异常只产生一次 failed 事件，并保留原有失败 State。
-- [ ] 写失败测试：未传 reporter 时行为不变；reporter 自身异常向外传播，不能被转换为 `WorkflowError`。
-- [ ] 实现冻结的 `WorkflowProgress`、`ProgressReporter`、固定节点映射和可选 Runner 参数。
-- [ ] 用显式迭代器只在 `next(graph_stream)` 周围捕获三类能力异常；在捕获区外调用 reporter，防止 reporter 抛出的同名异常被误当成工具失败。
-- [ ] 根据 trace 长度去重，忽略无新 trace 的快照；attempts 只复制整数。
-- [ ] 运行 Runner 聚焦测试并提交：`feat: report safe workflow progress`。
+- [x] 写失败测试：完整修复链按节点顺序产生固定 `WorkflowProgress`，对象只含 `stage/message/attempts`。
+- [x] 写失败测试：命令前 Port 异常只产生一次 failed 事件，并保留原有失败 State。
+- [x] 写失败测试：未传 reporter 时行为不变；reporter 自身异常向外传播，不能被转换为 `WorkflowError`。
+- [x] 实现冻结的 `WorkflowProgress`、`ProgressReporter`、固定节点映射和可选 Runner 参数。
+- [x] 用显式迭代器只在 `next(graph_stream)` 周围捕获三类能力异常；在捕获区外调用 reporter，防止 reporter 抛出的同名异常被误当成工具失败。
+- [x] 根据 trace 长度去重，忽略无新 trace 的快照；attempts 只复制整数。
+- [x] 运行 Runner 聚焦测试并提交：`feat: report safe workflow progress`。
 
 ## Task 2：实现 CLI 参数、交互和装配
 
@@ -37,15 +37,15 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 - Create: `tests/test_cli.py`
 - Modify: `pyproject.toml`
 
-- [ ] 写参数失败测试：缺少 `run`/`--project`、未知参数、非正 max attempts 由标准 argparse 产生 `SystemExit(2)`。
-- [ ] 写应用级输入测试：路径不存在/不是目录、空 task、JSON 缺 task 返回 `2`；JSON 缺 task 不调用 `input()`。
-- [ ] 写交互测试：普通模式缺 task 时调用 `input("请输入固件需求：")` 并去除首尾空白。
-- [ ] 写装配测试：默认和显式下载授权、项目 Path、初始 State、max attempts 正确传给 Bootstrap/Runner。
-- [ ] 实现 `build_parser()`、正整数解析器和 `main(argv: Sequence[str] | None = None) -> int`。
-- [ ] 只把已知 Pydantic `ValidationError` 与组合阶段 `ValueError` 转成固定启动配置错误；不输出原异常，不捕获宽泛 `Exception`。
-- [ ] 在交互、Bootstrap、Runner 周围处理 `KeyboardInterrupt`，固定 stderr 并返回 `130`。
-- [ ] 在 `pyproject.toml` 注册 `luxar = "luxar.cli:main"`，重新 editable install 后验证 `luxar --help`。
-- [ ] 运行 CLI 聚焦测试并提交：`feat: add LUXAR command-line entrypoint`。
+- [x] 写参数失败测试：缺少 `run`/`--project`、未知参数、非正 max attempts 由标准 argparse 产生 `SystemExit(2)`。
+- [x] 写应用级输入测试：路径不存在/不是目录、空 task、JSON 缺 task 返回 `2`；JSON 缺 task 不调用 `input()`。
+- [x] 写交互测试：普通模式缺 task 时调用 `input("请输入固件需求：")` 并去除首尾空白。
+- [x] 写装配测试：默认和显式下载授权、项目 Path、初始 State、max attempts 正确传给 Bootstrap/Runner。
+- [x] 实现 `build_parser()`、正整数解析器和 `main(argv: Sequence[str] | None = None) -> int`。
+- [x] 只把已知 Pydantic `ValidationError` 与组合阶段 `ValueError` 转成固定启动配置错误；不输出原异常，不捕获宽泛 `Exception`。
+- [x] 在交互、Bootstrap、Runner 周围处理 `KeyboardInterrupt`，固定 stderr 并返回 `130`。
+- [x] 在 `pyproject.toml` 注册 `luxar = "luxar.cli:main"`，重新 editable install 后验证 `luxar --help`。
+- [x] 运行 CLI 聚焦测试并提交：`feat: add LUXAR command-line entrypoint`。
 
 ## Task 3：实现安全普通输出和稳定 JSON
 
@@ -54,13 +54,13 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 - Modify: `src/luxar/cli.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] 写 completed/needs_clarification/failed 三种退出码与中文摘要失败测试。
-- [ ] 写 stderr 进度测试：普通模式按安全事件输出，stdout 只含最终摘要。
-- [ ] 写 JSON 外壳测试：stdout 恰好一份可解析 JSON，缺失对象为 null，list 字段默认空列表，不含 task/project/context/API key。
-- [ ] 写 JSON failed 测试：业务结果仍写 stdout 且进程返回 `4`；JSON 模式不安装 reporter。
-- [ ] 实现纯函数 `_exit_code_for_state`、`_state_to_json_envelope`、`_format_human_result`、`_format_progress`。
-- [ ] Pydantic 对象只通过 `model_dump(mode="json")` 序列化；仅 Evidence 中已经脱敏和限长的摘要可进入 JSON。
-- [ ] 运行 CLI 完整测试并提交：`feat: format CLI progress and results`。
+- [x] 写 completed/needs_clarification/failed 三种退出码与中文摘要失败测试。
+- [x] 写 stderr 进度测试：普通模式按安全事件输出，stdout 只含最终摘要。
+- [x] 写 JSON 外壳测试：stdout 恰好一份可解析 JSON，缺失对象为 null，list 字段默认空列表，不含 task/project/context/API key。
+- [x] 写 JSON failed 测试：业务结果仍写 stdout 且进程返回 `4`；JSON 模式不安装 reporter。
+- [x] 实现纯函数 `_exit_code_for_state`、`_state_to_json_envelope`、`_format_human_result`、`_format_progress`。
+- [x] Pydantic 对象只通过 `model_dump(mode="json")` 序列化；仅 Evidence 中已经脱敏和限长的摘要可进入 JSON。
+- [x] 运行 CLI 完整测试并提交：`feat: format CLI progress and results`。
 
 ## Task 4：端到端安装验证与边界审计
 
@@ -69,12 +69,12 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 - Modify: `tests/test_cli.py` or create a focused installed-entrypoint test only if subprocess installation verification cannot remain deterministic
 - Modify: `README.md`
 
-- [ ] 运行 editable install，确认生成 `luxar` 命令。
-- [ ] 用 `luxar --help` 和 `luxar run --help` 验证 console script，不调用 DeepSeek/ESP-IDF。
-- [ ] 运行完整 pytest，记录真实 collected/pass/skip 数字。
-- [ ] 搜索确认 CLI 不导入 `build_graph`、`subprocess`、`yaml`、OpenAI SDK；没有 API-key CLI 参数；下载授权只从 flag 进入 Bootstrap。
-- [ ] 确认 Graph 仍为七节点，现有 Runner 能力异常只有一个边界。
-- [ ] 确认 JSON 测试中 stdout 没有进度，普通模式进度只在 stderr。
+- [x] 运行 editable install，确认生成 `luxar` 命令。
+- [x] 用 `luxar --help` 和 `luxar run --help` 验证 console script，不调用 DeepSeek/ESP-IDF。
+- [x] 运行完整 pytest，记录真实 collected/pass/skip 数字。
+- [x] 搜索确认 CLI 不导入 `build_graph`、`subprocess`、`yaml`、OpenAI SDK；没有 API-key CLI 参数；下载授权只从 flag 进入 Bootstrap。
+- [x] 确认 Graph 仍为七节点，现有 Runner 能力异常只有一个边界。
+- [x] 确认 JSON 测试中 stdout 没有进度，普通模式进度只在 stderr。
 
 ## Task 5：同步教学文档并最终提交
 
@@ -86,13 +86,13 @@ C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cachepr
 - Modify: `README.md`
 - Modify: this plan
 
-- [ ] 生成中文第 10 章：CLI/shell/argv/parser/subcommand/flag/option/stdin/stdout/stderr/exit code/callback/serialization/presentation adapter 对照。
-- [ ] 解释 `pyproject.toml` 如何把 `luxar` 映射到 `luxar.cli:main`。
-- [ ] 解释参数怎样显式变为初始 State，为什么 progress 不是 State 快照。
-- [ ] 解释普通模式和 JSON 自动化模式、argparse 测试真正执行了什么。
-- [ ] 同步 README、总览、PROGRESS 的真实结果和下一切片；不预填测试数字。
-- [ ] 重新运行规定完整测试、`git diff --check`、安全搜索和 `git status --short`。
-- [ ] 勾选本计划全部完成项并提交：`docs: complete LUXAR CLI lesson`。
+- [x] 生成中文第 10 章：CLI/shell/argv/parser/subcommand/flag/option/stdin/stdout/stderr/exit code/callback/serialization/presentation adapter 对照。
+- [x] 解释 `pyproject.toml` 如何把 `luxar` 映射到 `luxar.cli:main`。
+- [x] 解释参数怎样显式变为初始 State，为什么 progress 不是 State 快照。
+- [x] 解释普通模式和 JSON 自动化模式、argparse 测试真正执行了什么。
+- [x] 同步 README、总览、PROGRESS 的真实结果和下一切片；不预填测试数字。
+- [x] 重新运行规定完整测试、`git diff --check`、安全搜索和 `git status --short`。
+- [x] 勾选本计划全部完成项并提交：`docs: complete LUXAR CLI lesson`。
 
 ## Final Gate
 
