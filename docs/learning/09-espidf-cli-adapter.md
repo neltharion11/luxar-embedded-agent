@@ -734,3 +734,397 @@ BuildEvidence(
 
 到这里，终端字符串已经变成 LangGraph 能稳定路由、RepairPlanner 能安全使用
 的领域事实。
+
+## 十四、逐行教学五：`EspIdfError` 如何到达 Runner
+
+这一节回答四个问题：
+
+1. Adapter 抛出的异常为什么能越过 LangGraph 节点？
+2. 为什么不在每个节点分别捕获？
+3. Runner 怎样保留已经完成的 Requirement 和 Plan？
+4. 为什么预检失败后没有 Evidence、attempts 增量和 `build_project` trace？
+
+### 14.1 两种“错误对象”不是同一个职责
+
+命令开始前，Adapter 可能抛出：
+
+```python
+class EspIdfError(RuntimeError):
+    ...
+```
+
+它是 Python 异常，表示控制流无法继续正常返回。它保存的是 Port 层稳定事实：
+
+```text
+category  → invalid_project / environment / dependency / process
+message   → Adapter 内部的稳定消息
+retryable → 底层能力是否适合重试
+```
+
+Runner 最终写入 State 的则是：
+
+```python
+class WorkflowError(BaseModel):
+    stage: ...
+    category: ...
+    message: str
+    retryable: bool
+    user_suggestion: str
+```
+
+它不是正在传播的 Python 异常，而是经过验证、可以安全保存和展示的领域数据。
+
+可以记成：
+
+```text
+EspIdfError  → “当前 Python 调用不能正常完成”
+WorkflowError → “工作流最终怎样记录和解释失败”
+```
+
+### 14.2 异常为什么能越过节点
+
+构建节点的核心代码是：
+
+```python
+evidence = espidf.build(project_path)
+
+next_attempt = state.get("attempts", 0) + 1
+
+return {
+    "build_evidence": evidence,
+    "attempts": next_attempt,
+    "status": "building",
+    "trace": [*state.get("trace", []), "build_project"],
+}
+```
+
+节点内没有捕获 `EspIdfError`。如果 `_preflight()` 在第一行调用期间抛出异常，
+Python 会立即停止当前函数，并沿调用栈向外寻找能够处理该异常的 `except`。
+
+因此下面三部分都不会执行：
+
+```text
+next_attempt 的计算
+节点 return 字典
+LangGraph 合并本节点的 State 更新
+```
+
+调用栈可以画成：
+
+```text
+run_workflow()
+└─ graph.stream()
+   └─ build_project()
+      └─ espidf.build()
+         └─ _preflight()
+            └─ raise EspIdfError
+                 ↑ 逐层退出，直到 run_workflow 的 except
+```
+
+这里的“越过 LangGraph”不是绕过 Graph，而是普通 Python 异常传播：中间函数
+没有捕获，就继续向外传播。
+
+### 14.3 为什么只有 Runner 统一捕获一次
+
+Runner 使用联合异常捕获：
+
+```python
+except (CapabilityError, WorkspaceError, EspIdfError) as error:
+```
+
+圆括号中的 tuple 是“允许捕获的异常类型集合”，表示以下任意一种都进入同一
+边界：
+
+```text
+CapabilityError → DeepSeek/模型能力失败
+WorkspaceError  → 工作区读写或安全验证失败
+EspIdfError     → ESP-IDF 命令开始前的能力失败
+```
+
+统一边界有三个好处：
+
+1. 节点保持业务编排简洁，不重复错误转换代码；
+2. 所有底层敏感消息都在同一位置换成应用控制的安全文字；
+3. 以后 API、CLI 或 UI 只需要理解统一的失败 State。
+
+进入联合 `except` 后，再用运行时类型分支选择转换函数：
+
+```python
+if isinstance(error, CapabilityError):
+    ...
+elif isinstance(error, WorkspaceError):
+    ...
+else:
+    workflow_error = espidf_error_to_workflow_error(error)
+```
+
+`isinstance(object, Class)` 在运行时判断对象是不是某个类的实例。因为 tuple 中
+只可能出现三种已知异常，前两种排除后，`else` 就是 `EspIdfError`。
+
+### 14.4 为什么不能把原始异常消息直接写入 State
+
+ESP-IDF 转换函数使用固定字典：
+
+```python
+ESPIDF_ERROR_MESSAGES = {
+    "invalid_project": "ESP-IDF 项目结构无效",
+    "environment": "ESP-IDF 构建环境不可用",
+    "dependency": "项目依赖需要显式授权后才能解析",
+    "process": "ESP-IDF 构建进程无法启动",
+}
+```
+
+然后：
+
+```python
+message = ESPIDF_ERROR_MESSAGES[error.category]
+```
+
+而不是：
+
+```python
+message = error.message
+```
+
+因为底层异常将来可能意外包含用户目录、命令路径、系统消息或依赖内容。即使
+Adapter 已经尽量使用稳定文字，Application 边界仍不信任它的原始 message。
+
+测试故意构造：
+
+```python
+EspIdfError(
+    category="dependency",
+    message="SECRET_ESPIDF_PATH",
+    retryable=False,
+)
+```
+
+然后断言敏感标记不会出现在最终 `WorkflowError.message` 或
+`user_suggestion`。这就是纵深防御：Adapter 做一次脱敏，Runner 再做一次固定
+映射。
+
+### 14.5 为什么四个底层类别只映射成两个工作流类别
+
+```python
+category = (
+    "dependency"
+    if error.category == "dependency"
+    else "environment"
+)
+```
+
+这是 Python 条件表达式，可以读成：
+
+```text
+如果底层类别是 dependency：工作流类别使用 dependency；
+否则：工作流类别使用 environment。
+```
+
+映射关系为：
+
+| `EspIdfError.category` | `WorkflowError.category` |
+|---|---|
+| `invalid_project` | `environment` |
+| `environment` | `environment` |
+| `dependency` | `dependency` |
+| `process` | `environment` |
+
+Port 层类别更细，方便 Adapter 表达原因和选择消息；工作流层只保留路由、用户
+提示和恢复真正需要的稳定类别。所有这些失败的阶段都固定是：
+
+```python
+stage="build"
+```
+
+因为它们发生在 ESP-IDF 构建能力中，而不是需求分析或修复阶段。
+
+### 14.6 `model_validate()` 在转换末尾做什么
+
+```python
+return WorkflowError.model_validate(
+    {
+        "stage": "build",
+        "category": category,
+        "message": ESPIDF_ERROR_MESSAGES[error.category],
+        "retryable": error.retryable,
+        "user_suggestion": ESPIDF_ERROR_SUGGESTIONS[error.category],
+    }
+)
+```
+
+普通字典先由 Application 组装，再交给 Pydantic 创建 `WorkflowError`。如果
+stage、category 或字段类型违反领域模型的 `Literal` 和类型声明，验证会立即
+失败，错误对象不会以不合法形态进入 State。
+
+### 14.7 Runner 为什么使用 `stream()` 而不是只用 `invoke()`
+
+Runner 开始时复制初始 State：
+
+```python
+latest_state = cast(
+    WorkflowState,
+    dict(initial_state),
+)
+```
+
+`dict(initial_state)` 创建一个浅复制。这样即使第一个节点立即失败，原始
+`task_text`、attempts 和 max_attempts 仍然存在。
+
+随后：
+
+```python
+for snapshot in build_graph().stream(
+    initial_state,
+    context=context,
+    stream_mode="values",
+):
+    latest_state = cast(WorkflowState, snapshot)
+```
+
+`stream_mode="values"` 让 LangGraph 在每个节点成功完成后给出一份完整 State
+快照。循环每次把 `latest_state` 更新为最新快照。
+
+例如构建预检失败前：
+
+```text
+初始 State
+→ analyze_requirement 成功：snapshot 含 Requirement
+→ create_plan 成功：snapshot 含 Requirement + Plan
+→ build_project 内抛异常：没有本节点 snapshot
+```
+
+因此 Runner 捕获异常时，`latest_state` 正好是“计划节点完成后的最后可信
+状态”。
+
+如果只调用一次普通执行并在中途抛异常，外层未必方便获得已经完成节点后的
+最新 State；使用 values stream 明确提供了这个应用级恢复边界。
+
+### 14.8 `cast()` 会不会转换字典
+
+```python
+latest_state = cast(WorkflowState, snapshot)
+```
+
+`typing.cast()` 不会在运行时复制、验证或转换对象。它只是告诉类型检查器：
+
+> 请把这个对象视为 `WorkflowState`。
+
+运行时的 `snapshot` 仍然是原来的 dict。真正的数据约束主要来自节点设计、
+Pydantic Domain 对象以及测试，而不是 `cast()`。
+
+### 14.9 怎样组合最终失败 State
+
+Runner 复用已有终态节点：
+
+```python
+failure_update = failed(latest_state)
+```
+
+`failed()` 只返回：
+
+```python
+{
+    "status": "failed",
+    "trace": [*state.get("trace", []), "failed"],
+}
+```
+
+最终组合：
+
+```python
+return cast(
+    WorkflowState,
+    {
+        **latest_state,
+        "error": workflow_error,
+        **failure_update,
+    },
+)
+```
+
+两个 `**` 是字典展开。合并顺序很重要：
+
+1. 先复制最后可信 State；
+2. 加入转换后的安全 error；
+3. 用 failed 节点更新 status 和 trace。
+
+原有 Requirement、Plan 等未被同名键覆盖，因此继续保留。
+
+### 14.10 为什么没有 Evidence、attempts 增量和构建 trace
+
+预检在这句内部失败：
+
+```python
+evidence = espidf.build(project_path)
+```
+
+所以节点没有执行完整，更没有返回：
+
+```python
+"build_evidence": evidence
+"attempts": next_attempt
+"trace": [..., "build_project"]
+```
+
+最终测试期望：
+
+```text
+requirement 已保留
+plan 已保留
+没有 build_evidence
+attempts 仍是 0
+status 是 failed
+error.stage 是 build
+error.category 是 dependency
+trace 是 analyze_requirement → create_plan → failed
+```
+
+这不是信息丢失，而是忠实表达事实：
+
+```text
+需求分析完成了
+执行计划完成了
+构建命令没有开始
+所以没有构建证据，也没有一次实际构建尝试
+```
+
+### 14.11 与“命令返回 dependency Evidence”的区别
+
+有两种看起来相似但事实不同的依赖失败：
+
+```text
+清单预检发现未授权依赖
+→ 命令没启动
+→ EspIdfError(dependency)
+→ Runner 生成失败 State
+→ attempts 不增加，没有 BuildEvidence
+```
+
+```text
+显式授权后命令已启动，但 Component Manager 解析失败
+→ 进程非零退出
+→ BuildEvidence(error_category="dependency")
+→ build_project 正常返回
+→ attempts 增加，有 BuildEvidence
+→ route_after_build 进入 failed
+```
+
+最终都失败，但 State 中保存的事实不同。企业项目尤其需要这种区分，否则审计
+时无法判断命令到底有没有真正执行。
+
+### 14.12 本节记忆模型
+
+```text
+Adapter 抛异常
+→ 当前节点立即停止，不能伪造节点更新
+→ Python 沿调用栈把异常交给 Runner
+→ Runner 用固定字典转换成安全 WorkflowError
+→ values stream 提供最后成功节点后的 State
+→ 合并 error 与 failed 更新
+→ 返回可展示、可测试、可持久化的失败 State
+```
+
+最核心的一句话：
+
+> Runner 保存的是“已经成功发生的事实”，而不是为了让 State 看起来完整而补造
+> 尚未发生的 Evidence、attempt 或 trace。
