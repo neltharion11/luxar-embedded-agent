@@ -937,3 +937,404 @@ result         = LangGraph 最终返回的 State
 
 > `argparse` 只把终端文本整理成可信的 Python 参数；CLI 再把这些参数分流为
 > RuntimeContext 和 WorkflowState，最后由 Runner 正式启动 LangGraph。
+
+---
+
+## 十五、逐行教学三：`graph.stream()` 和 `snapshot` 到底是什么
+
+这一节聚焦 Runner 中最像“魔法”的代码：
+
+```python
+snapshots = iter(
+    build_graph().stream(
+        initial_state,
+        context=context,
+        stream_mode="values",
+    )
+)
+```
+
+先给出结论：
+
+> LangGraph 每执行完一个节点，就产生一个新的完整 State；Runner 每次用
+> `next(snapshots)` 取出其中一个状态快照。
+
+### 15.1 `build_graph()` 返回的不是运行结果
+
+`build_graph()` 内部先创建：
+
+```python
+builder = StateGraph(
+    WorkflowState,
+    context_schema=RuntimeContext,
+)
+```
+
+然后注册七个节点：
+
+```text
+analyze_requirement
+create_plan
+build_project
+repair_project
+request_clarification
+completed
+failed
+```
+
+最后：
+
+```python
+return builder.compile()
+```
+
+`compile()` 得到 `CompiledStateGraph`，可以理解为“已经检查并冻结的工作流机器”。
+此时它知道有哪些节点、边和条件分支，但还没有处理任何具体任务。
+
+类比：
+
+```text
+build_graph()       组装并拿到一台机器
+graph.stream(...)   给机器放入这次任务并启动
+```
+
+### 15.2 为什么传入 State 和 Context
+
+```python
+graph.stream(
+    initial_state,
+    context=context,
+    stream_mode="values",
+)
+```
+
+三个参数分别表示：
+
+```text
+initial_state          工作流最初拥有哪些任务数据
+context=context        节点运行时可以使用哪些工具
+stream_mode="values"  每一步返回完整的最新 State
+```
+
+注意两个 `context`：
+
+```python
+context=context
+```
+
+等号左边是 `stream()` 定义的参数名，右边是 Runner 函数中的局部变量。它和：
+
+```python
+project_path=project
+```
+
+是同一种 Python 关键字传参语法，不是把 context 赋值给自己。
+
+### 15.3 `stream()` 为什么不是一次性返回最终结果
+
+如果使用：
+
+```python
+graph.invoke(initial_state, context=context)
+```
+
+调用者主要等待最终 State。中间经过哪些节点，通常要等整条链结束后再看结果。
+
+当前使用：
+
+```python
+graph.stream(...)
+```
+
+它会逐步产出结果。假设第一次构建成功，状态大致依次变化：
+
+```text
+初始 State
+  task_text, attempts=0, trace=[]
+
+分析需求后的 snapshot
+  + requirement
+  + status="requirement_analyzed"
+  + trace=["analyze_requirement"]
+
+生成计划后的 snapshot
+  + plan
+  + status="planned"
+  + trace=["analyze_requirement", "create_plan"]
+
+构建后的 snapshot
+  + build_evidence
+  + attempts=1
+  + trace=[..., "build_project"]
+
+完成后的 snapshot
+  + status="completed"
+  + trace=[..., "completed"]
+```
+
+这里的 `snapshot` 不是硬盘快照，也不是新的领域类。它就是某个时刻的完整
+`WorkflowState`，运行时仍然是普通字典。
+
+### 15.4 `stream_mode="values"` 为什么重要
+
+LangGraph 支持不同流模式。当前代码选择 `values`，所以每次得到的是合并后的完整
+State，而不只是当前节点返回的那几个字段。
+
+例如 `create_plan` 节点可能只返回：
+
+```python
+{
+    "plan": plan,
+    "status": "planned",
+    "trace": [...],
+}
+```
+
+但 Runner 获得的 `values` snapshot 仍包含先前数据：
+
+```python
+{
+    "task_text": "闪烁 GPIO 2",
+    "requirement": requirement,
+    "plan": plan,
+    "attempts": 0,
+    "max_attempts": 3,
+    "status": "planned",
+    "trace": ["analyze_requirement", "create_plan"],
+}
+```
+
+因此 Runner 可以随时把最新完整 State 保存到：
+
+```python
+latest_state = cast(WorkflowState, snapshot)
+```
+
+仓库的集成测试也使用过 `stream_mode="updates"`。`updates` 更关注“这个节点刚刚
+更新了什么”；`values` 更关注“更新合并以后，整个 State 现在是什么”。Runner
+需要在异常时保留截至当前的完整业务数据，所以选择 `values` 更直接。
+
+### 15.5 `iter()` 和 `next()` 怎样推动工作流
+
+```python
+snapshots = iter(graph.stream(...))
+```
+
+`iter()` 得到一个迭代器。迭代器可以理解为“知道下一项在哪里，但不会一次把所有
+项目都取出来的对象”。
+
+```python
+snapshot = next(snapshots)
+```
+
+每调用一次 `next()`，LangGraph 继续运行，直到能够交出下一个 State 快照。
+
+概念上类似：
+
+```text
+第一次 next()  → 得到需求分析后的 State
+第二次 next()  → 得到计划生成后的 State
+第三次 next()  → 得到构建后的 State
+第四次 next()  → 得到完成节点后的 State
+第五次 next()  → 已无结果，抛出 StopIteration
+```
+
+实际流可能还提供不含新 trace 的状态，因此 Runner 不根据“调用了几次 next”判断
+业务进度，而是比较 trace 长度。
+
+### 15.6 `StopIteration` 不是工作流失败
+
+```python
+try:
+    snapshot = next(snapshots)
+except StopIteration:
+    break
+```
+
+迭代器没有下一项时，Python 用 `StopIteration` 表示“正常结束”。所以这里直接
+`break` 跳出 `while True`，最后返回：
+
+```python
+return latest_state
+```
+
+它不是 ESP-IDF 失败、模型失败或程序崩溃，只是流已经读完。
+
+平常写：
+
+```python
+for snapshot in snapshots:
+    ...
+```
+
+时，Python 会在内部自动处理 `StopIteration`。当前 Runner 手写 `next()`，是为了
+精确控制异常边界。
+
+### 15.7 为什么不直接写普通 `for` 循环
+
+Runner 必须只捕获 Graph 执行期间产生的三类能力异常：
+
+```python
+except (CapabilityError, WorkspaceError, EspIdfError) as error:
+```
+
+`next(snapshots)` 会真正推动节点，因此节点调用 DeepSeek、工作区或 ESP-IDF 时产生
+的异常，会从这一行冒出来。
+
+而展示进度的调用位于 `try` 外面：
+
+```python
+progress_reporter(progress)
+```
+
+结构可以简化为：
+
+```python
+try:
+    snapshot = next(snapshots)  # 只包住 Graph
+except 能力异常:
+    转换成失败 State
+
+progress_reporter(...)         # 不在上述异常捕获范围内
+```
+
+这样如果 CLI 的进度展示函数自己写坏了，即使它碰巧抛出 `CapabilityError`，Runner
+也不会谎称“DeepSeek 服务失败”。现有测试专门验证 reporter 的异常会原样抛出。
+
+### 15.8 `latest_state` 为什么要一直更新
+
+一开始：
+
+```python
+latest_state = cast(
+    WorkflowState,
+    dict(initial_state),
+)
+```
+
+`dict(initial_state)` 创建浅复制，避免 Runner 把自己保存的初始基线和调用者传入的
+同一个字典混为一谈。
+
+每拿到快照就更新：
+
+```python
+latest_state = cast(WorkflowState, snapshot)
+```
+
+假设修复模型调用失败。在失败以前已经得到：
+
+```text
+requirement
+plan
+第一次 build_evidence
+attempts=1
+```
+
+异常发生后，Runner 可以基于 `latest_state` 增加安全的 `WorkflowError` 和 failed
+状态，而不会丢掉已经完成的步骤与编译诊断。
+
+这就是“evidence-driven repair”能够被排查的基础：即使后续能力失败，先前的证据
+依然保存在最终 State 中。
+
+### 15.9 `cast()` 有没有转换数据
+
+```python
+latest_state = cast(WorkflowState, snapshot)
+```
+
+`cast()` 来自 `typing`，只是在告诉类型检查器：
+
+```text
+请把 snapshot 当作 WorkflowState 检查
+```
+
+它不会：
+
+```text
+创建 WorkflowState 实例
+验证字典内容
+复制数据
+在运行时改变 snapshot
+```
+
+`WorkflowState` 是 `TypedDict`，本来就在运行时表现为普通 `dict`。真正需要运行时
+数据验证的领域对象使用 Pydantic，例如 `BuildEvidence`。
+
+### 15.10 Runner 怎样从 snapshot 生成安全进度
+
+每个节点都会把名称追加到 `trace`。Runner 读取最后一项：
+
+```python
+trace = state.get("trace", [])
+node = trace[-1]
+```
+
+然后只生成受控的进度对象：
+
+```python
+WorkflowProgress(
+    stage="build",
+    message="已完成第 1 次构建",
+    attempts=1,
+)
+```
+
+它没有把完整 State 交给 CLI，因此进度信息不会意外带出：
+
+```text
+用户完整任务
+项目绝对路径
+模型原始响应
+源码内容
+API 密钥
+```
+
+成功修复链的真实测试期望是：
+
+```text
+需求分析完成
+执行计划已生成
+已完成第 1 次构建
+已应用受限制的源码修复
+已完成第 2 次构建
+工作流执行成功
+```
+
+### 15.11 它确实是“超大号状态机”，但多了什么
+
+你之前的理解是正确的：LangGraph 在当前 LUXAR 中就是可检查、可分支、可循环的
+状态机编排框架。
+
+它比手写大量 `if/while` 额外提供：
+
+```text
+显式节点和边
+条件路由
+统一 State 合并
+Runtime Context 注入
+逐步 stream
+可测试的执行轨迹
+未来可扩展的持久化与中断恢复能力
+```
+
+LLM 并没有“自由控制整个程序”。它只在特定节点中把非结构化信息转换成受验证的
+领域对象；Graph 根据确定性路由函数决定下一步。这是企业 Agent 比纯聊天脚本更
+可控的原因。
+
+### 15.12 本节记忆模型
+
+```text
+Graph       已编译的流程机器
+Node        一次业务动作
+State       流程中持续积累的数据
+Context     节点调用外部能力的工具箱
+stream      边运行边交出中间结果
+snapshot    某一步结束后的完整 State
+next()      推动并取出下一个 snapshot
+latest_state Runner 已经确认拿到的最新完整状态
+```
+
+最核心的一句话：
+
+> `graph.stream()` 让 Runner 能在每个节点后拿到完整状态；显式 `next()` 又让它能
+> 准确区分 Graph 的能力异常和展示层自己的程序错误。
