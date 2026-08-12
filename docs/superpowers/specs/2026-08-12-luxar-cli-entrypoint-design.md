@@ -1,7 +1,9 @@
 # LUXAR CLI Entrypoint Design
 
-**Date:** 2026-08-12  
-**Status:** Approved design, pending written-spec review  
+**Date:** 2026-08-12
+
+**Status:** Approved design, pending written-spec review
+
 **Scope:** A production-shaped command-line entrypoint for the existing DeepSeek + LangGraph + Workspace + ESP-IDF workflow
 
 ## 1. Goal
