@@ -1578,3 +1578,426 @@ pytest 收集 test_* 函数
 > 测试通过不是“Python 语法看起来没问题”，而是测试函数真的执行了待测路径，
 > 并且该测试写出的所有断言都成立；它能证明什么，取决于测试实际执行和替换了
 > 哪些边界。
+
+## 十六、逐行教学七：为什么企业项目需要这些分层
+
+看到当前目录后，初学者很容易产生一个合理疑问：
+
+> 为什么不把检查项目、运行 `idf.py`、解析错误和决定下一节点，全写在
+> `build_project()` 里？
+
+小型演示确实可以这样写。但企业项目需要长期面对变化：模型供应商会换、构建
+工具会升级、权限策略会调整、接口会增加、测试要离线运行、错误要安全展示。
+分层的目的不是增加文件，而是把“因不同原因而变化的代码”分开。
+
+### 16.1 如果所有逻辑都塞进节点
+
+一个巨型节点可能变成：
+
+```python
+def build_project(state, runtime):
+    # 检查路径
+    # 扫描 YAML
+    # 判断下载权限
+    # 修改环境变量
+    # subprocess.run reconfigure
+    # subprocess.run build
+    # 解析 GCC/CMake 日志
+    # 清理绝对路径
+    # 捕获所有异常
+    # 生成用户提示
+    # 修改 State
+    # 决定下一节点
+```
+
+它短期看似直接，长期会产生这些问题：
+
+- 节点同时依赖 LangGraph、文件系统、YAML、操作系统进程和 ESP-IDF；
+- 测试路由时也被迫准备真实文件和命令环境；
+- 更换 ESP-IDF 执行方式会修改 Graph 业务代码；
+- 原始路径或系统异常容易直接进入 State；
+- Fake 很难注入，只能大范围 patch 节点内部实现；
+- 一个函数失败时，很难判断是业务路线、工具调用还是日志解析出了问题。
+
+这种代码不是绝对不能工作，而是变化耦合太高。修改一个技术细节可能影响整个
+Agent。
+
+### 16.2 当前五层分别保护什么
+
+可以把当前结构压缩成五层：
+
+```text
+Domain      → 定义什么数据是合法事实
+Port        → 定义应用需要什么外部能力
+Adapter     → 使用具体技术实现能力
+Application → 编排节点、State、路由和错误边界
+Bootstrap   → 选择本次运行使用哪些具体对象
+```
+
+测试不是第六个生产层，而是从不同边界验证这五层能够正确协作。
+
+### 16.3 Domain：阻止矛盾事实进入系统
+
+`BuildEvidence` 属于 Domain，因为这些规则与 `subprocess` 或 LangGraph 无关：
+
+```text
+success=True  时 return_code 必须为 0
+success=False 时 return_code 不能为 0
+success=True  时不能存在 error_category
+诊断行列号如果存在，必须从 1 开始
+```
+
+这些是不变量。无论证据将来来自：
+
+```text
+本地 idf.py
+Docker 构建服务
+远程 CI
+企业内部编译农场
+测试 Fake
+```
+
+都必须满足同一规则。
+
+因此 Domain 不应该导入：
+
+```text
+langgraph
+subprocess
+DeepSeek SDK
+文件系统 Adapter
+```
+
+Domain 只回答：“一份合法构建证据长什么样？”
+
+### 16.4 Port：建立稳定的业务插座
+
+`EspIdfPort` 只有：
+
+```python
+class EspIdfPort(Protocol):
+    def build(self, project_path: Path) -> BuildEvidence:
+        ...
+```
+
+它不规定：
+
+- 使用 `idf.py` 还是 CMake；
+- 本地执行还是远程执行；
+- 输出怎样解析；
+- ESP-IDF 安装在哪里；
+- 测试怎样制造结果。
+
+Port 只表达应用真正需要的能力：给定项目路径，得到构建证据。
+
+这是一种重要的设计压缩。外部工具可能有几百个参数，但 Application 不需要
+知道所有细节；只暴露业务真正使用的最小合同。
+
+### 16.5 Adapter：隔离具体技术和副作用
+
+`EspIdfCliAdapter` 知道：
+
+```text
+pathlib、shutil、os.environ
+yaml.safe_load
+subprocess.run
+ESP-IDF Component Manager
+GCC/Clang/CMake 日志格式
+Windows/POSIX 路径
+```
+
+这些都是基础设施细节，所以集中在 Adapter。
+
+Adapter 的两个方向是：
+
+```text
+向外：调用操作系统、文件系统和 idf.py
+向内：把外部结果转换成 Domain 的 BuildEvidence 或稳定 Port 异常
+```
+
+它不负责决定 LangGraph 下一节点。即使 Adapter识别出 `source`，它也只返回
+事实，不直接调用 `repair_project()`。
+
+这是“工具事实”和“业务决策”的分离：
+
+```text
+Adapter：发生了 source failure
+Application Router：source failure 且还有预算，所以去 repair_project
+```
+
+### 16.6 Application：编排，不实现工具
+
+Application 包含：
+
+```text
+WorkflowState
+RuntimeContext
+七个节点
+两个路由函数
+Graph 拓扑
+Runner 错误边界
+```
+
+`build_project` 节点只做三件事：
+
+```text
+从 Context 取构建能力和项目路径
+调用 Port 获得 Evidence
+返回最小 State 更新
+```
+
+`route_after_build` 只根据 State 中的结构化事实判断下一步。它不打开日志文件、
+不运行正则、也不调用模型。
+
+Graph 文件只注册节点与边：
+
+```python
+builder.add_node("build_project", build_project)
+builder.add_conditional_edges(
+    "build_project",
+    route_after_build,
+    {...},
+)
+```
+
+因此阅读 `graph.py` 时，可以直接看出 Agent 的业务骨架，而不必穿过数百行工具
+代码。
+
+### 16.7 Runner 为什么也属于 Application
+
+Runner 是一次用例的最外层执行边界。它知道：
+
+- 怎样启动和流式读取 Graph；
+- 怎样保留最后可信 State；
+- 怎样把三种 Port 异常翻译成统一 `WorkflowError`；
+- 怎样形成最终 failed State。
+
+它不应该知道如何运行 `idf.py`，但必须知道工作流应如何向用户表达构建阶段
+失败。因此错误翻译属于 Application，而不是 Adapter 或 Domain。
+
+### 16.8 Bootstrap：唯一知道“今天用谁”的地方
+
+Bootstrap 负责对象选择：
+
+```text
+RequirementParser → DeepSeekRequirementParser
+Planner           → DeepSeekPlanner
+RepairPlanner     → DeepSeekRepairPlanner
+WorkspacePort     → LocalWorkspaceAdapter
+EspIdfPort        → EspIdfCliAdapter
+```
+
+测试可以换成：
+
+```text
+FakeRequirementParser
+FakePlanner
+FakeRepairPlanner
+FakeWorkspace
+FakeEspIdf
+```
+
+节点和 Graph 完全不变。
+
+组合根的价值是让具体类的创建集中。否则各节点自己 `EspIdfCliAdapter()`、自己
+创建 DeepSeek Client，配置、密钥、授权和对象生命周期就会散落在整个项目。
+
+### 16.9 依赖方向为什么重要
+
+理想方向可以画成：
+
+```text
+Application ──→ Ports ──→ Domain
+     │                       ↑
+     └───────────────────────┘
+
+Adapters ─────→ Ports + Domain
+
+Bootstrap ────→ Application + Adapters
+```
+
+箭头表示“代码导入或认识”。关键限制是：
+
+```text
+Domain 不认识外层
+Port 不认识具体 Adapter
+Application 节点不认识具体供应商和 subprocess
+Adapter 不决定 Graph 路由
+Bootstrap 可以认识所有具体实现，因为它负责装配
+```
+
+这不是说任何项目都必须机械遵循同样目录，而是让核心业务不被最容易变化的
+外部技术反向控制。
+
+### 16.10 每层如何独立测试
+
+分层后，测试可以精确选择边界：
+
+| 被测目标 | 真实部分 | 替换部分 |
+|---|---|---|
+| Domain 不变量 | Pydantic 模型 | 无外部依赖 |
+| Router | 普通路由函数 | 直接构造 Evidence |
+| Node | 节点 State 更新 | 注入 Fake Port |
+| Adapter | 预检、编排、解析 | monkeypatch OS 进程边界 |
+| Graph | 节点、边、循环 | 所有外部能力用 Fake |
+| Runner | Graph 执行和错误收口 | 抛出受控 Port 异常的 Fake |
+| Smoke | 真实 Adapter 和工具 | 只隔离到临时项目 |
+
+如果所有逻辑都在一个节点里，上表中的测试目标会互相纠缠。分层让失败更容易
+定位：Domain 测试失败通常是数据规则；Adapter 测试失败通常是工具边界；Graph
+测试失败通常是路线或 State。
+
+### 16.11 一个真实需求变化会修改哪些层
+
+#### 场景 A：把本地构建改成远程构建服务
+
+可以新增：
+
+```text
+RemoteEspIdfAdapter implements EspIdfPort
+```
+
+只要仍返回合法 `BuildEvidence`，节点、路由和 Graph 无需改变。Bootstrap 根据
+配置选择本地或远程 Adapter。
+
+#### 场景 B：新增一种可修复的配置错误类别
+
+可能需要修改：
+
+```text
+Domain 的 Literal
+Adapter 分类规则
+Application 路由策略
+相应测试
+```
+
+这是跨层业务变化，应该显式修改多个明确位置，而不是隐藏在一个巨型函数里。
+
+#### 场景 C：DeepSeek 更换模型或兼容客户端
+
+修改 DeepSeek Settings/Client/Adapter 与 Bootstrap；ESP-IDF Adapter、Evidence、
+构建节点和 Graph 不需要变化。
+
+#### 场景 D：下载依赖必须经过审批
+
+授权来源和应用入口需要设计，Bootstrap 把明确批准结果传给 Adapter。模型任务
+文本和 RepairPlan 仍不能直接改变权限。
+
+通过“哪些文件需要改”可以检验分层是否有效：无关层不应被迫跟着改变。
+
+### 16.12 企业项目并不是层越多越好
+
+当前实现也刻意没有继续抽象所有东西。例如 `espidf_cli.py` 仍把以下功能放在
+一个聚焦模块中：
+
+```text
+预检
+命令执行
+日志分类
+诊断解析
+```
+
+因为这些函数目前只服务一个 Adapter。项目暂时没有增加 `CommandRunnerPort`、
+通用 YAML 仓库或日志解析框架。
+
+只有当出现真实重复，例如烧录 Adapter、Git Adapter、多个 CLI 都需要相同进程
+执行策略时，才有证据抽取公共 `ProcessRunner`。提前抽象会让初学者和维护者
+面对没有实际用途的接口。
+
+判断标准不是“代码有多少行”，而是：
+
+```text
+是否存在不同变化原因？
+是否存在需要隔离的副作用或安全边界？
+是否需要独立替换和测试？
+是否已经出现真实重复？
+```
+
+当前 Domain、Port、Adapter、Application、Bootstrap 的分离满足前三项；更细的
+进程抽象尚未满足最后一项，所以暂不增加。
+
+### 16.13 LangGraph 在这套架构中的准确角色
+
+LangGraph 不是：
+
+- DeepSeek SDK；
+- 编译器；
+- 文件修改器；
+- 业务领域模型；
+- 自动理解所有日志的魔法层。
+
+LangGraph 在当前 LUXAR 中负责：
+
+```text
+注册节点
+连接普通边和条件边
+传递并合并 WorkflowState
+把 RuntimeContext 提供给节点
+执行 source/linker 修复循环
+执行 timeout 重试自环
+限制路线到七个显式业务节点
+通过 invoke/stream 提供运行方式
+```
+
+它是工作流编排器。模型能力和工程工具通过 Ports/Adapters 插入这个工作流。
+
+因此“LangGraph 版 LUXAR”不意味着把所有代码写进 LangGraph 节点，而是让
+LangGraph 专注于它最擅长的状态与流程编排。
+
+### 16.14 当前 Agent 的控制面与数据面
+
+企业系统常用两个概念：
+
+```text
+Control Plane  控制面：决定下一步做什么
+Data Plane     数据面：真正执行操作并产生结果
+```
+
+在当前 LUXAR 中可以近似理解为：
+
+```text
+控制面：LangGraph、节点、路由、attempt budget、Runner
+数据面：DeepSeek API、LocalWorkspaceAdapter、EspIdfCliAdapter
+共同语言：Domain Models、State、Port 合同
+```
+
+控制面不能伪造数据面的成功；数据面也不能私自决定控制流。这就是为什么
+Adapter 返回 Evidence，而 Router 决定下一节点。
+
+### 16.15 这套设计对 Agent 安全性的帮助
+
+LLM 具有不确定性，外部工具具有副作用。分层把两者夹在确定性边界中：
+
+```text
+自然语言
+→ LLM 候选结构
+→ Pydantic 验证
+→ LangGraph 显式路线
+→ Port 能力合同
+→ Adapter 权限和路径限制
+→ 真实工具 Evidence
+→ 确定性路由
+→ 必要时 LLM 修复
+→ Workspace 再次强制验证
+→ 重新构建闭环
+```
+
+Prompt 可以改善模型行为，但真正的安全边界由 Domain、Adapter、Application
+配置和重新验证共同实现。
+
+### 16.16 本节记忆模型
+
+遇到一个新功能时，可以依次问：
+
+```text
+1. 它描述的是业务事实和不变量吗？       → Domain
+2. 应用只是需要某种外部能力吗？          → Port
+3. 它依赖具体 SDK、文件、网络或进程吗？   → Adapter
+4. 它决定 State 怎样变化、下一步去哪吗？ → Application
+5. 它负责选择具体实现和配置吗？           → Bootstrap
+```
+
+最核心的一句话：
+
+> 企业分层不是把简单代码拆复杂，而是把模型推理、业务控制、外部副作用和安全
+> 规则分开，使它们能够独立变化、测试、替换和审计。
