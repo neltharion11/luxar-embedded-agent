@@ -1128,3 +1128,453 @@ Adapter 抛异常
 
 > Runner 保存的是“已经成功发生的事实”，而不是为了让 State 看起来完整而补造
 > 尚未发生的 Evidence、attempt 或 trace。
+
+## 十五、逐行教学六：pytest 如何验证真实 Adapter
+
+这一节不是只解释测试语法，而是回答：运行下面命令时，Python 到底执行了
+哪些函数？
+
+```text
+C:\Users\Gugugu\.conda\envs\luxar-learning\python.exe -m pytest -v -p no:cacheprovider
+```
+
+### 15.1 命令本身怎样读
+
+```text
+C:\...\python.exe
+```
+
+明确使用 `luxar-learning` Conda 环境中的 Python，而不是依赖当前终端碰巧指向
+哪个解释器。
+
+```text
+-m pytest
+```
+
+让该 Python 解释器以模块形式运行 pytest。它近似于先导入 pytest，再执行
+pytest 的命令入口。
+
+```text
+-v
+```
+
+verbose，显示每个被收集测试的完整名称和 PASSED/SKIPPED/FAILED 状态。
+
+```text
+-p no:cacheprovider
+```
+
+禁用 pytest 的 cacheprovider 插件，避免生成或依赖 `.pytest_cache`，使学习
+仓库的验证更干净、可重复。
+
+### 15.2 pytest 怎样找到测试
+
+pytest 读取 `pyproject.toml` 中的配置，再扫描 `tests/`。默认会识别类似：
+
+```text
+test_*.py 文件
+test_* 函数
+Test* 测试类
+```
+
+例如：
+
+```python
+def test_build_runs_reconfigure_then_build_and_returns_logical_evidence(...):
+    ...
+```
+
+不是普通业务 `main()` 调用了它，而是 pytest 收集后主动调用这个测试函数。
+
+函数参数：
+
+```python
+tmp_path: Path
+monkeypatch: pytest.MonkeyPatch
+```
+
+不是测试作者手工传入的。pytest 根据参数名识别 fixture，并在每次测试执行前
+创建相应对象，然后近似执行：
+
+```python
+test_build_runs_reconfigure_then_build_and_returns_logical_evidence(
+    tmp_path=本次测试专用临时目录,
+    monkeypatch=本次测试专用修改器,
+)
+```
+
+测试结束后，pytest 负责清理 monkeypatch 修改；临时项目也不写入用户工程。
+
+### 15.3 `_make_project()` 为什么是普通辅助函数
+
+```python
+def _make_project(root: Path) -> Path:
+    root.mkdir(exist_ok=True)
+    (root / "CMakeLists.txt").write_text(...)
+    return root
+```
+
+它不以 `test_` 开头，所以 pytest 不把它当成独立测试。测试函数在需要时主动
+调用它，在 `tmp_path` 下建立满足最低预检要求的项目。
+
+这里创建的 `CMakeLists.txt` 不需要能完成真实 ESP-IDF 编译，因为当前单元测试
+的目标是 Adapter 编排和参数，不是工具链本身。
+
+### 15.4 `monkeypatch` 到底修改了什么
+
+预检本来会调用：
+
+```python
+shutil.which("idf.py")
+```
+
+测试中：
+
+```python
+monkeypatch.setattr(
+    "luxar.adapters.espidf_cli.shutil.which",
+    lambda command: f"C:/tools/{command}",
+)
+```
+
+临时把 Adapter 模块实际访问的 `shutil.which` 换成一个 lambda。这个 lambda
+无论接收什么命令，都返回一个看似可发现的路径，因此测试不要求机器安装
+ESP-IDF。
+
+这里的 `lambda` 等价于：
+
+```python
+def fake_which(command: str) -> str:
+    return f"C:/tools/{command}"
+```
+
+更重要的替换是：
+
+```python
+monkeypatch.setattr(subprocess, "run", fake_run)
+```
+
+正式 `EspIdfCliAdapter.build()` 仍然真的执行，包括 `_preflight()`、两阶段编排、
+Evidence 创建等；但当代码走到 `subprocess.run(...)` 时，实际调用的是测试定义
+的 `fake_run()`，不会创建操作系统进程。
+
+可以画成：
+
+```text
+测试调用真实 EspIdfCliAdapter.build()
+→ 真实 _preflight()
+→ 真实 _run_action("reconfigure")
+→ subprocess.run 已被替换，进入 fake_run()
+→ fake_run 返回人为构造的 CompletedProcess
+→ 真实 Adapter 解析返回值
+→ 真实 _run_action("build")
+→ 再次进入 fake_run()
+→ 真实 Adapter 返回 BuildEvidence
+```
+
+`monkeypatch` 不是复制一份 Adapter，也不是模拟整个 Python。它只是在本次测试
+期间替换一个明确的对象属性；测试结束后自动恢复。
+
+### 15.5 `fake_run()` 怎样记录调用并伪造工具结果
+
+```python
+calls: list[tuple[list[str], dict[str, object]]] = []
+
+def fake_run(
+    command: list[str],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    calls.append((command, kwargs))
+    return subprocess.CompletedProcess(
+        command,
+        0,
+        stdout="Project build complete",
+        stderr="",
+    )
+```
+
+`**kwargs` 接收所有具名参数，例如 `cwd`、`shell`、`timeout`、`env`，并把它们
+放进字典。`calls.append(...)` 保存每次调用，供后续断言。
+
+返回的 `CompletedProcess` 表示：
+
+```text
+执行的命令 = command
+返回码 = 0
+stdout = Project build complete
+stderr = 空
+```
+
+这是测试输入，不是真实 ESP-IDF 输出。测试目的正是给 Adapter 一个受控工具
+结果，再验证 Adapter 怎样处理。
+
+### 15.6 这个测试依次执行了什么
+
+```python
+adapter = EspIdfCliAdapter(
+    idf_command=("trusted-python", "trusted-idf.py"),
+    reconfigure_timeout_seconds=11,
+    build_timeout_seconds=22,
+)
+
+evidence = adapter.build(project)
+```
+
+执行顺序：
+
+```text
+1. 构造 Adapter，并保存两个超时
+2. 调用真实 build(project)
+3. 预检临时项目和被替换的 launcher
+4. 调用 fake_run(..., "reconfigure", timeout=11)
+5. 返回成功 CompletedProcess
+6. 调用 fake_run(..., "build", timeout=22)
+7. 返回成功 CompletedProcess
+8. Adapter 生成成功 BuildEvidence
+9. 回到测试执行 assert
+```
+
+随后断言：
+
+```python
+assert [call[0] for call in calls] == [
+    ["trusted-python", "trusted-idf.py", "reconfigure"],
+    ["trusted-python", "trusted-idf.py", "build"],
+]
+```
+
+列表推导式 `[call[0] for call in calls]` 取出每条记录的命令部分。该断言同时
+证明调用次数、先后顺序和完整参数列表。
+
+```python
+assert calls[0][1]["timeout"] == 11
+assert calls[1][1]["timeout"] == 22
+```
+
+`calls[0]` 是第一次调用；`[1]` 是 kwargs 字典；`["timeout"]` 取得超时。
+
+```python
+assert evidence.command == ["idf.py", "build"]
+```
+
+证明 State 证据只保存逻辑命令，不泄露配置的真实 launcher 前缀。
+
+### 15.7 `assert` 通过究竟表示什么
+
+Python 执行：
+
+```python
+assert expression
+```
+
+若表达式为真，继续运行；若为假，抛出 `AssertionError`，pytest 把测试标为
+FAILED。测试函数顺利执行到结尾且没有未处理异常，pytest 才标为 PASSED。
+
+因此这个测试通过证明：
+
+```text
+在本测试构造的项目、配置和 fake CompletedProcess 下，
+当前 EspIdfCliAdapter 确实按预期执行两阶段编排、使用阶段超时并返回逻辑证据。
+```
+
+它没有证明：
+
+```text
+本机真实 idf.py 已安装
+真实 ESP-IDF 工具链可以编译工程
+网络上的依赖仓库可用
+所有未来可能出现的终端日志都能被分类
+所有未写进测试的情况都正确
+```
+
+测试是有限输入下的可重复证据，不是对整个现实世界的数学证明。
+
+### 15.8 `pytest.raises()` 怎样测试异常
+
+```python
+with pytest.raises(EspIdfError) as captured:
+    EspIdfCliAdapter()._preflight(project)
+```
+
+`with` 建立一个“预期异常”的上下文：
+
+- 代码抛出指定异常：继续测试；
+- 没抛异常：测试失败；
+- 抛出其他异常：测试失败。
+
+异常对象保存在：
+
+```python
+captured.value
+```
+
+因此可以继续断言：
+
+```python
+assert captured.value.category == "dependency"
+assert captured.value.retryable is False
+```
+
+测试的不只是“发生了错误”，还包括稳定错误合同的具体内容。
+
+### 15.9 `@pytest.mark.parametrize` 怎样展开测试
+
+```python
+@pytest.mark.parametrize(
+    ("action", "stdout", "stderr", "expected"),
+    [
+        ("reconfigure", "CMake Error", "Failed to resolve component", "dependency"),
+        ("build", "error", "undefined reference", "linker"),
+        ...
+    ],
+)
+def test_failure_classification_uses_stable_priority(...):
+    assert _classify_failure(action, stdout, stderr) == expected
+```
+
+pytest 会把一份函数展开成多次独立测试，每一行数据分别传给参数。某个案例失败
+时，`-v` 输出会显示具体参数组合，而不是只说整个循环失败。
+
+这适合验证“同一规则、多个代表输入”，减少复制粘贴测试函数。
+
+### 15.10 `nonlocal` 怎样记录超时测试的调用数
+
+```python
+call_count = 0
+
+def fake_run(...):
+    nonlocal call_count
+    call_count += 1
+```
+
+`call_count` 定义在外层测试函数中。嵌套函数若要给它重新赋值，需要声明
+`nonlocal`；否则 Python 会把 `call_count` 当成 fake_run 自己的局部变量。
+
+超时测试根据命令最后一个 token 抛出：
+
+```python
+raise subprocess.TimeoutExpired(...)
+```
+
+随后断言 reconfigure 超时只调用一次，build 超时则先成功 reconfigure、再调用
+build，共两次。这证明“失败后停止”的控制流，不只是 Evidence 字段。
+
+### 15.11 单元测试、纵向集成测试和 Smoke 的区别
+
+#### Adapter 单元测试
+
+```text
+真实：EspIdfCliAdapter、预检、编排、解析、Evidence
+替换：shutil.which、subprocess.run
+文件：pytest tmp_path
+网络：不访问
+真实 idf.py：不运行
+```
+
+它速度快、错误定位精确，可以制造超时、OSError、链接错误等难以稳定复现的
+情况。
+
+#### Graph 纵向集成测试
+
+```text
+真实：编译后的 LangGraph、节点、路由、State 合并、修复循环
+替换：Parser、Planner、EspIdf、RepairPlanner、Workspace 全部使用 Fake
+```
+
+例如 source failure 测试预先提供：
+
+```text
+第一次 FakeEspIdf.build → source 失败 Evidence
+第二次 FakeEspIdf.build → 成功 Evidence
+```
+
+然后真的执行：
+
+```python
+result = build_graph().invoke(initial_state, context=context)
+```
+
+它证明节点顺序是：
+
+```text
+analyze_requirement
+→ create_plan
+→ build_project
+→ repair_project
+→ build_project
+→ completed
+```
+
+并检查每个 Fake 的调用参数和次数。它没有运行 DeepSeek、磁盘修复或 ESP-IDF，
+但验证了 Agent 工作流本身。
+
+#### 真实 Smoke Test
+
+smoke 不替换 `subprocess.run`：
+
+```python
+evidence = EspIdfCliAdapter(
+    allow_dependency_downloads=False,
+).build(tmp_path)
+```
+
+只有同时满足以下条件才运行：
+
+```text
+LUXAR_RUN_ESPIDF_SMOKE=1
+当前已激活环境的 PATH 能找到 idf.py
+```
+
+它在 `tmp_path` 创建最小无依赖项目，并真正运行 reconfigure/build。没有显式
+开关时调用 `pytest.skip()`，结果显示 SKIPPED 而不是 PASSED。
+
+三层组合的原因是：
+
+```text
+单元测试   → 快速、精确验证 Adapter 规则
+集成测试   → 验证完整 LangGraph 行为
+真实 smoke → 最小验证外部工具确实接得通
+```
+
+不能只用 smoke：外部环境不稳定、失败难定位、难制造各种错误。也不能只有
+Fake：Fake 全绿仍不能证明真实工具能够启动。
+
+### 15.12 本次代表性运行结果
+
+运行：
+
+```text
+python -m pytest -v -p no:cacheprovider
+  tests/adapters/test_espidf_cli.py::test_build_runs_reconfigure_then_build_and_returns_logical_evidence
+  tests/integration/test_fake_vertical_slice.py::test_source_failure_is_repaired_rebuilt_and_completed
+```
+
+实际结果：
+
+```text
+collected 2 items
+2 passed in 0.34s
+```
+
+第一个测试执行了真实 Adapter，但没有启动真实进程；第二个执行了真实 Graph 和
+修复循环，但外部能力都是 Fake。这就是读 pytest 输出时必须同时知道的测试
+边界。
+
+### 15.13 本节记忆模型
+
+```text
+pytest 收集 test_* 函数
+→ 根据参数名注入 fixture
+→ 测试在 tmp_path 构造真实输入
+→ monkeypatch 临时替换外部边界
+→ 调用真实待测代码
+→ Fake/CompletedProcess 提供受控结果
+→ assert 检查返回值、调用参数、顺序和副作用
+→ 测试结束后恢复 monkeypatch
+```
+
+最核心的一句话：
+
+> 测试通过不是“Python 语法看起来没问题”，而是测试函数真的执行了待测路径，
+> 并且该测试写出的所有断言都成立；它能证明什么，取决于测试实际执行和替换了
+> 哪些边界。
