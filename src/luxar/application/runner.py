@@ -10,6 +10,7 @@ from luxar.application.nodes import failed
 from luxar.application.state import WorkflowState
 from luxar.domain.errors import WorkflowError
 from luxar.ports.errors import CapabilityError
+from luxar.ports.espidf_errors import EspIdfError
 from luxar.ports.workspace_errors import WorkspaceError
 
 
@@ -69,6 +70,22 @@ WORKSPACE_ERROR_SUGGESTIONS = {
 }
 
 
+ESPIDF_ERROR_MESSAGES = {
+    "invalid_project": "ESP-IDF 项目结构无效",
+    "environment": "ESP-IDF 构建环境不可用",
+    "dependency": "项目依赖需要显式授权后才能解析",
+    "process": "ESP-IDF 构建进程无法启动",
+}
+
+
+ESPIDF_ERROR_SUGGESTIONS = {
+    "invalid_project": "请检查项目根目录和 CMakeLists.txt",
+    "environment": "请在已激活的 ESP-IDF 环境中重试",
+    "dependency": "请确认依赖来源后显式允许依赖下载",
+    "process": "请检查 ESP-IDF 命令、权限和运行环境",
+}
+
+
 def capability_error_to_workflow_error(
     error: CapabilityError,
     state: WorkflowState,
@@ -113,6 +130,28 @@ def workspace_error_to_workflow_error(
     )
 
 
+def espidf_error_to_workflow_error(
+    error: EspIdfError,
+) -> WorkflowError:
+    category = (
+        "dependency"
+        if error.category == "dependency"
+        else "environment"
+    )
+
+    return WorkflowError.model_validate(
+        {
+            "stage": "build",
+            "category": category,
+            "message": ESPIDF_ERROR_MESSAGES[error.category],
+            "retryable": error.retryable,
+            "user_suggestion": ESPIDF_ERROR_SUGGESTIONS[
+                error.category
+            ],
+        }
+    )
+
+
 def run_workflow(
     *,
     initial_state: WorkflowState,
@@ -137,14 +176,18 @@ def run_workflow(
             )
 
     # 整个工作流只有这一处统一捕获模型和工作区能力异常。
-    except (CapabilityError, WorkspaceError) as error:
+    except (CapabilityError, WorkspaceError, EspIdfError) as error:
         if isinstance(error, CapabilityError):
             workflow_error = capability_error_to_workflow_error(
                 error,
                 latest_state,
             )
-        else:
+        elif isinstance(error, WorkspaceError):
             workflow_error = workspace_error_to_workflow_error(
+                error
+            )
+        else:
+            workflow_error = espidf_error_to_workflow_error(
                 error
             )
 

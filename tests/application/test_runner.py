@@ -19,6 +19,7 @@ from luxar.domain.plans import ExecutionPlan, PlanStep
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
 from luxar.ports.errors import CapabilityError, CapabilityErrorCategory
+from luxar.ports.espidf_errors import EspIdfError, EspIdfErrorCategory
 from luxar.ports.workspace_errors import (
     WorkspaceError,
     WorkspaceErrorCategory,
@@ -74,6 +75,14 @@ class RaisingWorkspace:
         repair: RepairPlan,
     ) -> list[str]:
         raise AssertionError("apply_repair must not run after read failure")
+
+
+class RaisingEspIdf:
+    def __init__(self, error: EspIdfError) -> None:
+        self.error = error
+
+    def build(self, project_path: Path) -> BuildEvidence:
+        raise self.error
 
 
 def make_requirement() -> FirmwareRequirement:
@@ -441,5 +450,77 @@ def test_runner_preserves_latest_state_when_workspace_read_fails() -> None:
         "analyze_requirement",
         "create_plan",
         "build_project",
+        "failed",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("category", "expected_category", "retryable"),
+    [
+        ("invalid_project", "environment", False),
+        ("environment", "environment", False),
+        ("dependency", "dependency", False),
+        ("process", "environment", True),
+    ],
+)
+def test_espidf_error_mapping_uses_safe_application_text(
+    category: EspIdfErrorCategory,
+    expected_category: str,
+    retryable: bool,
+) -> None:
+    from luxar.application.runner import espidf_error_to_workflow_error
+
+    error = EspIdfError(
+        category=category,
+        message="SECRET_ESPIDF_PATH",
+        retryable=retryable,
+    )
+    workflow_error = espidf_error_to_workflow_error(error)
+
+    assert workflow_error.stage == "build"
+    assert workflow_error.category == expected_category
+    assert workflow_error.retryable is retryable
+    assert "SECRET_ESPIDF_PATH" not in workflow_error.message
+    assert "SECRET_ESPIDF_PATH" not in workflow_error.user_suggestion
+
+
+def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
+    requirement = make_requirement()
+    plan = make_plan()
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        repair_planner=FakeRepairPlanner(make_repair()),
+        espidf=RaisingEspIdf(
+            EspIdfError(
+                category="dependency",
+                message="SECRET_MANIFEST",
+                retryable=False,
+            )
+        ),
+        workspace=FakeWorkspace([]),
+        project_path=Path("workspace/blink"),
+    )
+
+    result = run_workflow(
+        initial_state=WorkflowState(
+            task_text="build ESP32 firmware",
+            attempts=0,
+            max_attempts=3,
+            trace=[],
+        ),
+        context=context,
+    )
+
+    assert result["requirement"] is requirement
+    assert result["plan"] is plan
+    assert "build_evidence" not in result
+    assert result["attempts"] == 0
+    assert result["status"] == "failed"
+    assert result["error"].stage == "build"
+    assert result["error"].category == "dependency"
+    assert result["trace"] == [
+        "analyze_requirement",
+        "create_plan",
         "failed",
     ]
