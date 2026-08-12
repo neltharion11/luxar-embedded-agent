@@ -1338,3 +1338,448 @@ latest_state Runner 已经确认拿到的最新完整状态
 
 > `graph.stream()` 让 Runner 能在每个节点后拿到完整状态；显式 `next()` 又让它能
 > 准确区分 Graph 的能力异常和展示层自己的程序错误。
+
+---
+
+## 十六、逐行教学四：节点更新、State 合并和条件路由
+
+这一节解释 LangGraph 真正的状态机循环：
+
+```text
+节点读取完整 State
+→ 节点返回局部 update
+→ LangGraph 合并 update
+→ 路由读取合并后的 State
+→ 路由返回目的地名称
+→ Graph 沿对应边执行下一个节点
+```
+
+### 16.1 节点收到什么，又返回什么
+
+以需求分析节点为例：
+
+```python
+def analyze_requirement(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    requirement = runtime.context.requirement_parser.parse(
+        state["task_text"]
+    )
+
+    return {
+        "requirement": requirement,
+        "status": "requirement_analyzed",
+        "trace": [
+            *state.get("trace", []),
+            "analyze_requirement",
+        ],
+    }
+```
+
+输入 `state` 是节点执行前的完整状态。返回值不是最终 State，而是这个节点产生的
+局部更新（update）。
+
+假设输入为：
+
+```python
+{
+    "task_text": "让 ESP32 的 GPIO 2 闪烁",
+    "attempts": 0,
+    "max_attempts": 3,
+    "trace": [],
+}
+```
+
+节点只返回：
+
+```python
+{
+    "requirement": requirement,
+    "status": "requirement_analyzed",
+    "trace": ["analyze_requirement"],
+}
+```
+
+LangGraph 合并后得到：
+
+```python
+{
+    "task_text": "让 ESP32 的 GPIO 2 闪烁",  # 旧键保留
+    "attempts": 0,                           # 旧键保留
+    "max_attempts": 3,                       # 旧键保留
+    "requirement": requirement,              # 新键加入
+    "status": "requirement_analyzed",        # 新键加入或覆盖
+    "trace": ["analyze_requirement"],         # 同名键覆盖
+}
+```
+
+### 16.2 当前 State 的默认合并规则
+
+当前 `WorkflowState` 没有给字段配置 reducer（归并函数），所以可以先记成：
+
+```text
+节点没有返回某个键 → 保留旧值
+节点返回新的键     → 加入 State
+节点返回已有键     → 新值覆盖旧值
+```
+
+因此“局部更新”不等于“所有数据自动追加”。
+
+例如构建节点返回新的：
+
+```python
+{"build_evidence": new_evidence}
+```
+
+第二次构建会覆盖第一次的 `build_evidence`。最终 State 保存最后一次构建证据；此前
+节点顺序仍由 `trace` 记录。
+
+修复节点没有返回 `attempts` 和 `build_evidence`：
+
+```python
+return {
+    "repair_plan": repair,
+    "changed_files": changed_files,
+    "status": "repaired",
+    "trace": [...],
+}
+```
+
+所以第一次构建的次数和失败证据会在修复阶段继续保留，直到下一次
+`build_project` 用新证据覆盖它们。
+
+### 16.3 `trace` 为什么要手动展开旧列表
+
+节点写的是：
+
+```python
+"trace": [
+    *state.get("trace", []),
+    "create_plan",
+]
+```
+
+`*` 在列表中表示展开：
+
+```python
+old = ["analyze_requirement"]
+new = [*old, "create_plan"]
+```
+
+结果是：
+
+```python
+["analyze_requirement", "create_plan"]
+```
+
+为什么不只返回：
+
+```python
+{"trace": ["create_plan"]}
+```
+
+因为默认规则会覆盖旧列表，之前的轨迹就丢了。
+
+为什么不写：
+
+```python
+state["trace"].append("create_plan")
+```
+
+因为这会原地修改传入的 State。当前写法创建新列表，使节点更容易独立测试，也
+减少共享可变对象造成的意外影响。
+
+LangGraph 也支持给字段配置 reducer，让框架自动合并列表；当前项目没有使用，
+所以不要误以为所有 LangGraph 项目的列表都必须手动展开。要看具体 State 定义。
+
+### 16.4 节点、路由和边不是一回事
+
+三个概念要分开：
+
+```text
+节点 Node       执行业务动作并返回 State 更新
+路由 Router     只读取 State，返回下一站名称
+边 Edge         Graph 中已经登记的合法连接关系
+```
+
+需求分析节点调用 LLM Adapter，生成 `FirmwareRequirement`。然后路由函数执行：
+
+```python
+def route_after_requirement(state: WorkflowState):
+    requirement = state["requirement"]
+
+    if requirement.is_complete:
+        return "create_plan"
+
+    return "request_clarification"
+```
+
+它不重新阅读自然语言，也不调用 LLM。它只查看经过 Pydantic 验证的结构化对象。
+
+Graph 装配时已经声明映射：
+
+```python
+builder.add_conditional_edges(
+    "analyze_requirement",
+    route_after_requirement,
+    {
+        "create_plan": "create_plan",
+        "request_clarification": "request_clarification",
+    },
+)
+```
+
+执行顺序是：
+
+```text
+analyze_requirement 执行
+→ update 合并进 State
+→ route_after_requirement(新 State)
+→ 返回 "create_plan" 或 "request_clarification"
+→ 映射表找到真实目标节点
+```
+
+路由返回的是字符串标签，不是调用函数：
+
+```python
+return "create_plan"  # 选择下一站
+```
+
+不等于：
+
+```python
+return create_plan(...)  # 直接执行节点
+```
+
+真正调用节点的是 LangGraph。
+
+### 16.5 `Literal[...]` 对路由有什么帮助
+
+```python
+def route_after_build(
+    state: WorkflowState,
+) -> Literal[
+    "completed",
+    "repair_project",
+    "build_project",
+    "failed",
+]:
+```
+
+这表示路由函数只应该返回四个字符串之一。它帮助编辑器和类型检查器发现拼写
+错误，例如：
+
+```python
+return "complete"  # 不属于声明的合法集合
+```
+
+`Literal` 本身不是运行时路由器，也不会自动跳转。真正的跳转仍由
+`add_conditional_edges()` 和函数返回值共同完成。
+
+### 16.6 构建路由为什么按这个顺序判断
+
+```python
+if evidence.success:
+    return "completed"
+
+if attempts >= max_attempts:
+    return "failed"
+
+if evidence.error_category in {"source", "linker"}:
+    return "repair_project"
+
+if evidence.error_category == "timeout":
+    return "build_project"
+
+return "failed"
+```
+
+顺序本身就是业务规则。
+
+第一，成功优先：
+
+```text
+success=True, attempts=3, max_attempts=3
+→ completed
+```
+
+即使最后一次预算刚好用完，只要真实构建成功就应该完成。如果先判断预算，会把
+成功错误地判成失败。
+
+第二，预算耗尽优先于修复：
+
+```text
+source error, attempts=3, max_attempts=3
+→ failed
+```
+
+因为即使现在修复，也已经没有下一次构建预算去证明修复有效。这样还能阻止无限
+循环。
+
+第三，根据错误性质采取不同动作：
+
+```text
+source/linker → 代码不变时重建没有意义，先 repair_project
+timeout       → 可能是临时波动，不改代码直接 build_project
+dependency    → 不让 LLM 修改源码解决依赖授权问题，failed
+environment   → 不让 LLM 修改源码解决环境问题，failed
+unknown/None  → 没有可靠修复依据，failed
+```
+
+这体现了一个重要 Agent 原则：不是每个错误都应该交给 LLM 修代码。
+
+### 16.7 修复循环是怎样形成的
+
+Graph 中有两条相关连接：
+
+```text
+build_project --source/linker--> repair_project
+repair_project ----------------> build_project
+```
+
+第一次构建产生源码错误：
+
+```python
+BuildEvidence(
+    success=False,
+    return_code=1,
+    error_category="source",
+    diagnostics=[...],
+)
+```
+
+路由选择 `repair_project`。修复节点依次执行：
+
+```text
+Workspace 受控读取允许的源码
+→ RepairPlanner 看需求、计划、构建证据和源码
+→ 返回完整文件替换计划
+→ Workspace 校验路径并自动应用
+→ repair_project 返回局部 State 更新
+```
+
+然后普通边强制进入下一次 `build_project`。只有新的真实构建证据才能决定是否
+完成。
+
+完整轨迹是：
+
+```text
+analyze_requirement
+→ create_plan
+→ build_project        第一次，source 失败，attempts=1
+→ repair_project       修改已有源码，不增加 attempts
+→ build_project        第二次，成功，attempts=2
+→ completed
+```
+
+因此 LLM 说“已经修好”没有意义；`idf.py build` 返回成功证据才算修好。
+
+### 16.8 timeout 自环为什么不经过修复节点
+
+Graph 映射允许：
+
+```text
+build_project --timeout--> build_project
+```
+
+这叫自环：从一个节点回到同一个节点。
+
+假设：
+
+```text
+第一次构建 timeout，attempts=1，预算=2
+→ 直接再次构建
+→ 第二次成功，attempts=2
+→ completed
+```
+
+这一过程不会读取源码、不会调用 RepairPlanner、不会写文件，因为 timeout 没有
+证明源码存在错误。
+
+### 16.9 四条真实分支总结
+
+需求阶段：
+
+```text
+Requirement 完整   → create_plan
+Requirement 不完整 → request_clarification → END
+```
+
+构建阶段：
+
+```text
+构建成功                    → completed → END
+失败且预算耗尽              → failed → END
+source/linker 且还有预算     → repair_project → build_project
+timeout 且还有预算           → build_project
+dependency/environment/未知  → failed → END
+```
+
+这里所有分支都由结构化数据和确定性 Python 条件决定，不是让模型临场选择节点。
+
+### 16.10 测试怎样分层证明它
+
+节点单元测试直接调用函数：
+
+```python
+update = build_project(state, Runtime(context=context))
+```
+
+它证明节点：
+
+```text
+调用了正确 Port
+传入了正确 project_path
+返回正确局部更新
+增加一次 attempts
+没有原地修改不该修改的数据
+```
+
+路由单元测试直接构造 State：
+
+```python
+destination = route_after_build(state)
+assert destination == "repair_project"
+```
+
+它证明每组证据和预算会选中正确目的地。
+
+纵向集成测试执行完整 Graph：
+
+```python
+result = build_graph().invoke(initial_state, context=context)
+```
+
+使用 Fake Adapter 提供“第一次源码失败、第二次成功”，最终断言：
+
+```python
+result["attempts"] == 2
+result["trace"] == [
+    "analyze_requirement",
+    "create_plan",
+    "build_project",
+    "repair_project",
+    "build_project",
+    "completed",
+]
+```
+
+它证明节点、State 合并、条件边和循环连接在一起后仍按预期工作。
+
+### 16.11 本节记忆模型
+
+```text
+Node update  节点对 State 提出的局部修改
+Merge        未返回键保留，同名键由新值覆盖
+Router       读取合并后的结构化 State 并返回目的地字符串
+Edge         Graph 允许采用的连接
+Self-loop    节点指回自身，例如 timeout 直接重建
+Budget       max_attempts，限制循环次数
+Evidence     idf.py 的真实结果，决定修复或完成
+```
+
+最核心的一句话：
+
+> 节点负责产生事实，LangGraph 负责合并状态，确定性路由负责选择下一条边；LLM
+> 只参与需要理解或生成内容的节点，不掌握无限制的流程控制权。
