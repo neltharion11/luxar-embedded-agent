@@ -9,15 +9,18 @@ description = "A clean, evidence-driven LUXAR implementation orchestrated by Lan
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "fastapi>=0.116,<1",
     "langgraph>=1.2,<1.3",
     "openai>=2,<3",
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
     "PyYAML>=6,<7",
+    "uvicorn>=0.35,<1",
 ]
 
 [project.scripts]
 luxar = "luxar.cli:main"
+luxar-web = "luxar.web:main"
 
 [project.optional-dependencies]
 dev = [
@@ -26,6 +29,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+luxar = ["ui/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

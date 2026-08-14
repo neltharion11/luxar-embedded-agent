@@ -8,8 +8,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
+from luxar.application.results import exit_code_for_state, state_to_result
 from luxar.application.runner import WorkflowProgress, run_workflow
 from luxar.application.state import WorkflowState
 from luxar.bootstrap import build_deepseek_runtime_context
@@ -64,32 +65,15 @@ def _report_progress(progress: WorkflowProgress) -> None:
 
 
 def _exit_code_for_state(state: WorkflowState) -> int:
-    return {
-        "completed": 0,
-        "needs_clarification": 3,
-        "failed": 4,
-    }.get(state.get("status"), 4)
+    """保留原有私有函数名，实际规则由共享展示合同提供。"""
 
-
-def _serialize_model(value: BaseModel | None) -> dict[str, object] | None:
-    if value is None:
-        return None
-    return value.model_dump(mode="json")
+    return exit_code_for_state(state)
 
 
 def _state_to_json_envelope(state: WorkflowState) -> dict[str, object]:
-    return {
-        "status": state.get("status", "failed"),
-        "exit_code": _exit_code_for_state(state),
-        "attempts": state.get("attempts", 0),
-        "requirement": _serialize_model(state.get("requirement")),
-        "plan": _serialize_model(state.get("plan")),
-        "build_evidence": _serialize_model(state.get("build_evidence")),
-        "repair_plan": _serialize_model(state.get("repair_plan")),
-        "changed_files": list(state.get("changed_files", [])),
-        "error": _serialize_model(state.get("error")),
-        "trace": list(state.get("trace", [])),
-    }
+    """保留 CLI 内部入口，避免 CLI 与 Web 各维护一份白名单。"""
+
+    return state_to_result(state)
 
 
 def _format_human_result(state: WorkflowState) -> str:
