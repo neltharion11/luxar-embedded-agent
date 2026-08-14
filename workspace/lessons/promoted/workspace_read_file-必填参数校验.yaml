@@ -1,5 +1,0 @@
-{evidence: "连续两次调用 workspace_read_file(project='', path='') 均返回相同错误", hypothesis: AI
-代理在拼接调用参数时，没有确保 project 和 path 参数被正确赋值就发起调用, outcome: 避免因空参数导致的无效工具调用，节省交互轮次, resolution: 调用
-workspace_read_file 前必须显式确认 project 是有效的项目名称字符串，path 是项目中存在的文件相对路径。使用 workspace_list_projects
-或 workspace_inspect 确认项目名后再调用。, symptom: 调用 workspace_read_file 时传入空字符串 project 或
-path，导致 'Invalid or empty project name' 错误, topic: workspace_read_file 必填参数校验}

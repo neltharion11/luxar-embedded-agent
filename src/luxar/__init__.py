@@ -1,8 +1,1 @@
-"""Luxar package."""
-
-__all__ = ["__version__"]
-
-__version__ = "0.2.3"
-
-
-
+"""LUXAR 主包：基于 LangGraph、领域模型和 Ports/Adapters 架构重构固件 Agent。"""

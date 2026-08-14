@@ -1,7 +1,0 @@
-{
-    "cmake.configurePreset": "Debug",
-    "cmake.buildPreset": "Debug",
-    "cmake.useCMakePresets": "always",
-    "cmake.generator": "Ninja",
-    "cmake.cmakePath": "${workspaceFolder}/../../toolchains/cmake/bin/cmake.exe"
-}
