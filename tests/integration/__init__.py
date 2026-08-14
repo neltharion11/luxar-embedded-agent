@@ -1,0 +1,2 @@
+"""Vertical integration tests."""
+
