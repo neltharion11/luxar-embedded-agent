@@ -7,6 +7,9 @@ from pathlib import Path, PurePath
 from luxar.web_contracts import WebProject
 
 
+_MAX_ROOT_CMAKE_BYTES = 64 * 1024
+
+
 class WebProjectError(ValueError):
     """项目名或项目目录不满足 Web 边界；消息必须保持固定和安全。"""
 
@@ -16,6 +19,22 @@ def _is_link_or_junction(path: Path) -> bool:
         return path.is_symlink() or path.is_junction()
     except OSError as error:
         raise WebProjectError("项目路径无效") from error
+
+
+def _is_espidf_root(cmake_file: Path) -> bool:
+    """用 ESP-IDF 标准根 include 区分普通 CMake/STM32 项目。"""
+
+    try:
+        if cmake_file.stat().st_size > _MAX_ROOT_CMAKE_BYTES:
+            return False
+        content = cmake_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    normalized = content.replace("\\", "/")
+    return (
+        "IDF_PATH" in normalized
+        and "tools/cmake/project.cmake" in normalized
+    )
 
 
 class WebProjectCatalog:
@@ -60,6 +79,7 @@ class WebProjectCatalog:
             not resolved.is_dir()
             or not cmake_file.is_file()
             or _is_link_or_junction(cmake_file)
+            or not _is_espidf_root(cmake_file)
         ):
             raise WebProjectError("目录不是有效的 ESP-IDF 项目")
         return resolved

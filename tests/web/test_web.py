@@ -15,7 +15,9 @@ def make_project(root: Path, name: str = "blink") -> Path:
     project = root / name
     project.mkdir()
     (project / "CMakeLists.txt").write_text(
-        "cmake_minimum_required(VERSION 3.16)\n",
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        f"project({name})\n",
         encoding="utf-8",
     )
     return project

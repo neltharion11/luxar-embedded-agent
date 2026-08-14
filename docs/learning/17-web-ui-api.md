@@ -70,8 +70,9 @@ C:\projects\Demo
 ```
 
 并检查它是根目录的直接子目录、不是符号链接/Junction，而且包含根
-`CMakeLists.txt`。这叫 trust boundary（信任边界）：用户输入不能决定任意磁盘
-位置。
+`CMakeLists.txt`。项目目录还会确认该文件引用 ESP-IDF 标准的
+`$ENV{IDF_PATH}/tools/cmake/project.cmake`，防止把 STM32 或普通 CMake 工程误标成
+ESP-IDF。这叫 trust boundary（信任边界）：用户输入不能决定任意磁盘位置。
 
 ## 四、HTTP 与 SSE 分别做什么
 

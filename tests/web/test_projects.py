@@ -9,7 +9,9 @@ def make_project(root: Path, name: str) -> Path:
     project = root / name
     project.mkdir()
     (project / "CMakeLists.txt").write_text(
-        "cmake_minimum_required(VERSION 3.16)\n",
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        f"project({name})\n",
         encoding="utf-8",
     )
     return project
@@ -20,6 +22,12 @@ def test_catalog_lists_only_sorted_direct_espidf_projects(tmp_path: Path) -> Non
     make_project(tmp_path, "alpha")
     (tmp_path / "not-project").mkdir()
     (tmp_path / "file.txt").write_text("x", encoding="utf-8")
+    generic = tmp_path / "generic-cmake"
+    generic.mkdir()
+    (generic / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.22)\nproject(generic)\n",
+        encoding="utf-8",
+    )
     nested = tmp_path / "group"
     nested.mkdir()
     make_project(nested, "hidden-nested-project")
