@@ -1,59 +1,74 @@
 ﻿# LUXAR 一键环境准备(Windows PowerShell,零 Python 环境也可运行)
-# 用法: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
-# 步骤: 定位/安装 Python 3.12 → 创建 .venv → 安装依赖 → 生成 .env → 检测 ESP-IDF
+# 用法: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 [-Force]
+# 环境已就绪时直接退出;加 -Force 强制重装依赖。
+
+param([switch]$Force)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
 Write-Host '== LUXAR 环境准备 ==' -ForegroundColor Cyan
 
-# 1. 定位 Python 3.12
-function Find-Python {
-    $fromPyLauncher = & py -3.12 -c "import sys;print(sys.executable)" 2>$null
-    if ($fromPyLauncher) { return $fromPyLauncher.Trim() }
-    $fromPython = & python -c "import sys;print(sys.version_info.major, sys.version_info.minor, sys.executable)" 2>$null
-    if ($fromPython) {
-        $parts = $fromPython.Trim() -split '\s+'
-        if ($parts.Count -ge 3 -and $parts[0] -eq '3' -and $parts[1] -eq '12') {
-            return ($parts[2..($parts.Count - 1)] -join ' ')
-        }
-    }
-    return $null
-}
-
-$python = Find-Python
-if (-not $python) {
-    Write-Host '未检测到 Python 3.12。' -ForegroundColor Yellow
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        $answer = Read-Host '是否用 winget 自动安装 Python 3.12?(y/N)'
-        if ($answer -match '^[yY]') {
-            winget install --id Python.Python.3.12 -e --silent --accept-package-agreements --accept-source-agreements
-            $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-            $python = Find-Python
-        }
-    }
-}
-if (-not $python) {
-    Write-Error '未找到 Python 3.12。请从 https://www.python.org/downloads/ 安装后重试。'
-    exit 1
-}
-Write-Host "[1/4] 使用 Python: $python"
-
-# 2. 创建项目内虚拟环境
 $venvPython = Join-Path $root '.venv\Scripts\python.exe'
-if (-not (Test-Path $venvPython)) {
-    & $python -m venv (Join-Path $root '.venv')
-    Write-Host '[2/4] 已创建 .venv'
-} else {
-    Write-Host '[2/4] .venv 已存在,跳过'
+$venvCfg = Join-Path $root '.venv\pyvenv.cfg'
+
+# 0. 就绪检查:完整 .venv + luxar 可导入 = 无需补装
+$ready = $false
+if (-not $Force -and (Test-Path $venvPython) -and (Test-Path $venvCfg)) {
+    & $venvPython -c "import luxar" 2>$null
+    if ($LASTEXITCODE -eq 0) { $ready = $true }
 }
 
-# 3. 安装依赖(尊重本机 HTTP_PROXY/HTTPS_PROXY)
-& $venvPython -m pip install --upgrade pip
-& $venvPython -m pip install -e "${root}[dev]"
-Write-Host '[3/4] 依赖安装完成'
+if (-not $ready) {
+    # 1. 定位 Python 3.12
+    function Find-Python {
+        $fromPyLauncher = & py -3.12 -c "import sys;print(sys.executable)" 2>$null
+        if ($fromPyLauncher) { return $fromPyLauncher.Trim() }
+        $fromPython = & python -c "import sys;print(sys.version_info.major, sys.version_info.minor, sys.executable)" 2>$null
+        if ($fromPython) {
+            $parts = $fromPython.Trim() -split '\s+'
+            if ($parts.Count -ge 3 -and $parts[0] -eq '3' -and $parts[1] -eq '12') {
+                return ($parts[2..($parts.Count - 1)] -join ' ')
+            }
+        }
+        return $null
+    }
 
-# 4. 生成 .env(密钥不入仓库)
+    $python = Find-Python
+    if (-not $python) {
+        Write-Host '未检测到 Python 3.12。' -ForegroundColor Yellow
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            $answer = Read-Host '是否用 winget 自动安装 Python 3.12?(y/N)'
+            if ($answer -match '^[yY]') {
+                winget install --id Python.Python.3.12 -e --silent --accept-package-agreements --accept-source-agreements
+                $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+                $python = Find-Python
+            }
+        }
+    }
+    if (-not $python) {
+        Write-Error '未找到 Python 3.12。请从 https://www.python.org/downloads/ 安装后重试。'
+        exit 1
+    }
+    Write-Host "[1/4] 使用 Python: $python"
+
+    # 2. 创建项目内虚拟环境
+    if (-not (Test-Path $venvPython)) {
+        & $python -m venv (Join-Path $root '.venv')
+        Write-Host '[2/4] 已创建 .venv'
+    } else {
+        Write-Host '[2/4] .venv 已存在,跳过'
+    }
+
+    # 3. 安装依赖(尊重本机 HTTP_PROXY/HTTPS_PROXY)
+    & $venvPython -m pip install --upgrade pip
+    & $venvPython -m pip install -e "${root}[dev]"
+    Write-Host '[3/4] 依赖安装完成'
+} else {
+    Write-Host '环境已就绪,跳过补装(需要强制重装请加 -Force)。' -ForegroundColor Green
+}
+
+# 4. 确保 .env 存在(密钥不入仓库)
 $envFile = Join-Path $root '.env'
 if (-not (Test-Path $envFile)) {
     $key = Read-Host 'DEEPSEEK_API_KEY(直接回车可稍后再填)'
@@ -98,6 +113,6 @@ if ($idfPath -and (Test-Path (Join-Path $idfPath 'tools\idf.py'))) {
 }
 
 Write-Host ''
-Write-Host '准备完成!启动网关:' -ForegroundColor Green
+Write-Host '启动网关:' -ForegroundColor Green
 Write-Host '  新终端直接输入 luxar,或'
-Write-Host "  powershell -ExecutionPolicy Bypass -File scripts\run-web.ps1"
+Write-Host "  powershell -ExecutionPolicy Bypass -File start.ps1"

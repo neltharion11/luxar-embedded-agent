@@ -131,31 +131,30 @@ back to `./projects` and port 8000.
 
 ## Zero-config startup for new machines
 
-For a machine with nothing installed, the single entry point is the
-repository-root PowerShell script (no Python required up front):
+One command covers both fresh machines and everyday startup:
 
 ```bat
 powershell -ExecutionPolicy Bypass -File start.ps1
 ```
 
-`start.ps1` chains the two bundled scripts:
+`start.ps1` detects the environment first and only prepares it when needed:
 
-- `scripts\setup.ps1` (one time): finds a Python 3.12 or offers to install it
-  via winget, creates a project-local `.venv`, installs the package with dev
-  extras, generates a gitignored `.env` (`DEEPSEEK_API_KEY`, project root,
-  optional `LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), offers
-  to add `.venv\Scripts` to the user PATH so plain `luxar` works, and detects
-  an existing ESP-IDF;
-- `scripts\run-web.ps1` (every time): loads `.env`, resolves the venv python,
-  exposes ESP-IDF environment variables, and starts the gateway.
+- a complete `.venv`, `LUXAR_PYTHON`, or any Python with luxar importable
+  (and `luxar` on PATH) is reused directly — **no setup runs when an
+  environment already exists**;
+- otherwise `scripts\setup.ps1` runs once: finds a Python 3.12 or offers a
+  winget install, creates the `.venv`, installs the package with dev extras,
+  generates the gitignored `.env` (`DEEPSEEK_API_KEY`, project root, optional
+  `LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), offers to add
+  `.venv\Scripts` to the user PATH, and detects an existing ESP-IDF;
+- the script then exposes ESP-IDF environment variables (when found) and
+  starts the gateway.
 
-After the one-time setup, `luxar` alone starts the gateway (the CLI
-auto-loads `.env` from the working directory or the repository root).
-
-`luxar setup` performs the same one-time preparation, but it is itself a
-Python command: it requires an existing environment with luxar installed, so
-machines starting from scratch must begin with `start.ps1` (or the bare
-`scripts\setup.ps1`).
+After that first run, `luxar` alone is enough (the CLI auto-loads `.env`).
+`luxar setup` re-runs the same preparation script, exiting immediately when
+the environment is already ready (use `scripts\setup.ps1 -Force` for a
+forced reinstall). `scripts\run-web.ps1` remains as a thin alias of
+`start.ps1`.
 
 Other developers only need a DeepSeek key; ESP-IDF is only required for
 build/flash/monitor tasks, and its install location is detected through
