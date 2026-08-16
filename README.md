@@ -137,28 +137,35 @@ One command covers both fresh machines and everyday startup:
 powershell -ExecutionPolicy Bypass -File start.ps1
 ```
 
-`start.ps1` detects the environment first and only prepares it when needed:
+On a fresh clone, `start.ps1` performs the **complete** initialization in one
+run: finds a Python 3.12 (offers a winget install when missing), creates the
+`.venv`, installs the package with dev extras (including pyserial), generates
+the gitignored `.env` (`DEEPSEEK_API_KEY`, project root, optional
+`LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), **writes
+`.venv\Scripts` into the user PATH automatically**, and detects an existing
+ESP-IDF. It then starts the gateway immediately.
 
-- a complete `.venv`, `LUXAR_PYTHON`, or any Python with luxar importable
-  (and `luxar` on PATH) is reused directly — **no setup runs when an
-  environment already exists**;
-- otherwise `scripts\setup.ps1` runs once: finds a Python 3.12 or offers a
-  winget install, creates the `.venv`, installs the package with dev extras,
-  generates the gitignored `.env` (`DEEPSEEK_API_KEY`, project root, optional
-  `LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), offers to add
-  `.venv\Scripts` to the user PATH, and detects an existing ESP-IDF;
-- the script then exposes ESP-IDF environment variables (when found) and
-  starts the gateway.
+After that single run, a **new terminal** can use the CLI directly:
 
-After that first run, `luxar` alone is enough (the CLI auto-loads `.env`).
-`luxar setup` re-runs the same preparation script, exiting immediately when
-the environment is already ready (use `scripts\setup.ps1 -Force` for a
-forced reinstall). `scripts\run-web.ps1` remains as a thin alias of
-`start.ps1`.
+```bat
+luxar                 :: start the gateway
+luxar run --project ... :: run a firmware task
+luxar ports           :: list serial ports
+luxar setup           :: re-check the environment (instant when ready)
+```
 
-Other developers only need a DeepSeek key; ESP-IDF is only required for
-build/flash/monitor tasks, and its install location is detected through
-`IDF_PATH`/`IDF_PYTHON_ENV_PATH` without hardcoding.
+When an environment already exists (complete `.venv`, `LUXAR_PYTHON`, or any
+Python with luxar importable), `start.ps1` skips setup entirely and starts the
+gateway right away. `scripts\setup.ps1` remains available standalone
+(`-Force` reinstall, `-NoPathEdit` skips the PATH write); `scripts\run-web.ps1`
+is a thin alias of `start.ps1`.
+
+Hardware note: build/flash/monitor tasks additionally need ESP-IDF; its
+install location is detected through `IDF_PATH`/`IDF_PYTHON_ENV_PATH`, and
+`start.ps1` exports those variables when found. A bare `luxar` started in a
+fresh terminal serves the Web UI regardless, but hardware tasks need the
+ESP-IDF environment variables present (use `start.ps1`, or activate your
+ESP-IDF environment first).
 
 ## Development environment
 

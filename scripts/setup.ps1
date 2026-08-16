@@ -1,8 +1,8 @@
 ﻿# LUXAR 一键环境准备(Windows PowerShell,零 Python 环境也可运行)
-# 用法: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 [-Force]
-# 环境已就绪时直接退出;加 -Force 强制重装依赖。
+# 用法: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 [-Force] [-NoPathEdit]
+# 环境已就绪时直接退出;加 -Force 强制重装依赖;-NoPathEdit 不修改用户 PATH。
 
-param([switch]$Force)
+param([switch]$Force, [switch]$NoPathEdit)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -88,15 +88,21 @@ LUXAR_PROJECTS_ROOT=$projects
     Write-Host '[4/4] .env 已存在,跳过'
 }
 
-# 5. 把 .venv\Scripts 写入用户 PATH,让新终端可以直接输入 luxar
-$venvScripts = Join-Path $root '.venv\Scripts'
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($userPath -notlike "*$venvScripts*") {
-    $answer = Read-Host '把 .venv\Scripts 加入用户 PATH,以后新终端可直接输入 luxar?(y/N)'
-    if ($answer -match '^[yY]') {
-        [Environment]::SetEnvironmentVariable('Path', "$userPath;$venvScripts", 'User')
+# 5. 把 .venv\Scripts 写入用户 PATH(自动执行;加 -NoPathEdit 可跳过)
+#    这是"拉取仓库 → 跑一次 start.ps1 → 以后新终端直接输入 luxar"的关键一步。
+if (-not $NoPathEdit) {
+    $venvScripts = Join-Path $root '.venv\Scripts'
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath -notlike "*$venvScripts*") {
+        [Environment]::SetEnvironmentVariable(
+            'Path',
+            "$($userPath.TrimEnd(';'));$venvScripts",
+            'User'
+        )
         $env:PATH = "$env:PATH;$venvScripts"
-        Write-Host '已写入用户 PATH(当前窗口已生效)。'
+        Write-Host '[5/6] 已把 .venv\Scripts 写入用户 PATH(新终端可直接输入 luxar)。'
+    } else {
+        Write-Host '[5/6] 用户 PATH 已包含 .venv\Scripts,跳过。'
     }
 }
 

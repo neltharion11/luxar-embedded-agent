@@ -53,13 +53,18 @@ if (-not $pythonCmd) {
     if (Get-Command luxar -ErrorAction SilentlyContinue) {
         $useConsole = $true
     } else {
-        Write-Host '首次运行:正在准备环境...' -ForegroundColor Cyan
+        Write-Host '首次运行:正在完成全部初始化(装 Python/依赖、生成 .env、写入 PATH)...' -ForegroundColor Cyan
         & powershell -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\setup.ps1')
         if ($LASTEXITCODE -ne 0) {
             Write-Host "环境准备失败(退出码 $LASTEXITCODE)。" -ForegroundColor Red
             exit $LASTEXITCODE
         }
+        # 让当前窗口立即能用 luxar;新窗口由 setup 写入的用户 PATH 保证。
+        $venvScripts = Split-Path -Parent $venvPython
+        $env:PATH = "$env:PATH;$venvScripts"
         $pythonCmd = $venvPython
+        Write-Host ''
+        Write-Host '初始化完成!以后打开新的终端窗口,直接输入 luxar 即可。' -ForegroundColor Green
     }
 }
 
