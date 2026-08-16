@@ -675,3 +675,75 @@ def test_approve_flag_requires_json_mode(tmp_path: Path) -> None:
     )
 
     assert result == 2
+
+
+def test_web_subcommand_forwards_to_serve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def fake_serve(**kwargs: object) -> int:
+        received.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("luxar.web.serve", fake_serve)
+
+    result = cli.main(
+        [
+            "web",
+            "--projects-root",
+            str(tmp_path),
+            "--serial-port",
+            "COM4",
+            "--target",
+            "esp32s3",
+            "--max-concurrent-workflows",
+            "4",
+        ]
+    )
+
+    assert result == 0
+    assert received == {
+        "projects_root": tmp_path,
+        "host": "127.0.0.1",
+        "port": 8000,
+        "serial_port": "COM4",
+        "target_chip": "esp32s3",
+        "max_concurrent_workflows": 4,
+    }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["web", "--projects-root", "x", "--serial-port", "COM0"],
+        ["web", "--projects-root", "x", "--serial-port", "COM4;rm"],
+        ["web", "--projects-root", "x", "--target", "ESP32"],
+        ["web", "--projects-root", "x", "--port", "0"],
+    ],
+)
+def test_web_subcommand_rejects_invalid_options(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as captured:
+        cli.build_parser().parse_args(argv)
+
+    assert captured.value.code == 2
+
+
+def test_setup_subcommand_runs_bundled_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_call(command: list[str]) -> int:
+        calls.append(command)
+        return 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+
+    result = cli.main(["setup"])
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0][0] == "powershell"
+    assert "setup.ps1" in calls[0][-1]

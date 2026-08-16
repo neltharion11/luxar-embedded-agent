@@ -1,52 +1,22 @@
-"""LUXAR 命令行入口：解析可信参数并调用现有 Bootstrap 与 Runner。"""
+"""LUXAR 命令行入口:统一子命令结构(run / ports / web / setup)。"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from luxar import arguments
 from luxar.application.results import exit_code_for_state, state_to_result
 from luxar.application.runner import WorkflowProgress, run_workflow
 from luxar.application.state import WorkflowState
 from luxar.bootstrap import build_deepseek_runtime_context, discover_serial_ports
 from luxar.domain.devices import ApprovalRequest
 from luxar.ports.espidf_errors import EspIdfError
-
-
-def _positive_integer(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("必须是正整数") from error
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("必须是正整数")
-    return parsed
-
-
-def _target_chip(value: str) -> str:
-    # 芯片名只接受小写标识符，杜绝任何命令选项注入。
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", value):
-        raise argparse.ArgumentTypeError(
-            "目标芯片必须是 esp32、esp32s3 之类的小写标识符"
-        )
-    return value
-
-
-def _serial_port(value: str) -> str:
-    # 与设备 Adapter 相同的平台模式，避免把任意设备路径传给 idf.py。
-    pattern = r"COM[1-9]\d*" if os.name == "nt" else r"/dev/tty(?:USB|ACM|S)\d+"
-    if not re.fullmatch(pattern, value):
-        raise argparse.ArgumentTypeError(
-            "串口名必须是 COM3 之类的合法串口名"
-        )
-    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,17 +30,17 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--task")
     run_parser.add_argument(
         "--target",
-        type=_target_chip,
+        type=arguments.target_chip,
         help="目标芯片，例如 esp32 或 esp32s3（创建任务时建议提供）",
     )
     run_parser.add_argument(
         "--port",
-        type=_serial_port,
+        type=arguments.serial_port,
         help="开发板串口，例如 COM3（烧录/监控任务必需）",
     )
     run_parser.add_argument(
         "--max-attempts",
-        type=_positive_integer,
+        type=arguments.positive_integer,
         default=3,
     )
     run_parser.add_argument(
@@ -83,7 +53,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON 模式下预授权本次运行的烧录操作",
     )
     run_parser.add_argument("--json", action="store_true")
+
     ports_parser = subcommands.add_parser("ports", help="列出可用串口设备")
+
+    web_parser = subcommands.add_parser("web", help="启动本地 Web 网关")
+    web_parser.add_argument("--projects-root", type=Path, required=True)
+    web_parser.add_argument("--host", default="127.0.0.1")
+    web_parser.add_argument(
+        "--port",
+        type=arguments.positive_integer,
+        default=8000,
+    )
+    web_parser.add_argument(
+        "--serial-port",
+        type=arguments.serial_port,
+        help="开发板串口，例如 COM4（烧录/监控任务需要）",
+    )
+    web_parser.add_argument(
+        "--target",
+        type=arguments.target_chip,
+        help="目标芯片，例如 esp32（创建任务建议提供）",
+    )
+    web_parser.add_argument(
+        "--max-concurrent-workflows",
+        type=arguments.positive_integer,
+        default=2,
+    )
+
+    setup_parser = subcommands.add_parser(
+        "setup",
+        help="一键准备开发环境（Windows PowerShell）",
+    )
     return parser
 
 
@@ -154,6 +154,41 @@ def _run_ports() -> int:
         if port.hardware_id:
             print(f"  {port.hardware_id}")
     return 0
+
+
+def _run_web(args: argparse.Namespace) -> int:
+    # 延迟导入:不启动网关的 CLI 命令无需加载 FastAPI。
+    from luxar.web import serve
+
+    return serve(
+        projects_root=args.projects_root,
+        host=args.host,
+        port=args.port,
+        serial_port=args.serial_port,
+        target_chip=args.target,
+        max_concurrent_workflows=args.max_concurrent_workflows,
+    )
+
+
+def _run_setup() -> int:
+    # 复用仓库自带的 PowerShell 准备脚本,保证与脚本方式行为一致。
+    import os
+    import subprocess
+
+    if os.name != "nt":
+        print("setup 目前仅支持 Windows PowerShell", file=sys.stderr)
+        return 2
+
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "setup.ps1"
+    )
+    if not script.is_file():
+        print("找不到 scripts/setup.ps1", file=sys.stderr)
+        return 2
+
+    return subprocess.call(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+    )
 
 
 def _format_human_result(state: WorkflowState) -> str:
@@ -227,6 +262,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "ports":
         return _run_ports()
+
+    if args.command == "web":
+        return _run_web(args)
+
+    if args.command == "setup":
+        return _run_setup()
 
     project: Path = args.project
 

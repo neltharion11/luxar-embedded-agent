@@ -1,4 +1,4 @@
-﻿# LUXAR 一键启动 Web 网关
+# LUXAR 一键启动 Web 网关
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\run-web.ps1
 # 可选参数: -Port 8000 -SerialPort COM4 -Target esp32(覆盖 .env)
 
@@ -95,4 +95,4 @@ if ($chip) { Write-Host "芯片     : $chip" } else { Write-Host '芯片     : (
 Write-Host "地址     : http://127.0.0.1:$webPort"
 Write-Host ''
 
-& $python -m luxar.web @args
+& $python -m luxar.cli web @args
