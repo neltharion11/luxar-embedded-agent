@@ -1,50 +1,101 @@
-"""LUXAR 命令行入口：解析可信参数并调用现有 Bootstrap 与 Runner。"""
+"""LUXAR 命令行入口:统一子命令结构(run / ports / web / setup)。
+
+不带子命令直接运行 `luxar` 等价于 `luxar web`,参数取自环境变量
+(LUXAR_PROJECTS_ROOT / LUXAR_SERIAL_PORT / LUXAR_TARGET_CHIP /
+LUXAR_WEB_PORT),未设置时使用仓库内 ./projects 等默认值。
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from luxar import arguments
 from luxar.application.results import exit_code_for_state, state_to_result
 from luxar.application.runner import WorkflowProgress, run_workflow
 from luxar.application.state import WorkflowState
-from luxar.bootstrap import build_deepseek_runtime_context
-
-
-def _positive_integer(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("必须是正整数") from error
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("必须是正整数")
-    return parsed
+from luxar.bootstrap import build_deepseek_runtime_context, discover_serial_ports
+from luxar.domain.devices import ApprovalRequest
+from luxar.ports.espidf_errors import EspIdfError
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="luxar",
-        description="运行 LUXAR ESP-IDF Agent 工作流",
+        description="运行 LUXAR ESP-IDF Agent 工作流(不带子命令时启动 Web 网关)",
     )
-    subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands = parser.add_subparsers(dest="command", required=False)
     run_parser = subcommands.add_parser("run", help="运行一个固件任务")
     run_parser.add_argument("--project", type=Path, required=True)
     run_parser.add_argument("--task")
     run_parser.add_argument(
+        "--target",
+        type=arguments.target_chip,
+        help="目标芯片，例如 esp32 或 esp32s3（创建任务时建议提供）",
+    )
+    run_parser.add_argument(
+        "--port",
+        type=arguments.serial_port,
+        help="开发板串口，例如 COM3（烧录/监控任务必需）",
+    )
+    run_parser.add_argument(
         "--max-attempts",
-        type=_positive_integer,
+        type=arguments.positive_integer,
         default=3,
     )
     run_parser.add_argument(
         "--allow-dependency-downloads",
         action="store_true",
     )
+    run_parser.add_argument(
+        "--approve-flash",
+        action="store_true",
+        help="JSON 模式下预授权本次运行的烧录操作",
+    )
     run_parser.add_argument("--json", action="store_true")
+
+    ports_parser = subcommands.add_parser("ports", help="列出可用串口设备")
+
+    web_parser = subcommands.add_parser("web", help="启动本地 Web 网关")
+    web_parser.add_argument(
+        "--projects-root",
+        type=Path,
+        action="append",
+        required=True,
+        help="项目根目录，可重复传入多个（页面可切换选择）",
+    )
+    web_parser.add_argument("--host", default="127.0.0.1")
+    web_parser.add_argument(
+        "--port",
+        type=arguments.positive_integer,
+        default=8000,
+    )
+    web_parser.add_argument(
+        "--serial-port",
+        type=arguments.serial_port,
+        help="开发板串口，例如 COM4（烧录/监控任务需要）",
+    )
+    web_parser.add_argument(
+        "--target",
+        type=arguments.target_chip,
+        help="目标芯片，例如 esp32（创建任务建议提供）",
+    )
+    web_parser.add_argument(
+        "--max-concurrent-workflows",
+        type=arguments.positive_integer,
+        default=2,
+    )
+
+    setup_parser = subcommands.add_parser(
+        "setup",
+        help="一键准备开发环境（Windows PowerShell）",
+    )
     return parser
 
 
@@ -53,6 +104,8 @@ def _report_progress(progress: WorkflowProgress) -> None:
         "requirement": "需求",
         "planning": "计划",
         "build": "构建",
+        "flash": "烧录",
+        "monitor": "监控",
         "repair": "修复",
         "clarification": "澄清",
         "completed": "完成",
@@ -74,6 +127,80 @@ def _state_to_json_envelope(state: WorkflowState) -> dict[str, object]:
     """保留 CLI 内部入口，避免 CLI 与 Web 各维护一份白名单。"""
 
     return state_to_result(state)
+
+
+def _print_approval_request(request: ApprovalRequest) -> None:
+    # 只展示审批请求里的受控字段。
+    print("—— 烧录审批 ——", file=sys.stderr)
+    print(f"项目：{request.project_name}", file=sys.stderr)
+    print(f"串口：{request.port}", file=sys.stderr)
+    if request.target_chip:
+        print(f"芯片：{request.target_chip}", file=sys.stderr)
+    print(f"说明：{request.summary}", file=sys.stderr)
+
+
+def _interactive_approval(request: ApprovalRequest) -> bool:
+    _print_approval_request(request)
+    try:
+        answer = input("批准烧录？(y/N)：").strip().casefold()
+    except EOFError:
+        return False
+    return answer in {"y", "yes", "是"}
+
+
+def _run_ports() -> int:
+    try:
+        ports = discover_serial_ports()
+    except EspIdfError as error:
+        print(error.message, file=sys.stderr)
+        return 1
+
+    if not ports:
+        print("未发现可用串口设备", file=sys.stderr)
+        return 0
+
+    for port in ports:
+        print(port.name)
+        if port.description:
+            print(f"  {port.description}")
+        if port.hardware_id:
+            print(f"  {port.hardware_id}")
+    return 0
+
+
+def _run_web(args: argparse.Namespace) -> int:
+    # 延迟导入:不启动网关的 CLI 命令无需加载 FastAPI。
+    from luxar.web import serve
+
+    return serve(
+        projects_roots=args.projects_root,
+        host=args.host,
+        port=args.port,
+        serial_port=args.serial_port,
+        target_chip=args.target,
+        max_concurrent_workflows=args.max_concurrent_workflows,
+    )
+
+
+def _run_setup() -> int:
+    # 复用仓库自带的 PowerShell 准备脚本,保证与脚本方式行为一致。
+    import os
+    import subprocess
+
+    if os.name != "nt":
+        print("setup 目前仅支持 Windows PowerShell", file=sys.stderr)
+        return 2
+
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "setup.ps1"
+    )
+    if not script.is_file():
+        print("找不到 scripts/setup.ps1", file=sys.stderr)
+        return 2
+
+    return subprocess.call(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+    )
 
 
 def _format_human_result(state: WorkflowState) -> str:
@@ -137,16 +264,114 @@ def _print_result(state: WorkflowState, json_mode: bool) -> None:
         print(_format_human_result(state))
 
 
+_JSON_APPROVAL_ERROR = (
+    "JSON 模式无法交互审批，请使用 --approve-flash 预授权或改用交互模式"
+)
+
+
+def _default_projects_roots() -> list[Path]:
+    # 多根目录用路径分隔符拼接(LUXAR_PROJECTS_ROOT=根1;根2)。
+    raw = os.environ.get("LUXAR_PROJECTS_ROOT")
+    if raw:
+        return [
+            Path(part.strip())
+            for part in raw.split(os.pathsep)
+            if part.strip()
+        ]
+
+    return [Path("projects")]
+
+
+def _default_web_port() -> int:
+    raw = os.environ.get("LUXAR_WEB_PORT", "8000")
+    try:
+        return arguments.positive_integer(raw)
+    except argparse.ArgumentTypeError:
+        return 8000
+
+
+def _load_env_file() -> None:
+    """把仓库 .env 的 KEY=VALUE 加载为环境变量(不覆盖已有值)。
+
+    依次检查当前目录与仓库根目录;真实环境变量优先级最高,
+    setup.ps1/run-web.ps1 先设置的值也不会被覆盖。
+    LUXAR_SKIP_DOTENV=1 时完全跳过(测试隔离用)。
+    """
+
+    if os.environ.get("LUXAR_SKIP_DOTENV"):
+        return
+
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    ]
+    seen: set[Path] = set()
+
+    for candidate in candidates:
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+
+        for line in candidate.read_text(
+            encoding="utf-8-sig"
+        ).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value.strip()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _load_env_file()
     args = build_parser().parse_args(argv)
+
+    if args.command is None:
+        # 裸 luxar = luxar web,配置来自环境变量或仓库默认值。
+        roots = _default_projects_roots()
+        for root in roots:
+            if not root.exists():
+                root.mkdir(parents=True, exist_ok=True)
+
+        args = argparse.Namespace(
+            command="web",
+            projects_root=roots,
+            host="127.0.0.1",
+            port=_default_web_port(),
+            serial_port=os.environ.get("LUXAR_SERIAL_PORT") or None,
+            target=os.environ.get("LUXAR_TARGET_CHIP") or None,
+            max_concurrent_workflows=2,
+        )
+
+    if args.command == "ports":
+        return _run_ports()
+
+    if args.command == "web":
+        return _run_web(args)
+
+    if args.command == "setup":
+        return _run_setup()
+
     project: Path = args.project
 
-    if not project.exists() or not project.is_dir():
-        print("项目路径不存在或不是目录", file=sys.stderr)
+    # 创建任务允许项目目录尚不存在，但父目录必须真实存在。
+    parent = project.parent
+    if not parent.exists() or not parent.is_dir():
+        print("项目父目录不存在或不是目录", file=sys.stderr)
+        return 2
+
+    if project.exists() and not project.is_dir():
+        print("项目路径已存在但不是目录", file=sys.stderr)
         return 2
 
     if args.json and args.task is None:
         print("JSON 模式必须提供 --task", file=sys.stderr)
+        return 2
+
+    if args.approve_flash and not args.json:
+        print("--approve-flash 只能与 --json 一起使用", file=sys.stderr)
         return 2
 
     try:
@@ -159,6 +384,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             context = build_deepseek_runtime_context(
                 project_path=project,
+                target_chip=args.target,
+                serial_port=args.port,
                 allow_dependency_downloads=args.allow_dependency_downloads,
             )
         except (ValidationError, ValueError):
@@ -171,14 +398,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_attempts=args.max_attempts,
             trace=[],
         )
-        result = run_workflow(
+        # 交互模式即时决策；JSON 模式显式预授权或让工作流暂停。
+        approval_handler: object | None = None
+        if not args.json:
+            approval_handler = _interactive_approval
+        elif args.approve_flash:
+            approval_handler = lambda request: True
+
+        run_result = run_workflow(
             initial_state=initial_state,
             context=context,
             progress_reporter=None if args.json else _report_progress,
+            approval_handler=approval_handler,  # type: ignore[arg-type]
         )
+        if run_result.pending_approval is not None:
+            # JSON 模式未预授权：工作流已在审批前暂停，只能终止。
+            print(_JSON_APPROVAL_ERROR, file=sys.stderr)
+            return 4
+
+        result = run_result.state
     except KeyboardInterrupt:
         print("操作已取消", file=sys.stderr)
         return 130
 
     _print_result(result, args.json)
     return _exit_code_for_state(result)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

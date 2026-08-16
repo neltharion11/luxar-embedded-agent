@@ -6,7 +6,9 @@ from luxar.adapters.deepseek.repair_planner import DeepSeekRepairPlanner
 from luxar.adapters.deepseek.requirement_parser import DeepSeekRequirementParser
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.adapters.espidf_cli import EspIdfCliAdapter
+from luxar.adapters.espidf_project import EspIdfProjectAdapter
 from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_workspace import FakeWorkspace
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
 from luxar.bootstrap import build_deepseek_runtime_context
@@ -103,3 +105,159 @@ def test_bootstrap_constructs_one_client_when_none_is_injected(
     assert context.requirement_parser._client is client
     assert context.planner._client is client
     assert context.repair_planner._client is client
+
+
+def test_bootstrap_injects_project_creator_and_target_chip() -> None:
+    creator = FakeProjectCreator([])
+    context = build_deepseek_runtime_context(
+        espidf=FakeEspIdf([]),
+        workspace=FakeWorkspace([]),
+        project_creator=creator,
+        target_chip="esp32s3",
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert context.project_creator is creator
+    assert context.target_chip == "esp32s3"
+
+
+def test_bootstrap_constructs_project_adapter_with_shared_launcher() -> None:
+    context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+        idf_command=("trusted-python", "trusted-idf.py"),
+    )
+
+    assert isinstance(context.project_creator, EspIdfProjectAdapter)
+    assert context.project_creator.idf_command == (
+        "trusted-python",
+        "trusted-idf.py",
+    )
+    assert context.target_chip is None
+
+
+def test_bootstrap_injects_flasher_serial_port_and_checkpointer() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from luxar.adapters.fake_flasher import FakeFlasher
+
+    flasher = FakeFlasher([])
+    checkpointer = InMemorySaver()
+    context = build_deepseek_runtime_context(
+        espidf=FakeEspIdf([]),
+        workspace=FakeWorkspace([]),
+        project_path=Path("firmware"),
+        flasher=flasher,
+        serial_port="COM3",
+        checkpointer=checkpointer,
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert context.flasher is flasher
+    assert context.serial_port == "COM3"
+    assert context.checkpointer is checkpointer
+
+
+def test_bootstrap_constructs_device_adapter_and_memory_checkpointer() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from luxar.adapters.espidf_device import EspIdfDeviceAdapter
+
+    context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert isinstance(context.flasher, EspIdfDeviceAdapter)
+    assert context.monitor is context.flasher
+    assert isinstance(context.checkpointer, InMemorySaver)
+    assert context.serial_port is None
+    assert context.monitor_timeout_seconds == 10
+
+
+def test_bootstrap_injects_monitor_analyst_and_window() -> None:
+    from luxar.adapters.deepseek.log_analyst import DeepSeekLogAnalyst
+    from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+    from luxar.adapters.fake_monitor import FakeMonitor
+
+    monitor = FakeMonitor([])
+    analyst = FakeLogAnalyst([])
+    context = build_deepseek_runtime_context(
+        espidf=FakeEspIdf([]),
+        workspace=FakeWorkspace([]),
+        project_path=Path("firmware"),
+        monitor=monitor,
+        log_analyst=analyst,
+        monitor_timeout_seconds=30,
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert context.monitor is monitor
+    assert context.log_analyst is analyst
+    assert context.monitor_timeout_seconds == 30
+    # 未注入分析师时默认使用修复级模型。
+    default_context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+    assert isinstance(default_context.log_analyst, DeepSeekLogAnalyst)
+    assert default_context.log_analyst._model == "deepseek-v4-pro"
+
+
+def test_discover_serial_ports_uses_default_device_adapter(
+    monkeypatch,
+) -> None:
+    from luxar.bootstrap import discover_serial_ports
+
+    class RecordingAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def discover_serial_ports(self):
+            self.calls += 1
+            return []
+
+    adapter = RecordingAdapter()
+    monkeypatch.setattr(
+        "luxar.bootstrap.EspIdfDeviceAdapter",
+        lambda **kwargs: adapter,
+    )
+
+    ports = discover_serial_ports()
+
+    assert ports == []
+    assert adapter.calls == 1
+
+
+def test_resolve_idf_command_prefers_known_install(monkeypatch) -> None:
+    from luxar.bootstrap import resolve_idf_command
+
+    monkeypatch.setenv("IDF_PATH", r"F:\esp\v6.0.2\esp-idf")
+    monkeypatch.setenv(
+        "IDF_PYTHON_ENV_PATH",
+        r"F:\Espressif\tools\python\v6.0.2\venv",
+    )
+
+    command = resolve_idf_command()
+
+    assert command[0].endswith("python.exe")
+    assert command[1].endswith("idf.py")
+
+
+def test_resolve_idf_command_falls_back_to_path(monkeypatch) -> None:
+    from luxar.bootstrap import resolve_idf_command
+
+    monkeypatch.delenv("IDF_PATH", raising=False)
+    monkeypatch.delenv("IDF_PYTHON_ENV_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda command: "C:/tools/idf.py")
+
+    command = resolve_idf_command()
+
+    assert command == ("idf.py",)

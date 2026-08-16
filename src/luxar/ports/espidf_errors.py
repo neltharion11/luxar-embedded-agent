@@ -10,6 +10,7 @@ EspIdfErrorCategory = Literal[
     "environment",
     "dependency",
     "process",
+    "serial",
 ]
 
 

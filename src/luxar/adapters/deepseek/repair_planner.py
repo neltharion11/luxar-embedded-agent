@@ -7,6 +7,7 @@ import json
 from pydantic import ValidationError
 
 from luxar.adapters.deepseek.client import JsonCompletionClient
+from luxar.domain.devices import DeviceDiagnosis
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan
 from luxar.domain.repairs import ProjectFile, RepairPlan
@@ -30,6 +31,7 @@ class DeepSeekRepairPlanner:
         plan: ExecutionPlan,
         evidence: BuildEvidence,
         files: list[ProjectFile],
+        device_diagnosis: DeviceDiagnosis | None = None,
     ) -> RepairPlan:
         repair_schema = RepairPlan.model_json_schema()
 
@@ -67,6 +69,12 @@ class DeepSeekRepairPlanner:
                 for project_file in files
             ],
         }
+
+        # 设备回路修复时附带日志诊断，构建修复时省略该字段。
+        if device_diagnosis is not None:
+            repair_context["device_diagnosis"] = (
+                device_diagnosis.model_dump(mode="json")
+            )
 
         user_prompt = json.dumps(
             repair_context,

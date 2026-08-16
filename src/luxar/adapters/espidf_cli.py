@@ -1,30 +1,42 @@
-"""ESP-IDF CLI 适配器：在执行真实构建前验证项目、命令与依赖授权。"""
+"""ESP-IDF CLI 适配器：在执行真实构建前验证项目、命令与依赖授权。
+
+共享的启动器校验、链接检查与输出脱敏已提取到 espidf_common.py，
+本模块保留构建特有的清单预检、失败分类和诊断解析。
+"""
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
+import shutil  # 保留导入：测试通过本模块路径 monkeypatch shutil.which
 import subprocess
 from pathlib import Path, PureWindowsPath
 from typing import Literal, Sequence, TypeAlias
 
 import yaml
 
+from luxar.adapters.espidf_common import (
+    _coerce_timeout_output,
+    _is_excluded_directory_name,
+    _is_link_or_junction,
+    _sanitize_output,
+    _strip_ansi,
+    build_safe_idf_environment,
+    validate_espidf_launcher,
+    validate_idf_command_tokens,
+)
 from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
 from luxar.ports.espidf_errors import EspIdfError
 
+# 兼容再导出：既有测试从本模块导入脱敏辅助函数。
+__all__ = [
+    "EspIdfCliAdapter",
+    "_sanitize_output",
+    "_strip_ansi",
+    "_is_excluded_directory_name",
+    "_is_link_or_junction",
+    "_coerce_timeout_output",
+]
 
-_EXCLUDED_EXACT_DIRECTORIES = frozenset(
-    {
-        ".git",
-        ".vscode",
-        ".idea",
-        "build",
-        "managed_components",
-        "__pycache__",
-    }
-)
 
 BuildErrorCategory: TypeAlias = Literal[
     "dependency",
@@ -34,9 +46,6 @@ BuildErrorCategory: TypeAlias = Literal[
     "unknown",
 ]
 
-_ANSI_ESCAPE_RE = re.compile(
-    r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"
-)
 _GCC_DIAGNOSTIC_RE = re.compile(
     r"^(?P<file>.+?):(?P<line>\d+):"
     r"(?:(?P<column>\d+):)?\s*"
@@ -46,12 +55,6 @@ _GCC_DIAGNOSTIC_RE = re.compile(
 _CMAKE_DIAGNOSTIC_RE = re.compile(
     r"^CMake Error at (?P<file>.+?):(?P<line>\d+)"
     r"(?:\s+\([^)]+\))?:\s*$"
-)
-_WINDOWS_ABSOLUTE_PATH_RE = re.compile(
-    r"(?i)(?<![\w])([A-Z]:[\\/][^\s:]+(?:[\\/][^\s:]+)*)"
-)
-_POSIX_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![\w.])(/(?:[^\s:]+/)*[^\s:]+)"
 )
 
 _DEPENDENCY_SIGNALS = (
@@ -76,25 +79,6 @@ _LINKER_SIGNALS = (
     "ld returned",
     "collect2: error",
 )
-
-
-def _is_excluded_directory_name(name: str) -> bool:
-    return (
-        name.startswith(".")
-        or name in _EXCLUDED_EXACT_DIRECTORIES
-        or name.startswith("build_")
-    )
-
-
-def _is_link_or_junction(path: Path) -> bool:
-    try:
-        return path.is_symlink() or path.is_junction()
-    except OSError as error:
-        raise EspIdfError(
-            category="invalid_project",
-            message="ESP-IDF 项目路径无效",
-            retryable=False,
-        ) from error
 
 
 def _resolve_project_root(project_path: Path) -> Path:
@@ -213,18 +197,6 @@ def _logical_command(action: str) -> list[str]:
     return ["idf.py", action]
 
 
-def _coerce_timeout_output(output: str | bytes | None) -> str:
-    if output is None:
-        return ""
-    if isinstance(output, bytes):
-        return output.decode("utf-8", errors="replace")
-    return output
-
-
-def _strip_ansi(text: str) -> str:
-    return _ANSI_ESCAPE_RE.sub("", text)
-
-
 def _path_inside_project(raw_path: str, root: Path) -> str | None:
     normalized = raw_path.strip().strip('"')
     root_text = str(root.resolve())
@@ -252,32 +224,6 @@ def _path_inside_project(raw_path: str, root: Path) -> str | None:
     if ".." in parts:
         return None
     return candidate.as_posix().lstrip("./") or None
-
-
-def _sanitize_output(text: str, root: Path, max_chars: int) -> str:
-    cleaned = _strip_ansi(text).replace("\r\n", "\n").replace("\r", "\n")
-    root_text = str(root.resolve())
-    root_variants = {
-        root_text,
-        root_text.replace("\\", "/"),
-        root_text.replace("/", "\\"),
-    }
-
-    for variant in sorted(root_variants, key=len, reverse=True):
-        cleaned = re.sub(
-            re.escape(variant) + r"[\\/]?",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-
-    cleaned = cleaned.replace("\\", "/")
-    cleaned = _WINDOWS_ABSOLUTE_PATH_RE.sub("<external-path>", cleaned)
-    cleaned = _POSIX_ABSOLUTE_PATH_RE.sub("<external-path>", cleaned)
-
-    if len(cleaned) <= max_chars:
-        return cleaned
-    return cleaned[:max_chars]
 
 
 def _classify_failure(
@@ -369,13 +315,7 @@ class EspIdfCliAdapter:
         max_manifest_bytes: int = 256 * 1024,
         max_manifest_total_bytes: int = 1024 * 1024,
     ) -> None:
-        command = tuple(idf_command)
-
-        if not command or any(
-            not isinstance(token, str) or not token.strip()
-            for token in command
-        ):
-            raise ValueError("idf_command must contain non-empty strings")
+        command = validate_idf_command_tokens(idf_command)
 
         if not isinstance(allow_dependency_downloads, bool):
             raise ValueError("allow_dependency_downloads must be a boolean")
@@ -405,30 +345,8 @@ class EspIdfCliAdapter:
         self.max_manifest_total_bytes = max_manifest_total_bytes
 
     def _validate_command(self) -> None:
-        launcher = Path(self.idf_command[0])
-
-        if launcher.is_absolute():
-            if not launcher.is_file():
-                raise EspIdfError(
-                    category="environment",
-                    message="ESP-IDF 命令不可用",
-                    retryable=False,
-                )
-        elif shutil.which(self.idf_command[0]) is None:
-            raise EspIdfError(
-                category="environment",
-                message="ESP-IDF 命令不可用",
-                retryable=False,
-            )
-
-        for token in self.idf_command[1:]:
-            configured_path = Path(token)
-            if configured_path.is_absolute() and not configured_path.is_file():
-                raise EspIdfError(
-                    category="environment",
-                    message="ESP-IDF 命令不可用",
-                    retryable=False,
-                )
+        # 委托给共享校验器，保证三个硬件 Adapter 使用完全相同的规则。
+        validate_espidf_launcher(self.idf_command)
 
     def _read_manifest(self, manifest: Path) -> tuple[object, int]:
         try:
@@ -513,14 +431,9 @@ class EspIdfCliAdapter:
                 retryable=False,
             )
 
-        environment = os.environ.copy()
-        environment["IDF_COMPONENT_NO_COLORS"] = "1"
-        environment["IDF_COMPONENT_NO_HINTS"] = "1"
-
-        if self.allow_dependency_downloads:
-            environment.pop("IDF_COMPONENT_MANAGER", None)
-        else:
-            environment["IDF_COMPONENT_MANAGER"] = "0"
+        environment = build_safe_idf_environment(
+            self.allow_dependency_downloads,
+        )
 
         return root, environment
 

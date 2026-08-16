@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from luxar.domain.devices import DeviceDiagnosis
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan
 from luxar.domain.repairs import ProjectFile, RepairPlan
@@ -18,5 +19,7 @@ class RepairPlanner(Protocol):
         plan: ExecutionPlan,
         evidence: BuildEvidence,
         files: list[ProjectFile],
+        # S4：设备回路修复附带日志诊断；构建失败修复传 None。
+        device_diagnosis: DeviceDiagnosis | None = None,
     ) -> RepairPlan:
         ...

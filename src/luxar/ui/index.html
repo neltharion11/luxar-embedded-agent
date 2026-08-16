@@ -283,6 +283,21 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
   <div id="chat-input-area">
       <div style="flex:1;display:flex;flex-direction:column;gap:6px">
       <div id="chat-attachments" style="display:none;gap:4px;flex-wrap:wrap;margin-bottom:2px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="serial-port-select" title="选择串口" style="flex:0 0 auto;padding:6px 10px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;font-size:12px;max-width:220px">
+          <option value="">串口:未选择</option>
+        </select>
+        <button type="button" onclick="loadSerialPorts()" title="刷新串口列表" style="flex:0 0 auto;padding:6px 10px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;cursor:pointer;font-size:12px">🔄</button>
+        <select id="chip-select" title="选择目标芯片" style="flex:0 0 auto;padding:6px 10px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;font-size:12px">
+          <option value="">芯片:自动</option>
+          <option value="esp32">esp32</option>
+          <option value="esp32s3">esp32s3</option>
+          <option value="esp32s2">esp32s2</option>
+          <option value="esp32c3">esp32c3</option>
+          <option value="esp32c6">esp32c6</option>
+          <option value="esp32h2">esp32h2</option>
+        </select>
+      </div>
       <div style="display:flex;gap:8px;align-items:flex-end">
         <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.inputPlaceholder" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" oninput="autoResize(this)" onkeydown="return handleChatKey(event)"></textarea>
         <button type="button" class="chat-attach-btn" onclick="pickChatDocuments()" title="Attach files">📎</button>
@@ -722,6 +737,7 @@ en['modelConfig.loaded']='Config loaded';
 
 let currentLang = localStorage.getItem('luxar-lang') || 'zh';
 let selectedProject = null;
+let selectedRootIndex = 0;
 let driverSearchTimeout = null;
 let projectModalMode = 'create';
 let newProjectTab = 'manual';
@@ -860,6 +876,56 @@ function escapeHtml(s) {
   var d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function renderApprovalCard(bubbleDiv, request, project) {
+  // S5 新增：烧录审批卡。只展示后端白名单字段,决定回传审批端点。
+  request = request || {};
+  var chip = escapeHtml(String(request.target_chip || ''));
+  var rows = [
+    '<div style="font-weight:600;margin-bottom:6px;">🔏 烧录审批</div>',
+    '<div>项目：' + escapeHtml(String(request.project_name || '')) + '</div>',
+    '<div>串口：' + escapeHtml(String(request.port || '')) + '</div>'
+  ];
+  if (chip) rows.push('<div>芯片：' + chip + '</div>');
+  rows.push('<div>说明：' + escapeHtml(String(request.summary || '')) + '</div>');
+
+  var card = document.createElement('div');
+  card.className = 'approval-card';
+  card.style.cssText = 'margin:8px 0;padding:10px 12px;border:1px solid #e0b84c;border-radius:8px;background:#fff8e8;';
+  card.innerHTML =
+    rows.join('') +
+    '<div style="margin-top:8px;display:flex;gap:8px;">' +
+    '<button class="approval-approve-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#2e7d32;color:#fff;cursor:pointer;">批准烧录</button>' +
+    '<button class="approval-reject-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#c62828;color:#fff;cursor:pointer;">拒绝</button>' +
+    '</div>';
+  bubbleDiv.appendChild(card);
+
+  var approveBtn = card.querySelector('.approval-approve-btn');
+  var rejectBtn = card.querySelector('.approval-reject-btn');
+  var decided = false;
+  function decide(decision) {
+    if (decided) return;
+    decided = true;
+    approveBtn.disabled = true;
+    rejectBtn.disabled = true;
+    fetch('/api/conversations/' + encodeURIComponent(project) + '/approval', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({decision: decision, root_index: selectedRootIndex})
+    }).then(function (res) {
+      if (!res.ok) {
+        card.innerHTML = '<div style="color:#c62828;">审批请求失败 (' + escapeHtml(String(res.status)) + ')</div>';
+        return;
+      }
+      card.innerHTML = '<div style="color:#2e7d32;font-weight:600;">已' +
+        (decision === 'approve' ? '批准' : '拒绝') + '烧录,工作流继续执行…</div>';
+    }).catch(function () {
+      card.innerHTML = '<div style="color:#c62828;">审批请求失败</div>';
+    });
+  }
+  approveBtn.addEventListener('click', function () { decide('approve'); });
+  rejectBtn.addEventListener('click', function () { decide('reject'); });
 }
 
 function getTaskArtifact(taskResult, key) {
@@ -1170,13 +1236,25 @@ async function loadSidebarProjects() {
   var container = document.getElementById('sidebar-projects');
   try {
     var data = await apiGet('/api/workspace/projects');
+    var roots = data.roots || [];
     var projs = data.projects || [];
     projectMetaByName = {};
     projs.forEach(function(p) { if (p && p.name) projectMetaByName[p.name] = p; });
+    if (selectedRootIndex >= roots.length) selectedRootIndex = 0;
+
     var html = '';
-    if (projs.length) {
+    if (roots.length > 1) {
+      html += '<select id="sidebar-root-select" style="width:100%;margin:4px 0 6px;padding:6px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;font-size:12px" onchange="onRootChange(this.value)">' +
+        roots.map(function(r) {
+          return '<option value="' + r.index + '"' + (r.index === selectedRootIndex ? ' selected' : '') + '>' + escapeHtml(r.label) + '</option>';
+        }).join('') +
+        '</select>';
+    }
+
+    var visible = projs.filter(function(p) { return p.root_index === selectedRootIndex; });
+    if (visible.length) {
       html += '<div class="sidebar-section-label" style="padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px">' + t('sidebar.projects') + '</div>';
-      html += projs.map(function(p) {
+      html += visible.map(function(p) {
         var name = p.name.replace(/'/g, "\\'");
         var activeClass = selectedProject === p.name ? ' active' : '';
         return '<div class="sidebar-project' + activeClass + '" onclick="selectProject(\'' + name + '\')">' +
@@ -1189,6 +1267,40 @@ async function loadSidebarProjects() {
     container.innerHTML = html;
   } catch(e) {
     container.innerHTML = '<div class="empty-state">' + t('sidebar.noProjects') + '</div>';
+  }
+}
+
+function onRootChange(value) {
+  selectedRootIndex = parseInt(value, 10) || 0;
+  selectedProject = null;
+  updateChatHeader();
+  loadChatWelcome();
+  loadSidebarProjects();
+}
+
+async function loadSerialPorts() {
+  var select = document.getElementById('serial-port-select');
+  if (!select) return;
+  var previous = select.value;
+  select.innerHTML = '<option value="">串口:未选择</option>';
+  try {
+    var data = await apiGet('/api/devices/ports');
+    var ports = data.ports || [];
+    ports.forEach(function(p) {
+      var label = p.description ? (p.name + ' - ' + p.description) : p.name;
+      var option = document.createElement('option');
+      option.value = p.name;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    if (previous && ports.some(function(p) { return p.name === previous; })) {
+      select.value = previous;
+    }
+  } catch(e) {
+    var failed = document.createElement('option');
+    failed.value = '';
+    failed.textContent = '串口:发现失败';
+    select.appendChild(failed);
   }
 }
 
@@ -1422,7 +1534,7 @@ var res = await fetch('/api/conversations/' + encodeURIComponent(targetProject) 
 async function clearConversation() {
   var project = selectedProject || '__global__';
   try {
-    await fetch('/api/conversations/' + encodeURIComponent(project) + '/reset', { method: 'POST' });
+    await fetch('/api/conversations/' + encodeURIComponent(project) + '/reset?root_index=' + selectedRootIndex, { method: 'POST' });
   } catch(e) {}
   var container = document.getElementById('chat-messages');
   if (!selectedProject) {
@@ -1436,7 +1548,7 @@ async function loadConversation(project) {
   var container = document.getElementById('chat-messages');
   container.innerHTML = '<div class="empty-state">' + t('sidebar.loading') + '</div>';
   try {
-    var data = await apiGet('/api/conversations/' + encodeURIComponent(project));
+    var data = await apiGet('/api/conversations/' + encodeURIComponent(project) + '?root_index=' + selectedRootIndex);
     var msgs = data.messages || [];
     container.innerHTML = '';
     if (!msgs.length) {
@@ -1587,6 +1699,8 @@ async function sendMessage() {
   abortController = new AbortController();
   try {
     var project = selectedProject || '__global__';
+    var portSelect = document.getElementById('serial-port-select');
+    var chipSelect = document.getElementById('chip-select');
     var res = await fetch('/api/conversations/' + encodeURIComponent(project), {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
@@ -1594,7 +1708,10 @@ async function sendMessage() {
         message: text,
         stream: true,
         max_attempts: 3,
-        allow_dependency_downloads: false
+        allow_dependency_downloads: false,
+        root_index: selectedRootIndex,
+        serial_port: (portSelect && portSelect.value) ? portSelect.value : null,
+        target_chip: (chipSelect && chipSelect.value) ? chipSelect.value : null
       }),
       signal: abortController.signal
     });
@@ -1644,6 +1761,11 @@ async function sendMessage() {
             try {
               var progressChunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: progressChunk.message || progressChunk.stage || ''});
+            } catch(e) {}
+          } else if (currentEvent === 'approval') {
+            try {
+              var approvalData = JSON.parse(dataStr);
+              renderApprovalCard(bubbleDiv, approvalData.request || {}, project);
             } catch(e) {}
           } else if (currentEvent === 'token') {
             try {
@@ -2161,6 +2283,7 @@ if (landingTitle) landingTitle.textContent = 'LUXAR LangGraph';
 if (landingDescription) landingDescription.textContent = '请从左侧选择一个已有的 ESP-IDF 项目，然后输入固件任务。';
 loadSidebarProjects();
 loadDashboard();
+loadSerialPorts();
 
   // ── Hardware Status Polling ──
 

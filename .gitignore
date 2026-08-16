@@ -9,4 +9,9 @@ build/
 dist/
 *.egg-info/
 .env
+.venv/
+.site-tools/
+.tmp/
+pip-install*.log
+projects/
 
