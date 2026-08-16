@@ -1,6 +1,6 @@
-﻿# LUXAR 一键环境准备(Windows PowerShell)
+﻿# LUXAR 一键环境准备(Windows PowerShell,零 Python 环境也可运行)
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
-# 步骤: 定位 Python 3.12 → 创建 .venv → 安装依赖 → 生成 .env → 检测 ESP-IDF
+# 步骤: 定位/安装 Python 3.12 → 创建 .venv → 安装依赖 → 生成 .env → 检测 ESP-IDF
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -22,6 +22,17 @@ function Find-Python {
 }
 
 $python = Find-Python
+if (-not $python) {
+    Write-Host '未检测到 Python 3.12。' -ForegroundColor Yellow
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        $answer = Read-Host '是否用 winget 自动安装 Python 3.12?(y/N)'
+        if ($answer -match '^[yY]') {
+            winget install --id Python.Python.3.12 -e --silent --accept-package-agreements --accept-source-agreements
+            $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+            $python = Find-Python
+        }
+    }
+}
 if (-not $python) {
     Write-Error '未找到 Python 3.12。请从 https://www.python.org/downloads/ 安装后重试。'
     exit 1
@@ -51,7 +62,7 @@ if (-not (Test-Path $envFile)) {
 # LUXAR 本地配置(gitignore,不会提交)
 DEEPSEEK_API_KEY=$key
 LUXAR_PROJECTS_ROOT=$projects
-# 可选: 开发板串口与芯片,填了 run-web 就默认带上
+# 可选: 开发板串口与芯片
 # LUXAR_SERIAL_PORT=COM4
 # LUXAR_TARGET_CHIP=esp32
 # 可选: Web 端口
@@ -62,7 +73,19 @@ LUXAR_PROJECTS_ROOT=$projects
     Write-Host '[4/4] .env 已存在,跳过'
 }
 
-# 5. 检测 ESP-IDF
+# 5. 把 .venv\Scripts 写入用户 PATH,让新终端可以直接输入 luxar
+$venvScripts = Join-Path $root '.venv\Scripts'
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -notlike "*$venvScripts*") {
+    $answer = Read-Host '把 .venv\Scripts 加入用户 PATH,以后新终端可直接输入 luxar?(y/N)'
+    if ($answer -match '^[yY]') {
+        [Environment]::SetEnvironmentVariable('Path', "$userPath;$venvScripts", 'User')
+        $env:PATH = "$env:PATH;$venvScripts"
+        Write-Host '已写入用户 PATH(当前窗口已生效)。'
+    }
+}
+
+# 6. 检测 ESP-IDF
 $idfPath = $env:IDF_PATH
 if (-not $idfPath -and (Test-Path 'F:\esp\v6.0.2\esp-idf')) {
     $idfPath = 'F:\esp\v6.0.2\esp-idf'
@@ -75,5 +98,6 @@ if ($idfPath -and (Test-Path (Join-Path $idfPath 'tools\idf.py'))) {
 }
 
 Write-Host ''
-Write-Host '准备完成!以后启动只需一条命令:' -ForegroundColor Green
+Write-Host '准备完成!启动网关:' -ForegroundColor Green
+Write-Host '  新终端直接输入 luxar,或'
 Write-Host "  powershell -ExecutionPolicy Bypass -File scripts\run-web.ps1"

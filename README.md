@@ -131,25 +131,35 @@ back to `./projects` and port 8000.
 
 ## Zero-config startup for new machines
 
-Two commands make the gateway work after a plain clone (no manual environment
-setup):
+For a machine with nothing installed, the single entry point is the
+repository-root PowerShell script (no Python required up front):
 
 ```bat
-luxar setup   :: one time: venv + deps + .env (Windows PowerShell)
-luxar web     :: every time: start the gateway
+powershell -ExecutionPolicy Bypass -File start.ps1
 ```
 
-`luxar setup` runs the bundled `scripts/setup.ps1`: it locates a Python 3.12,
-creates a project-local `.venv`, installs the package with dev extras,
-generates a gitignored `.env` (`DEEPSEEK_API_KEY`, project root, optional
-`LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), and detects an
-existing ESP-IDF. `scripts/run-web.ps1` remains available as a zero-config
-wrapper that loads `.env` and exposes ESP-IDF environment variables before
-invoking `luxar web`.
+`start.ps1` chains the two bundled scripts:
 
-Other developers only need Python 3.12 and a DeepSeek key; ESP-IDF is only
-required for build/flash/monitor tasks, and its install location is detected
-through `IDF_PATH`/`IDF_PYTHON_ENV_PATH` without hardcoding.
+- `scripts\setup.ps1` (one time): finds a Python 3.12 or offers to install it
+  via winget, creates a project-local `.venv`, installs the package with dev
+  extras, generates a gitignored `.env` (`DEEPSEEK_API_KEY`, project root,
+  optional `LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), offers
+  to add `.venv\Scripts` to the user PATH so plain `luxar` works, and detects
+  an existing ESP-IDF;
+- `scripts\run-web.ps1` (every time): loads `.env`, resolves the venv python,
+  exposes ESP-IDF environment variables, and starts the gateway.
+
+After the one-time setup, `luxar` alone starts the gateway (the CLI
+auto-loads `.env` from the working directory or the repository root).
+
+`luxar setup` performs the same one-time preparation, but it is itself a
+Python command: it requires an existing environment with luxar installed, so
+machines starting from scratch must begin with `start.ps1` (or the bare
+`scripts\setup.ps1`).
+
+Other developers only need a DeepSeek key; ESP-IDF is only required for
+build/flash/monitor tasks, and its install location is detected through
+`IDF_PATH`/`IDF_PYTHON_ENV_PATH` without hardcoding.
 
 ## Development environment
 

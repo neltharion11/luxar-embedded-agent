@@ -1,4 +1,4 @@
-# LUXAR 一键启动 Web 网关
+﻿# LUXAR 一键启动 Web 网关
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\run-web.ps1
 # 可选参数: -Port 8000 -SerialPort COM4 -Target esp32(覆盖 .env)
 
