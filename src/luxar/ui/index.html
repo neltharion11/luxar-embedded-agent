@@ -862,6 +862,56 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function renderApprovalCard(bubbleDiv, request, project) {
+  // S5 新增：烧录审批卡。只展示后端白名单字段,决定回传审批端点。
+  request = request || {};
+  var chip = escapeHtml(String(request.target_chip || ''));
+  var rows = [
+    '<div style="font-weight:600;margin-bottom:6px;">🔏 烧录审批</div>',
+    '<div>项目：' + escapeHtml(String(request.project_name || '')) + '</div>',
+    '<div>串口：' + escapeHtml(String(request.port || '')) + '</div>'
+  ];
+  if (chip) rows.push('<div>芯片：' + chip + '</div>');
+  rows.push('<div>说明：' + escapeHtml(String(request.summary || '')) + '</div>');
+
+  var card = document.createElement('div');
+  card.className = 'approval-card';
+  card.style.cssText = 'margin:8px 0;padding:10px 12px;border:1px solid #e0b84c;border-radius:8px;background:#fff8e8;';
+  card.innerHTML =
+    rows.join('') +
+    '<div style="margin-top:8px;display:flex;gap:8px;">' +
+    '<button class="approval-approve-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#2e7d32;color:#fff;cursor:pointer;">批准烧录</button>' +
+    '<button class="approval-reject-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#c62828;color:#fff;cursor:pointer;">拒绝</button>' +
+    '</div>';
+  bubbleDiv.appendChild(card);
+
+  var approveBtn = card.querySelector('.approval-approve-btn');
+  var rejectBtn = card.querySelector('.approval-reject-btn');
+  var decided = false;
+  function decide(decision) {
+    if (decided) return;
+    decided = true;
+    approveBtn.disabled = true;
+    rejectBtn.disabled = true;
+    fetch('/api/conversations/' + encodeURIComponent(project) + '/approval', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({decision: decision})
+    }).then(function (res) {
+      if (!res.ok) {
+        card.innerHTML = '<div style="color:#c62828;">审批请求失败 (' + escapeHtml(String(res.status)) + ')</div>';
+        return;
+      }
+      card.innerHTML = '<div style="color:#2e7d32;font-weight:600;">已' +
+        (decision === 'approve' ? '批准' : '拒绝') + '烧录,工作流继续执行…</div>';
+    }).catch(function () {
+      card.innerHTML = '<div style="color:#c62828;">审批请求失败</div>';
+    });
+  }
+  approveBtn.addEventListener('click', function () { decide('approve'); });
+  rejectBtn.addEventListener('click', function () { decide('reject'); });
+}
+
 function getTaskArtifact(taskResult, key) {
   if (!taskResult || typeof taskResult !== 'object') return {};
   if (taskResult.artifacts && typeof taskResult.artifacts === 'object' && taskResult.artifacts[key]) {
@@ -1644,6 +1694,11 @@ async function sendMessage() {
             try {
               var progressChunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: progressChunk.message || progressChunk.stage || ''});
+            } catch(e) {}
+          } else if (currentEvent === 'approval') {
+            try {
+              var approvalData = JSON.parse(dataStr);
+              renderApprovalCard(bubbleDiv, approvalData.request || {}, project);
             } catch(e) {}
           } else if (currentEvent === 'token') {
             try {

@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from luxar.application.runner import WorkflowProgress, WorkflowRunResult
@@ -137,6 +138,8 @@ def test_sse_runs_shared_application_and_emits_allowlisted_result(
     assert received["bootstrap"] == {
         "project_path": project.resolve(),
         "allow_dependency_downloads": True,
+        "serial_port": None,
+        "target_chip": None,
     }
     runner = received["runner"]
     assert isinstance(runner, dict)
@@ -460,3 +463,49 @@ def test_web_approval_endpoint_rejects_invalid_decisions(
             json=payload,
         )
         assert response.status_code == 422
+
+
+def test_create_app_passes_server_side_serial_and_target_to_bootstrap(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    received: dict[str, object] = {}
+
+    def fake_bootstrap(**kwargs: object) -> object:
+        received.update(kwargs)
+        return object()
+
+    app = create_app(
+        projects_root=tmp_path,
+        bootstrap_factory=fake_bootstrap,  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(
+            WorkflowState(status="completed", trace=[])
+        ),
+        serial_port="COM4",
+        target_chip="esp32s3",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/conversations/blink",
+        json={"message": "flash"},
+    )
+
+    assert response.status_code == 200
+    assert received["serial_port"] == "COM4"
+    assert received["target_chip"] == "esp32s3"
+
+
+def test_web_parser_rejects_invalid_serial_port_and_target(
+    tmp_path: Path,
+) -> None:
+    from luxar.web import build_parser
+
+    for args in [
+        ["--projects-root", str(tmp_path), "--serial-port", "COM0"],
+        ["--projects-root", str(tmp_path), "--serial-port", "COM4;rm"],
+        ["--projects-root", str(tmp_path), "--target", "ESP32"],
+    ]:
+        with pytest.raises(SystemExit) as captured:
+            build_parser().parse_args(args)
+        assert captured.value.code == 2

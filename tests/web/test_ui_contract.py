@@ -20,6 +20,19 @@ def test_migrated_ui_uses_new_workflow_contract() -> None:
     assert "docs: docs" not in source
 
 
+def test_migrated_ui_supports_flash_approval_flow() -> None:
+    source = ui_source()
+
+    # SSE 审批事件 + 审批卡片 + 批准/拒绝端点调用。
+    assert "currentEvent === 'approval'" in source
+    assert "renderApprovalCard" in source
+    assert "批准烧录" in source
+    assert "'/api/conversations/' + encodeURIComponent(project) + '/approval'" in source
+    assert "decide('approve')" in source
+    assert "decide('reject')" in source
+    assert "JSON.stringify({decision: decision})" in source
+
+
 def test_migrated_ui_enabled_startup_calls_only_supported_endpoints() -> None:
     source = ui_source()
 

@@ -95,6 +95,39 @@ pre-authorize flashing. Dependency downloads are forbidden unless
 `--allow-dependency-downloads` is explicitly supplied. Model secrets remain
 environment-backed and never appear as CLI arguments.
 
+## Web gateway
+
+```bat
+luxar-web --projects-root F:\LUXAR\projects --serial-port COM4 --target esp32
+```
+
+The browser only submits the task text; the serial port and target chip are
+server-side configuration. Flash approvals surface as an in-page approval card
+(`批准烧录` / `拒绝`) backed by `POST /api/conversations/{project}/approval`.
+
+## Zero-config startup for new machines
+
+Two scripts make the gateway work after a plain clone (no manual environment
+setup):
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1   :: one time: venv + deps + .env
+powershell -ExecutionPolicy Bypass -File scripts\run-web.ps1 :: every time: start the gateway
+```
+
+`setup.ps1` locates a Python 3.12, creates a project-local `.venv`, installs
+the package with dev extras, generates a gitignored `.env`
+(`DEEPSEEK_API_KEY`, project root, optional `LUXAR_SERIAL_PORT`,
+`LUXAR_TARGET_CHIP`, `LUXAR_WEB_PORT`), and detects an existing ESP-IDF.
+`run-web.ps1` loads `.env`, picks a complete venv or `LUXAR_PYTHON`, exposes
+ESP-IDF environment variables when `IDF_PATH` is found (so the bootstrap can
+resolve a real `idf.py` launcher even when it is only registered as a shell
+function), creates the projects root, and starts the gateway.
+
+Other developers only need Python 3.12 and a DeepSeek key; ESP-IDF is only
+required for build/flash/monitor tasks, and its install location is detected
+through `IDF_PATH`/`IDF_PYTHON_ENV_PATH` without hardcoding.
+
 ## Development environment
 
 ```bat

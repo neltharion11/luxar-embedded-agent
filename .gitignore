@@ -13,4 +13,5 @@ dist/
 .site-tools/
 .tmp/
 pip-install*.log
+projects/
 

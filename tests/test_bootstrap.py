@@ -234,3 +234,30 @@ def test_discover_serial_ports_uses_default_device_adapter(
 
     assert ports == []
     assert adapter.calls == 1
+
+
+def test_resolve_idf_command_prefers_known_install(monkeypatch) -> None:
+    from luxar.bootstrap import resolve_idf_command
+
+    monkeypatch.setenv("IDF_PATH", r"F:\esp\v6.0.2\esp-idf")
+    monkeypatch.setenv(
+        "IDF_PYTHON_ENV_PATH",
+        r"F:\Espressif\tools\python\v6.0.2\venv",
+    )
+
+    command = resolve_idf_command()
+
+    assert command[0].endswith("python.exe")
+    assert command[1].endswith("idf.py")
+
+
+def test_resolve_idf_command_falls_back_to_path(monkeypatch) -> None:
+    from luxar.bootstrap import resolve_idf_command
+
+    monkeypatch.delenv("IDF_PATH", raising=False)
+    monkeypatch.delenv("IDF_PYTHON_ENV_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda command: "C:/tools/idf.py")
+
+    command = resolve_idf_command()
+
+    assert command == ("idf.py",)

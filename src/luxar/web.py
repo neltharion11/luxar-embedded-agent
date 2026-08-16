@@ -62,8 +62,13 @@ def create_app(
     workflow_runner: WorkflowRunner = run_workflow,
     ui_path: Path | None = None,
     max_concurrent_workflows: int = 2,
+    serial_port: str | None = None,
+    target_chip: str | None = None,
 ) -> FastAPI:
-    """创建可测试的 Web 应用；测试可注入 Fake Bootstrap 与 Runner。"""
+    """创建可测试的 Web 应用；测试可注入 Fake Bootstrap 与 Runner。
+
+    串口与芯片是服务端配置：浏览器只能提交任务文本，无法伪造端口。
+    """
 
     if max_concurrent_workflows <= 0:
         raise ValueError("max_concurrent_workflows 必须是正整数")
@@ -166,6 +171,8 @@ def create_app(
                         allow_dependency_downloads=(
                             body.allow_dependency_downloads
                         ),
+                        serial_port=serial_port,
+                        target_chip=target_chip,
                     )
                     # Web 不注入审批回调：烧录前工作流暂停并发布审批事件。
                     run_result = workflow_runner(
@@ -312,6 +319,26 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
+def _serial_port(value: str) -> str:
+    import os
+    import re
+
+    pattern = r"COM[1-9]\d*" if os.name == "nt" else r"/dev/tty(?:USB|ACM|S)\d+"
+    if not re.fullmatch(pattern, value):
+        raise argparse.ArgumentTypeError("串口名必须是 COM3 之类的合法串口名")
+    return value
+
+
+def _target_chip(value: str) -> str:
+    import re
+
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", value):
+        raise argparse.ArgumentTypeError(
+            "目标芯片必须是 esp32、esp32s3 之类的小写标识符"
+        )
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="luxar-web",
@@ -320,6 +347,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--projects-root", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=_positive_integer, default=8000)
+    parser.add_argument(
+        "--serial-port",
+        type=_serial_port,
+        help="开发板串口，例如 COM4（烧录/监控任务需要）",
+    )
+    parser.add_argument(
+        "--target",
+        type=_target_chip,
+        help="目标芯片，例如 esp32（创建任务建议提供）",
+    )
     parser.add_argument(
         "--max-concurrent-workflows",
         type=_positive_integer,
@@ -334,6 +371,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         app = create_app(
             projects_root=args.projects_root,
             max_concurrent_workflows=args.max_concurrent_workflows,
+            serial_port=args.serial_port,
+            target_chip=args.target,
         )
     except (WebProjectError, ValueError):
         print("项目根目录无效", file=sys.stderr)
@@ -341,3 +380,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

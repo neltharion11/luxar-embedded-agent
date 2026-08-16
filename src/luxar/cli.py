@@ -297,3 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _print_result(result, args.json)
     return _exit_code_for_state(result)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

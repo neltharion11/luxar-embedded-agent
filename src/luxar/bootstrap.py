@@ -38,6 +38,38 @@ def discover_serial_ports() -> list[SerialPortInfo]:
     return EspIdfDeviceAdapter().discover_serial_ports()
 
 
+def resolve_idf_command() -> Sequence[str]:
+    """解析默认的 idf.py 启动器,让未激活 shell 的服务进程也能工作。
+
+    优先使用 IDF_PATH + IDF_PYTHON_ENV_PATH 的已知安装(激活脚本把
+    idf.py 注册成 shell 函数而不是可执行文件,直接 spawn "idf.py"
+    会在 Windows 上以 WinError 193 失败);否则回退 PATH 上的 idf.py。
+    """
+
+    import os
+    import shutil
+
+    idf_path = os.environ.get("IDF_PATH")
+    python_env = os.environ.get("IDF_PYTHON_ENV_PATH")
+
+    if idf_path and python_env:
+        script = Path(idf_path) / "tools" / "idf.py"
+        if os.name == "nt":
+            python = (
+                Path(python_env) / "Scripts" / "python.exe"
+            )
+        else:
+            python = Path(python_env) / "bin" / "python"
+
+        if script.is_file() and python.is_file():
+            return (str(python), str(script))
+
+    if shutil.which("idf.py") is not None:
+        return ("idf.py",)
+
+    return ("idf.py",)
+
+
 def build_deepseek_runtime_context(
     *,
     project_path: Path,
@@ -54,7 +86,7 @@ def build_deepseek_runtime_context(
     settings: DeepSeekSettings | None = None,
     client: JsonCompletionClient | None = None,
     allow_dependency_downloads: bool = False,
-    idf_command: Sequence[str] = ("idf.py",),
+    idf_command: Sequence[str] | None = None,
 ) -> RuntimeContext:
     # 正式运行时自动读取环境变量；测试可以传入无真实密钥的 Settings。
     if settings is None:
@@ -64,9 +96,16 @@ def build_deepseek_runtime_context(
     if client is None:
         client = DeepSeekJsonClient(settings)
 
+    # 默认启动器按环境智能解析；显式传入时原样使用。
+    resolved_idf_command = (
+        idf_command
+        if idf_command is not None
+        else resolve_idf_command()
+    )
+
     if espidf is None:
         espidf = EspIdfCliAdapter(
-            idf_command=idf_command,
+            idf_command=resolved_idf_command,
             allow_dependency_downloads=allow_dependency_downloads,
         )
 
@@ -76,13 +115,13 @@ def build_deepseek_runtime_context(
     if project_creator is None:
         # 与构建 Adapter 共享同一个经过校验的 idf.py 启动器。
         project_creator = EspIdfProjectAdapter(
-            idf_command=idf_command,
+            idf_command=resolved_idf_command,
         )
 
     if flasher is None or monitor is None:
         # 烧录与监控共享同一个无状态设备 Adapter。
         device_adapter = EspIdfDeviceAdapter(
-            idf_command=idf_command,
+            idf_command=resolved_idf_command,
         )
         if flasher is None:
             flasher = device_adapter
