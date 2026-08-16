@@ -15,3 +15,5 @@ dist/
 pip-install*.log
 projects/
 
+
+docs/
