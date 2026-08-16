@@ -115,11 +115,17 @@ identifiers. Flash approvals surface as an in-page approval card
 All entry points share one command shape:
 
 ```bat
-luxar run  --project DIR --task "..." [--port COM4] [--target esp32] [--json]
+luxar        :: bare invocation starts the Web gateway with env/default config
+luxar run    --project DIR --task "..." [--port COM4] [--target esp32] [--json]
 luxar ports
-luxar web  --projects-root DIR [--serial-port COM4] [--target esp32]
+luxar web    --projects-root DIR [--serial-port COM4] [--target esp32]
 luxar setup
 ```
+
+Bare `luxar` equals `luxar web` with values from `LUXAR_PROJECTS_ROOT`
+(multiple roots separated by the platform path separator),
+`LUXAR_SERIAL_PORT`, `LUXAR_TARGET_CHIP`, and `LUXAR_WEB_PORT`, falling
+back to `./projects` and port 8000.
 
 (`luxar-web` remains as a compatible alias for `luxar web`.)
 

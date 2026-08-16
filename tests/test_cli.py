@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,6 @@ def _run_result(state: WorkflowState) -> WorkflowRunResult:
 @pytest.mark.parametrize(
     "argv",
     [
-        [],
         ["run"],
         ["run", "--project", "project", "--max-attempts", "0"],
         ["run", "--project", "project", "--max-attempts", "-1"],
@@ -34,6 +34,80 @@ def test_parser_rejects_invalid_command_lines(argv: list[str]) -> None:
         cli.build_parser().parse_args(argv)
 
     assert captured.value.code == 2
+
+
+def test_parser_allows_bare_invocation() -> None:
+    args = cli.build_parser().parse_args([])
+
+    assert args.command is None
+
+
+def test_bare_luxar_starts_web_with_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def fake_serve(**kwargs: object) -> int:
+        received.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("luxar.web.serve", fake_serve)
+
+    result = cli.main([])
+
+    assert result == 0
+    assert received["projects_roots"] == [Path("projects")]
+    assert received["serial_port"] is None
+    assert received["target_chip"] is None
+    assert received["port"] == 8000
+
+
+def test_bare_luxar_reads_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def fake_serve(**kwargs: object) -> int:
+        received.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("luxar.web.serve", fake_serve)
+    second_root = tmp_path / "second"
+    second_root.mkdir()
+    monkeypatch.setenv(
+        "LUXAR_PROJECTS_ROOT",
+        f"{tmp_path}{os.pathsep}{second_root}",
+    )
+    monkeypatch.setenv("LUXAR_SERIAL_PORT", "COM4")
+    monkeypatch.setenv("LUXAR_TARGET_CHIP", "esp32s3")
+    monkeypatch.setenv("LUXAR_WEB_PORT", "9000")
+
+    result = cli.main([])
+
+    assert result == 0
+    assert received["projects_roots"] == [tmp_path, second_root]
+    assert received["serial_port"] == "COM4"
+    assert received["target_chip"] == "esp32s3"
+    assert received["port"] == 9000
+
+
+def test_bare_luxar_ignores_invalid_web_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def fake_serve(**kwargs: object) -> int:
+        received.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("luxar.web.serve", fake_serve)
+    monkeypatch.setenv("LUXAR_WEB_PORT", "not-a-port")
+
+    result = cli.main([])
+
+    assert result == 0
+    assert received["port"] == 8000
 
 
 def test_main_rejects_invalid_project_inputs(

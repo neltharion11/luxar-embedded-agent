@@ -72,7 +72,7 @@ if (-not $env:DEEPSEEK_API_KEY) {
     Write-Host '请在 .env 中填写,或先运行 scripts\setup.ps1。' -ForegroundColor Yellow
 }
 
-# 6. 参数装配
+# 6. 参数装配(写回环境变量,裸 luxar 命令会读取)
 $projectsRoot = if ($env:LUXAR_PROJECTS_ROOT) { $env:LUXAR_PROJECTS_ROOT } else { (Join-Path $root 'projects') }
 $webPort = if ($Port) { $Port } elseif ($env:LUXAR_WEB_PORT) { $env:LUXAR_WEB_PORT } else { '8000' }
 $serial = if ($SerialPort) { $SerialPort } elseif ($env:LUXAR_SERIAL_PORT) { $env:LUXAR_SERIAL_PORT } else { $null }
@@ -83,9 +83,10 @@ if (-not (Test-Path $projectsRoot)) {
     Write-Host "已创建项目根目录: $projectsRoot(放入 ESP-IDF 工程子目录后即可在界面选择)" -ForegroundColor Yellow
 }
 
-$args = @('--projects-root', $projectsRoot, '--port', $webPort)
-if ($serial) { $args += @('--serial-port', $serial) }
-if ($chip) { $args += @('--target', $chip) }
+$env:LUXAR_PROJECTS_ROOT = $projectsRoot
+$env:LUXAR_WEB_PORT = $webPort
+if ($serial) { $env:LUXAR_SERIAL_PORT = $serial }
+if ($chip) { $env:LUXAR_TARGET_CHIP = $chip }
 
 Write-Host '== LUXAR Web 网关启动 ==' -ForegroundColor Cyan
 Write-Host "Python   : $python"
@@ -95,4 +96,4 @@ if ($chip) { Write-Host "芯片     : $chip" } else { Write-Host '芯片     : (
 Write-Host "地址     : http://127.0.0.1:$webPort"
 Write-Host ''
 
-& $python -m luxar.cli web @args
+& $python -m luxar.cli

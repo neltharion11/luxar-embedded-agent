@@ -1,9 +1,15 @@
-"""LUXAR 命令行入口:统一子命令结构(run / ports / web / setup)。"""
+"""LUXAR 命令行入口:统一子命令结构(run / ports / web / setup)。
+
+不带子命令直接运行 `luxar` 等价于 `luxar web`,参数取自环境变量
+(LUXAR_PROJECTS_ROOT / LUXAR_SERIAL_PORT / LUXAR_TARGET_CHIP /
+LUXAR_WEB_PORT),未设置时使用仓库内 ./projects 等默认值。
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,9 +28,9 @@ from luxar.ports.espidf_errors import EspIdfError
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="luxar",
-        description="运行 LUXAR ESP-IDF Agent 工作流",
+        description="运行 LUXAR ESP-IDF Agent 工作流(不带子命令时启动 Web 网关)",
     )
-    subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands = parser.add_subparsers(dest="command", required=False)
     run_parser = subcommands.add_parser("run", help="运行一个固件任务")
     run_parser.add_argument("--project", type=Path, required=True)
     run_parser.add_argument("--task")
@@ -263,8 +269,46 @@ _JSON_APPROVAL_ERROR = (
 )
 
 
+def _default_projects_roots() -> list[Path]:
+    # 多根目录用路径分隔符拼接(LUXAR_PROJECTS_ROOT=根1;根2)。
+    raw = os.environ.get("LUXAR_PROJECTS_ROOT")
+    if raw:
+        return [
+            Path(part.strip())
+            for part in raw.split(os.pathsep)
+            if part.strip()
+        ]
+
+    return [Path("projects")]
+
+
+def _default_web_port() -> int:
+    raw = os.environ.get("LUXAR_WEB_PORT", "8000")
+    try:
+        return arguments.positive_integer(raw)
+    except argparse.ArgumentTypeError:
+        return 8000
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command is None:
+        # 裸 luxar = luxar web,配置来自环境变量或仓库默认值。
+        roots = _default_projects_roots()
+        for root in roots:
+            if not root.exists():
+                root.mkdir(parents=True, exist_ok=True)
+
+        args = argparse.Namespace(
+            command="web",
+            projects_root=roots,
+            host="127.0.0.1",
+            port=_default_web_port(),
+            serial_port=os.environ.get("LUXAR_SERIAL_PORT") or None,
+            target=os.environ.get("LUXAR_TARGET_CHIP") or None,
+            max_concurrent_workflows=2,
+        )
 
     if args.command == "ports":
         return _run_ports()
