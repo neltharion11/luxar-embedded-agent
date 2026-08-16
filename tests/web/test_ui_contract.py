@@ -30,7 +30,22 @@ def test_migrated_ui_supports_flash_approval_flow() -> None:
     assert "'/api/conversations/' + encodeURIComponent(project) + '/approval'" in source
     assert "decide('approve')" in source
     assert "decide('reject')" in source
-    assert "JSON.stringify({decision: decision})" in source
+    assert "JSON.stringify({decision: decision, root_index: selectedRootIndex})" in source
+
+
+def test_migrated_ui_selects_root_port_and_chip_per_task() -> None:
+    source = ui_source()
+
+    # 项目根切换器、串口下拉(来自发现端点)与芯片下拉,随任务提交。
+    assert "id=\"serial-port-select\"" in source
+    assert "id=\"chip-select\"" in source
+    assert "onRootChange" in source
+    assert "sidebar-root-select" in source
+    assert "apiGet('/api/devices/ports')" in source
+    assert "root_index: selectedRootIndex" in source
+    assert "serial_port: (portSelect && portSelect.value)" in source
+    assert "target_chip: (chipSelect && chipSelect.value)" in source
+    assert "root_index=' + selectedRootIndex" in source
 
 
 def test_migrated_ui_enabled_startup_calls_only_supported_endpoints() -> None:

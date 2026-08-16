@@ -35,8 +35,8 @@ def test_catalog_lists_only_sorted_direct_espidf_projects(tmp_path: Path) -> Non
     catalog = WebProjectCatalog(tmp_path)
 
     assert [project.model_dump() for project in catalog.list_projects()] == [
-        {"name": "alpha", "platform": "espidf"},
-        {"name": "zeta", "platform": "espidf"},
+        {"name": "alpha", "platform": "espidf", "root_index": 0},
+        {"name": "zeta", "platform": "espidf", "root_index": 0},
     ]
 
 

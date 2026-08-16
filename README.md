@@ -101,8 +101,15 @@ environment-backed and never appear as CLI arguments.
 luxar web --projects-root F:\LUXAR\projects --serial-port COM4 --target esp32
 ```
 
-The browser only submits the task text; the serial port and target chip are
-server-side configuration. Flash approvals surface as an in-page approval card
+Project root, serial port, and target chip are all selectable **per task in
+the page**: the project root switches among the server's configured roots
+(`--projects-root` may be repeated), the serial port is picked from the list
+the server discovers live (`GET /api/devices/ports`), and the chip comes from
+a fixed dropdown. Server-side values only act as defaults when the page
+leaves a field unset. The browser still never submits arbitrary paths, port
+names, or chip strings: roots must be configured at startup, ports must match
+the platform pattern and the discovered list, and chips are strict lowercase
+identifiers. Flash approvals surface as an in-page approval card
 (`批准烧录` / `拒绝`) backed by `POST /api/conversations/{project}/approval`.
 
 All entry points share one command shape:

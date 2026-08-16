@@ -705,7 +705,7 @@ def test_web_subcommand_forwards_to_serve(
 
     assert result == 0
     assert received == {
-        "projects_root": tmp_path,
+        "projects_roots": [tmp_path],
         "host": "127.0.0.1",
         "port": 8000,
         "serial_port": "COM4",

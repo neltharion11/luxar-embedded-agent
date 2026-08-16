@@ -46,7 +46,7 @@ def test_app_serves_ui_health_and_safe_project_list(tmp_path: Path) -> None:
     ui = tmp_path / "index.html"
     ui.write_text("<h1>LUXAR UI</h1>", encoding="utf-8")
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(WorkflowState()),
         ui_path=ui,
@@ -59,14 +59,19 @@ def test_app_serves_ui_health_and_safe_project_list(tmp_path: Path) -> None:
         "service": "luxar-langgraph",
     }
     projects = client.get("/api/workspace/projects").json()
-    assert projects == {"projects": [{"name": "blink", "platform": "espidf"}]}
+    assert projects == {
+        "roots": [{"index": 0, "label": tmp_path.name}],
+        "projects": [
+            {"name": "blink", "platform": "espidf", "root_index": 0}
+        ],
+    }
     assert str(tmp_path) not in json.dumps(projects)
 
 
 def test_default_app_serves_migrated_original_ui(tmp_path: Path) -> None:
     make_project(tmp_path)
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(WorkflowState()),
     )
@@ -105,7 +110,7 @@ def test_sse_runs_shared_application_and_emits_allowlisted_result(
         )
 
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=fake_bootstrap,  # type: ignore[arg-type]
         workflow_runner=fake_runner,
         ui_path=tmp_path / "missing-ui.html",
@@ -157,7 +162,7 @@ def test_web_rejects_invalid_project_before_bootstrap(tmp_path: Path) -> None:
     calls: list[object] = []
 
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **kwargs: calls.append(kwargs),  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(WorkflowState()),
     )
@@ -178,7 +183,7 @@ def test_web_sanitizes_startup_error(tmp_path: Path) -> None:
         raise ValueError("SECRET_API_KEY_DETAIL")
 
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=fail_bootstrap,  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(WorkflowState()),
     )
@@ -199,7 +204,7 @@ def test_web_sanitizes_startup_error(tmp_path: Path) -> None:
 def test_process_local_history_and_reset(tmp_path: Path) -> None:
     make_project(tmp_path)
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(
             WorkflowState(status="completed", attempts=1, trace=[])
@@ -230,7 +235,7 @@ def test_same_project_concurrent_request_is_rejected(tmp_path: Path) -> None:
         return WorkflowState(status="completed", trace=[])
 
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=blocking_runner,
     )
@@ -287,9 +292,11 @@ def _run_task_in_background(
 
 
 def _wait_for_pending_approval(app, project: str = "blink") -> None:
+    # 待审批条目按 "<root_index>:<project>" 存储,默认根索引为 0。
+    key = "0:" + project
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if project in app.state.pending_approvals:
+        if key in app.state.pending_approvals:
             return
         time.sleep(0.05)
     raise AssertionError("approval never became pending")
@@ -325,7 +332,7 @@ def test_web_approval_flow_approves_and_resumes(
 
     monkeypatch.setattr("luxar.web.resume_workflow", fake_resume)
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=fake_bootstrap,  # type: ignore[arg-type]
         workflow_runner=fake_runner,
         ui_path=tmp_path / "missing-ui.html",
@@ -398,7 +405,7 @@ def test_web_approval_rejection_terminates_workflow(
 
     monkeypatch.setattr("luxar.web.resume_workflow", fake_resume)
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=fake_runner,
         ui_path=tmp_path / "missing-ui.html",
@@ -428,7 +435,7 @@ def test_web_approval_endpoint_rejects_without_pending_approval(
 ) -> None:
     make_project(tmp_path)
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(
             WorkflowState(status="completed", trace=[])
@@ -449,7 +456,7 @@ def test_web_approval_endpoint_rejects_invalid_decisions(
 ) -> None:
     make_project(tmp_path)
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(
             WorkflowState(status="completed", trace=[])
@@ -476,7 +483,7 @@ def test_create_app_passes_server_side_serial_and_target_to_bootstrap(
         return object()
 
     app = create_app(
-        projects_root=tmp_path,
+        projects_roots=[tmp_path],
         bootstrap_factory=fake_bootstrap,  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(
             WorkflowState(status="completed", trace=[])
@@ -509,3 +516,154 @@ def test_web_parser_rejects_invalid_serial_port_and_target(
         with pytest.raises(SystemExit) as captured:
             build_parser().parse_args(args)
         assert captured.value.code == 2
+
+
+def test_devices_ports_endpoint_lists_discovered_ports(
+    tmp_path: Path,
+) -> None:
+    from luxar.domain.devices import SerialPortInfo
+
+    make_project(tmp_path)
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        port_discoverer=lambda: [
+            SerialPortInfo(
+                name="COM4",
+                description="USB-SERIAL CH340",
+                hardware_id="USB VID:PID=1A86:7523",
+            )
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/devices/ports")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ports": [
+            {
+                "name": "COM4",
+                "description": "USB-SERIAL CH340",
+                "hardware_id": "USB VID:PID=1A86:7523",
+            }
+        ]
+    }
+
+
+def test_task_selection_overrides_server_defaults_and_reaches_bootstrap(
+    tmp_path: Path,
+) -> None:
+    from luxar.domain.devices import SerialPortInfo
+
+    make_project(tmp_path)
+    received: dict[str, object] = {}
+
+    def fake_bootstrap(**kwargs: object) -> object:
+        received.update(kwargs)
+        return object()
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=fake_bootstrap,  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(
+            WorkflowState(status="completed", trace=[])
+        ),
+        serial_port="COM9",
+        target_chip="esp32",
+        port_discoverer=lambda: [
+            SerialPortInfo(name="COM4", description="CH340")
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/conversations/blink",
+        json={
+            "message": "flash",
+            "root_index": 0,
+            "serial_port": "COM4",
+            "target_chip": "esp32s3",
+        },
+    )
+
+    assert response.status_code == 200
+    assert received["serial_port"] == "COM4"
+    assert received["target_chip"] == "esp32s3"
+
+
+def test_task_rejects_serial_port_not_in_discovered_list(
+    tmp_path: Path,
+) -> None:
+    from luxar.domain.devices import SerialPortInfo
+
+    make_project(tmp_path)
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        port_discoverer=lambda: [
+            SerialPortInfo(name="COM4", description="CH340")
+        ],
+    )
+    client = TestClient(app)
+
+    for port in ["COM5", "COM4;rm"]:
+        response = client.post(
+            "/api/conversations/blink",
+            json={"message": "flash", "serial_port": port},
+        )
+        assert response.status_code == 422
+
+
+def test_task_rejects_invalid_root_index(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/conversations/blink",
+        json={"message": "build", "root_index": 3},
+    )
+
+    assert response.status_code == 422
+
+
+def test_multi_root_project_resolution(
+    tmp_path: Path,
+) -> None:
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    make_project(root_a, "shared")
+    make_project(root_b, "shared")
+
+    app = create_app(
+        projects_roots=[root_a, root_b],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(
+            WorkflowState(status="completed", trace=[])
+        ),
+    )
+    client = TestClient(app)
+
+    listing = client.get("/api/workspace/projects").json()
+    assert listing["roots"] == [
+        {"index": 0, "label": "a"},
+        {"index": 1, "label": "b"},
+    ]
+    assert {p["root_index"] for p in listing["projects"]} == {0, 1}
+
+    # 同名项目在不同根下互不干扰。
+    for root_index in (0, 1):
+        response = client.post(
+            "/api/conversations/shared",
+            json={"message": "build", "root_index": root_index},
+        )
+        assert response.status_code == 200

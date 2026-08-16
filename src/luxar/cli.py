@@ -57,7 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
     ports_parser = subcommands.add_parser("ports", help="列出可用串口设备")
 
     web_parser = subcommands.add_parser("web", help="启动本地 Web 网关")
-    web_parser.add_argument("--projects-root", type=Path, required=True)
+    web_parser.add_argument(
+        "--projects-root",
+        type=Path,
+        action="append",
+        required=True,
+        help="项目根目录，可重复传入多个（页面可切换选择）",
+    )
     web_parser.add_argument("--host", default="127.0.0.1")
     web_parser.add_argument(
         "--port",
@@ -161,7 +167,7 @@ def _run_web(args: argparse.Namespace) -> int:
     from luxar.web import serve
 
     return serve(
-        projects_root=args.projects_root,
+        projects_roots=args.projects_root,
         host=args.host,
         port=args.port,
         serial_port=args.serial_port,
