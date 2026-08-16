@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import threading
+import time
 
 from fastapi.testclient import TestClient
 
 from luxar.application.runner import WorkflowProgress, WorkflowRunResult
 from luxar.application.state import WorkflowState
+from luxar.domain.devices import ApprovalRequest
+from luxar.domain.errors import WorkflowError
 from luxar.web import create_app
 
 
@@ -252,3 +255,208 @@ def test_same_project_concurrent_request_is_rejected(tmp_path: Path) -> None:
     assert second.status_code == 409
     assert second.json() == {"detail": "该项目已有正在运行的任务"}
     assert len(first_response) == 1
+
+
+def make_approval_request() -> ApprovalRequest:
+    return ApprovalRequest(
+        project_name="blink",
+        port="COM3",
+        target_chip="esp32",
+        summary="即将向串口设备烧录固件，请确认目标芯片与串口",
+        step_description="flash_project",
+        attempts=0,
+    )
+
+
+def _run_task_in_background(
+    client: TestClient,
+) -> tuple[threading.Thread, list[object]]:
+    response_holder: list[object] = []
+
+    def run_request() -> None:
+        response_holder.append(
+            client.post("/api/conversations/blink", json={"message": "flash"})
+        )
+
+    thread = threading.Thread(target=run_request)
+    thread.start()
+    return thread, response_holder
+
+
+def _wait_for_pending_approval(app, project: str = "blink") -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if project in app.state.pending_approvals:
+            return
+        time.sleep(0.05)
+    raise AssertionError("approval never became pending")
+
+
+def test_web_approval_flow_approves_and_resumes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    make_project(tmp_path)
+    resume_calls: list[dict[str, object]] = []
+    context = object()
+
+    def fake_bootstrap(**kwargs: object) -> object:
+        return context
+
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
+        return WorkflowRunResult(
+            state=WorkflowState(status="planned", trace=[]),
+            thread_id="thread-1",
+            pending_approval=make_approval_request(),
+        )
+
+    def fake_resume(**kwargs: object) -> WorkflowRunResult:
+        resume_calls.append(kwargs)
+        return _run_result(
+            WorkflowState(
+                status="completed",
+                approval_status="approved",
+                trace=[],
+            )
+        )
+
+    monkeypatch.setattr("luxar.web.resume_workflow", fake_resume)
+    app = create_app(
+        projects_root=tmp_path,
+        bootstrap_factory=fake_bootstrap,  # type: ignore[arg-type]
+        workflow_runner=fake_runner,
+        ui_path=tmp_path / "missing-ui.html",
+    )
+    client = TestClient(app)
+    thread, responses = _run_task_in_background(client)
+    _wait_for_pending_approval(app)
+    assert thread.is_alive()
+
+    decision = client.post(
+        "/api/conversations/blink/approval",
+        json={"decision": "approve"},
+    )
+    thread.join(timeout=5)
+
+    assert decision.status_code == 200
+    assert decision.json() == {"status": "ok", "project": "blink"}
+    events = parse_sse(responses[0].text)
+    assert [event for event, _ in events] == [
+        "approval",
+        "result",
+        "done",
+    ]
+    approval_event = events[0][1]
+    assert isinstance(approval_event, dict)
+    assert approval_event["thread_id"] == "thread-1"
+    request = approval_event["request"]
+    assert set(request) == {
+        "project_name",
+        "port",
+        "target_chip",
+        "summary",
+        "step_description",
+        "attempts",
+    }
+    assert request["port"] == "COM3"
+    assert str(tmp_path) not in json.dumps(events)
+    assert resume_calls[0]["thread_id"] == "thread-1"
+    assert resume_calls[0]["approved"] is True
+    assert resume_calls[0]["context"] is context
+    assert events[1][1]["status"] == "completed"
+    assert app.state.pending_approvals == {}
+
+
+def test_web_approval_rejection_terminates_workflow(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    make_project(tmp_path)
+
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
+        return WorkflowRunResult(
+            state=WorkflowState(status="planned", trace=[]),
+            thread_id="thread-2",
+            pending_approval=make_approval_request(),
+        )
+
+    def fake_resume(**kwargs: object) -> WorkflowRunResult:
+        assert kwargs["approved"] is False
+        error = WorkflowError(
+            stage="flash",
+            category="approval_rejected",
+            message="烧录申请被用户拒绝",
+            retryable=False,
+            user_suggestion="确认目标芯片和串口后重新运行任务",
+        )
+        return _run_result(
+            WorkflowState(status="failed", error=error, trace=[])
+        )
+
+    monkeypatch.setattr("luxar.web.resume_workflow", fake_resume)
+    app = create_app(
+        projects_root=tmp_path,
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=fake_runner,
+        ui_path=tmp_path / "missing-ui.html",
+    )
+    client = TestClient(app)
+    thread, responses = _run_task_in_background(client)
+    _wait_for_pending_approval(app)
+
+    decision = client.post(
+        "/api/conversations/blink/approval",
+        json={"decision": "reject"},
+    )
+    thread.join(timeout=5)
+
+    assert decision.status_code == 200
+    events = parse_sse(responses[0].text)
+    assert [event for event, _ in events] == [
+        "approval",
+        "result",
+        "done",
+    ]
+    assert events[1][1]["error"]["category"] == "approval_rejected"
+
+
+def test_web_approval_endpoint_rejects_without_pending_approval(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    app = create_app(
+        projects_root=tmp_path,
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(
+            WorkflowState(status="completed", trace=[])
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/conversations/blink/approval",
+        json={"decision": "approve"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_web_approval_endpoint_rejects_invalid_decisions(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    app = create_app(
+        projects_root=tmp_path,
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(
+            WorkflowState(status="completed", trace=[])
+        ),
+    )
+    client = TestClient(app)
+
+    for payload in [{"decision": "maybe"}, {"decision": "yes"}, {}]:
+        response = client.post(
+            "/api/conversations/blink/approval",
+            json=payload,
+        )
+        assert response.status_code == 422

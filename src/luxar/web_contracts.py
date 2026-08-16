@@ -41,3 +41,11 @@ class WebProjectList(BaseModel):
 class WebHealth(BaseModel):
     status: Literal["ok"] = "ok"
     service: Literal["luxar-langgraph"] = "luxar-langgraph"
+
+
+class WebApprovalDecision(BaseModel):
+    """浏览器对烧录审批请求的唯一合法回复。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decision: Literal["approve", "reject"]

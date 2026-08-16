@@ -24,11 +24,18 @@ from luxar.adapters.deepseek.requirement_parser import (
 )
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.application.context import RuntimeContext
+from luxar.domain.devices import SerialPortInfo
 from luxar.ports.espidf import EspIdfPort
 from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
 from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.log_analyst import LogAnalystPort
 from luxar.ports.workspace import WorkspacePort
+
+
+def discover_serial_ports() -> list[SerialPortInfo]:
+    """列出当前机器上符合平台模式的串口设备。"""
+
+    return EspIdfDeviceAdapter().discover_serial_ports()
 
 
 def build_deepseek_runtime_context(

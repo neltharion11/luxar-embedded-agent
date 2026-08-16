@@ -390,18 +390,19 @@ raw logs beyond the bounded sanitized summaries never leave the boundary.
 - `luxar run --project DIR --task ... --target esp32 --port COM3`
   - `--target` required only for creation tasks; the workflow reports
     missing information as clarification as before.
-  - `--port` optional when the plan does not flash; otherwise required and
-    pattern-validated.
+  - `--port` optional at parse time; a plan that flashes or monitors
+    without a configured port terminates with a sanitized `serial`
+    workflow error.
   - project path may now not exist yet when the plan starts with
     `create_project`; the parent must exist.
 - `luxar ports` lists discovered serial devices (name, description,
-  hardware id), using the same port as the workflow.
+  hardware id), using the same platform-pattern filtering as the workflow.
 - Interactive approval: the CLI pauses the run, prints the sanitized
-  `ApprovalRequest`, and reads `y`/`n`. Rejection exits 4 with the fixed
-  approval-rejected summary.
+  `ApprovalRequest`, and reads `y`/`n` (default reject). Rejection exits 4
+  with the fixed approval-rejected summary.
 - JSON mode cannot prompt interactively. It requires the explicit
-  `--approve-flash` flag; without it a plan that flashes terminates with a
-  fixed configuration error before any model or hardware call.
+  `--approve-flash` flag; without it a paused flash approval terminates
+  with a fixed configuration error (exit 4) before any hardware call.
 
 ### Web
 
@@ -409,7 +410,9 @@ raw logs beyond the bounded sanitized summaries never leave the boundary.
   plus `thread_id`; the stream stays open while the decision is pending.
 - New endpoint `POST /api/conversations/{project}/approval` with
   `{"decision":"approve"|"reject"}` resumes the paused workflow in-process
-  (single active workflow per project already enforced).
+  (single active workflow per project already enforced). No pending
+  approval returns 409; invalid decisions are rejected by the strict
+  contract.
 - The browser cannot submit a port or target; port and target remain
   server-side configuration for this milestone.
 

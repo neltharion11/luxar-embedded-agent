@@ -9,6 +9,7 @@ import pytest
 from luxar import cli
 from luxar.application.runner import WorkflowRunResult
 from luxar.application.state import WorkflowState
+from luxar.domain.devices import ApprovalRequest
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.requirements import FirmwareRequirement
@@ -175,6 +176,7 @@ def test_ordinary_mode_prompts_for_missing_task_and_builds_initial_state(
     assert calls["bootstrap"] == {
         "project_path": tmp_path,
         "target_chip": None,
+        "serial_port": None,
         "allow_dependency_downloads": False,
     }
     runner_call = calls["runner"]
@@ -437,3 +439,239 @@ def test_json_failed_state_is_stdout_business_result(
     assert result == 4
     assert captured.err == ""
     assert json.loads(captured.out)["error"] == error.model_dump(mode="json")
+
+
+def approval_request() -> ApprovalRequest:
+    return ApprovalRequest(
+        project_name="blink",
+        port="COM3",
+        target_chip="esp32",
+        summary="即将向串口设备烧录固件，请确认目标芯片与串口",
+        step_description="flash_project",
+        attempts=0,
+    )
+
+
+def test_ports_lists_discovered_devices(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from luxar.domain.devices import SerialPortInfo
+
+    monkeypatch.setattr(
+        cli,
+        "discover_serial_ports",
+        lambda: [
+            SerialPortInfo(
+                name="COM3",
+                description="USB Serial",
+                hardware_id="USB VID:PID=1A86:7523",
+            )
+        ],
+    )
+
+    result = cli.main(["ports"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "COM3" in captured.out
+    assert "1A86:7523" in captured.out
+
+
+def test_ports_reports_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cli, "discover_serial_ports", lambda: [])
+
+    result = cli.main(["ports"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "未发现可用串口设备" in captured.err
+
+
+@pytest.mark.parametrize("port", ["COM0", "com3", "COM3;rm", "/dev/ttyS0"])
+def test_cli_rejects_invalid_port_values(
+    tmp_path: Path,
+    port: str,
+) -> None:
+    with pytest.raises(SystemExit) as captured:
+        cli.build_parser().parse_args(
+            ["run", "--project", str(tmp_path), "--port", port]
+        )
+
+    assert captured.value.code == 2
+
+
+def test_port_reaches_bootstrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def fake_bootstrap(**kwargs: object) -> object:
+        received.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", fake_bootstrap)
+    monkeypatch.setattr(
+        cli,
+        "run_workflow",
+        lambda **_: _run_result(WorkflowState(status="completed", trace=[])),
+    )
+
+    result = cli.main(
+        ["run", "--project", str(tmp_path), "--task", "build", "--port", "COM3"]
+    )
+
+    assert result == 0
+    assert received["serial_port"] == "COM3"
+
+
+def test_interactive_approval_accepts_yes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    seen: list[ApprovalRequest] = []
+
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
+        handler = kwargs["approval_handler"]
+        assert callable(handler)
+        request = approval_request()
+        seen.append(request)
+        decided = handler(request)
+        return _run_result(
+            WorkflowState(
+                status="completed" if decided else "failed",
+                approval_status="approved" if decided else "rejected",
+                trace=[],
+            )
+        )
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", fake_runner)
+
+    result = cli.main(["run", "--project", str(tmp_path), "--task", "flash"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert len(seen) == 1
+    assert seen[0].port == "COM3"
+    assert "烧录审批" in captured.err
+    assert "COM3" in captured.err
+
+
+def test_interactive_approval_rejects_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    seen: list[ApprovalRequest] = []
+
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
+        handler = kwargs["approval_handler"]
+        assert callable(handler)
+        request = approval_request()
+        seen.append(request)
+        decided = handler(request)
+        error = None
+        if not decided:
+            error = WorkflowError(
+                stage="flash",
+                category="approval_rejected",
+                message="烧录申请被用户拒绝",
+                retryable=False,
+                user_suggestion="确认目标芯片和串口后重新运行任务",
+            )
+        return _run_result(
+            WorkflowState(
+                status="completed" if decided else "failed",
+                error=error,
+                trace=[],
+            )
+        )
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", fake_runner)
+
+    result = cli.main(["run", "--project", str(tmp_path), "--task", "flash"])
+
+    assert result == 4
+    assert len(seen) == 1
+    assert "烧录申请被用户拒绝" in capsys.readouterr().out
+
+
+def test_json_mode_with_approve_flag_preauthorizes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler_decisions: list[bool] = []
+
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
+        handler = kwargs["approval_handler"]
+        assert callable(handler)
+        handler_decisions.append(handler(approval_request()))
+        return _run_result(WorkflowState(status="completed", trace=[]))
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", fake_runner)
+
+    result = cli.main(
+        [
+            "run",
+            "--project",
+            str(tmp_path),
+            "--task",
+            "flash",
+            "--json",
+            "--approve-flash",
+        ]
+    )
+
+    assert result == 0
+    assert handler_decisions == [True]
+
+
+def test_json_mode_without_approve_flag_terminates_on_pause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
+        assert kwargs["approval_handler"] is None
+        return WorkflowRunResult(
+            state=WorkflowState(status="planned", trace=[]),
+            thread_id="t1",
+            pending_approval=approval_request(),
+        )
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
+    monkeypatch.setattr(cli, "run_workflow", fake_runner)
+
+    result = cli.main(
+        ["run", "--project", str(tmp_path), "--task", "flash", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 4
+    assert captured.out == ""
+    assert "--approve-flash" in captured.err
+
+
+def test_approve_flag_requires_json_mode(tmp_path: Path) -> None:
+    result = cli.main(
+        [
+            "run",
+            "--project",
+            str(tmp_path),
+            "--task",
+            "flash",
+            "--approve-flash",
+        ]
+    )
+
+    assert result == 2

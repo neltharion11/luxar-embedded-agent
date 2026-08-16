@@ -209,3 +209,28 @@ def test_bootstrap_injects_monitor_analyst_and_window() -> None:
     )
     assert isinstance(default_context.log_analyst, DeepSeekLogAnalyst)
     assert default_context.log_analyst._model == "deepseek-v4-pro"
+
+
+def test_discover_serial_ports_uses_default_device_adapter(
+    monkeypatch,
+) -> None:
+    from luxar.bootstrap import discover_serial_ports
+
+    class RecordingAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def discover_serial_ports(self):
+            self.calls += 1
+            return []
+
+    adapter = RecordingAdapter()
+    monkeypatch.setattr(
+        "luxar.bootstrap.EspIdfDeviceAdapter",
+        lambda **kwargs: adapter,
+    )
+
+    ports = discover_serial_ports()
+
+    assert ports == []
+    assert adapter.calls == 1

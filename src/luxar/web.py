@@ -18,15 +18,25 @@ from pydantic import ValidationError
 
 from luxar.application.context import RuntimeContext
 from luxar.application.results import state_to_result
-from luxar.application.runner import WorkflowProgress, run_workflow
+from luxar.application.runner import (
+    WorkflowProgress,
+    WorkflowRunResult,
+    resume_workflow,
+    run_workflow,
+)
 from luxar.application.state import WorkflowState
 from luxar.bootstrap import build_deepseek_runtime_context
-from luxar.web_contracts import WebHealth, WebProjectList, WebTaskRequest
+from luxar.web_contracts import (
+    WebApprovalDecision,
+    WebHealth,
+    WebProjectList,
+    WebTaskRequest,
+)
 from luxar.web_projects import WebProjectCatalog, WebProjectError
 
 
 BootstrapFactory = Callable[..., RuntimeContext]
-WorkflowRunner = Callable[..., WorkflowState]
+WorkflowRunner = Callable[..., WorkflowRunResult]
 _StreamItem = tuple[str, dict[str, object] | str]
 
 
@@ -65,8 +75,13 @@ def create_app(
     active_lock = threading.Lock()
     history: dict[str, list[dict[str, str]]] = {}
     history_lock = threading.Lock()
+    # project -> 待处理审批的线程安全条目。
+    pending_approvals: dict[str, dict[str, object]] = {}
+    pending_lock = threading.Lock()
 
     app = FastAPI(title="LUXAR LangGraph API", version="0.1.0")
+    # 测试通过 app.state 观察待处理审批。
+    app.state.pending_approvals = pending_approvals  # type: ignore[attr-defined]
 
     def resolve_project(project: str) -> Path:
         try:
@@ -152,6 +167,7 @@ def create_app(
                             body.allow_dependency_downloads
                         ),
                     )
+                    # Web 不注入审批回调：烧录前工作流暂停并发布审批事件。
                     run_result = workflow_runner(
                         initial_state=WorkflowState(
                             task_text=body.message,
@@ -162,6 +178,46 @@ def create_app(
                         context=context,
                         progress_reporter=report,
                     )
+
+                    if run_result.pending_approval is not None:
+                        request = run_result.pending_approval
+                        decision_event = threading.Event()
+                        entry: dict[str, object] = {
+                            "thread_id": run_result.thread_id,
+                            "request": request.model_dump(mode="json"),
+                            "event": decision_event,
+                            "approved": False,
+                        }
+                        with pending_lock:
+                            pending_approvals[project] = entry
+                        publish(
+                            "approval",
+                            {
+                                "thread_id": run_result.thread_id,
+                                "request": entry["request"],
+                            },
+                        )
+
+                        decided = False
+                        while not disconnected.is_set():
+                            if decision_event.wait(timeout=0.2):
+                                decided = True
+                                break
+
+                        with pending_lock:
+                            pending_approvals.pop(project, None)
+
+                        if not decided:
+                            # 浏览器断开：工作流保持暂停，本次运行终止。
+                            return
+
+                        run_result = resume_workflow(
+                            thread_id=run_result.thread_id,
+                            context=context,
+                            approved=bool(entry["approved"]),
+                            progress_reporter=report,
+                        )
+
                     envelope = state_to_result(run_result.state)
                     publish("result", envelope)
                     with history_lock:
@@ -221,6 +277,27 @@ def create_app(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.post("/api/conversations/{project}/approval")
+    def decide_approval(
+        project: str,
+        body: WebApprovalDecision,
+    ) -> dict[str, object]:
+        resolve_project(project)
+        with pending_lock:
+            entry = pending_approvals.get(project)
+            if entry is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="该项目没有待处理的烧录审批",
+                )
+
+        # 决定写入共享条目后唤醒等待中的工作流线程。
+        entry["approved"] = body.decision == "approve"
+        decision_event = entry["event"]
+        assert isinstance(decision_event, threading.Event)
+        decision_event.set()
+        return {"status": "ok", "project": project}
 
     return app
 
