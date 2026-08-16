@@ -3,12 +3,13 @@ import pytest
 from luxar.application.routing import (
     route_after_approval,
     route_after_build,
+    route_after_diagnosis,
     route_after_dispatch,
     route_after_flash,
     route_after_project_creation,
     route_after_requirement,
 )
-from luxar.domain.devices import FlashEvidence
+from luxar.domain.devices import DeviceDiagnosis, FlashEvidence
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.projects import ProjectEvidence
 from luxar.domain.requirements import FirmwareRequirement
@@ -66,16 +67,10 @@ def test_dispatch_routes_flash_step_to_approval() -> None:
     assert route_after_dispatch(state) == "request_flash_approval"
 
 
-@pytest.mark.parametrize(
-    "pending_kind",
-    ["monitor_project"],
-)
-def test_dispatch_routes_not_yet_supported_steps_to_failed(
-    pending_kind: str,
-) -> None:
-    state = {"pending_step_kind": pending_kind}
+def test_dispatch_routes_monitor_step_to_monitor_node() -> None:
+    state = {"pending_step_kind": "monitor_project"}
 
-    assert route_after_dispatch(state) == "failed"
+    assert route_after_dispatch(state) == "monitor_project"
 
 
 def test_successful_creation_continues_plan() -> None:
@@ -216,3 +211,66 @@ def test_failed_build_routes_by_category_and_attempt_budget(
     destination = route_after_build(state)
 
     assert destination == expected
+
+
+def test_healthy_diagnosis_routes_to_completed() -> None:
+    state = {
+        "device_diagnosis": DeviceDiagnosis(
+            healthy=True,
+            repair_needed=False,
+            summary="运行正常",
+        )
+    }
+
+    assert route_after_diagnosis(state) == "completed"
+
+
+def test_repair_needed_diagnosis_routes_to_repair() -> None:
+    state = {
+        "device_diagnosis": DeviceDiagnosis(
+            healthy=False,
+            repair_needed=True,
+            summary="看门狗超时",
+        )
+    }
+
+    assert route_after_diagnosis(state) == "repair_project"
+
+
+def test_unhealthy_diagnosis_without_repair_routes_to_failed() -> None:
+    state = {
+        "device_diagnosis": DeviceDiagnosis(
+            healthy=False,
+            repair_needed=False,
+            summary="疑似硬件故障",
+        )
+    }
+
+    assert route_after_diagnosis(state) == "failed"
+
+
+def test_build_success_with_monitor_origin_routes_to_flash_approval() -> None:
+    state = {
+        "build_evidence": BuildEvidence(
+            success=True,
+            command=["idf.py", "build"],
+            return_code=0,
+        ),
+        "repair_origin": "monitor",
+    }
+
+    assert route_after_build(state) == "request_flash_approval"
+
+
+def test_flash_success_with_monitor_origin_routes_to_monitor() -> None:
+    state = {
+        "flash_evidence": FlashEvidence(
+            success=True,
+            command=["idf.py", "-p", "COM3", "flash"],
+            return_code=0,
+            port="COM3",
+        ),
+        "repair_origin": "monitor",
+    }
+
+    assert route_after_flash(state) == "monitor_project"

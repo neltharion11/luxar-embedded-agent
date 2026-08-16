@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from luxar.domain.devices import ApprovalRequest, FlashEvidence
+from luxar.domain.devices import (
+    ApprovalRequest,
+    DeviceDiagnosis,
+    FlashEvidence,
+    MonitorEvidence,
+)
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan
@@ -21,6 +26,8 @@ WorkflowStatus = Literal[
     "project_created",
     "building",
     "flashing",
+    "monitoring",
+    "diagnosed",
     "retrying",
     "repaired",
     "completed",
@@ -71,3 +78,7 @@ class WorkflowState(TypedDict, total=False):
     # 审批请求保留在 State 中以支持 checkpoint 恢复展示，
     # 但它永远不进入结果白名单。
     approval_request: ApprovalRequest
+    # S4：串口监控证据、设备诊断与设备修复回路预算。
+    monitor_evidence: MonitorEvidence
+    device_diagnosis: DeviceDiagnosis
+    device_cycles: int

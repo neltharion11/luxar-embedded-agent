@@ -1,11 +1,15 @@
-"""设备 Port：规定串口发现与烧录工具能力的最小接口。"""
+"""设备 Port：规定串口发现、烧录与串口监控工具能力的最小接口。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Protocol
 
-from luxar.domain.devices import FlashEvidence, SerialPortInfo
+from luxar.domain.devices import (
+    FlashEvidence,
+    MonitorEvidence,
+    SerialPortInfo,
+)
 
 
 class EspIdfFlashPort(Protocol):
@@ -19,4 +23,15 @@ class EspIdfFlashPort(Protocol):
         project_path: Path,
         port: str,
     ) -> FlashEvidence:
+        ...
+
+
+class EspIdfMonitorPort(Protocol):
+    # 在受控采集窗口内抓取设备串口日志，超时后必须终止整个进程树。
+    def monitor(
+        self,
+        project_path: Path,
+        port: str,
+        timeout_seconds: int,
+    ) -> MonitorEvidence:
         ...

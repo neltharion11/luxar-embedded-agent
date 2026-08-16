@@ -23,7 +23,12 @@ from luxar.adapters.espidf_common import (
     validate_espidf_launcher,
     validate_idf_command_tokens,
 )
-from luxar.domain.devices import FlashEvidence, SerialPortInfo
+from luxar.domain.devices import (
+    DeviceLogDiagnostic,
+    FlashEvidence,
+    MonitorEvidence,
+    SerialPortInfo,
+)
 from luxar.ports.espidf_errors import EspIdfError
 
 _WINDOWS_PORT_RE = re.compile(r"^COM[1-9]\d*$")
@@ -41,10 +46,98 @@ _SERIAL_SIGNALS = (
 
 _MAX_DESCRIPTION_CHARS = 200
 
+# 每种日志模式的单次采集内最多保留数量，防止 State 无限膨胀。
+_MAX_DIAGNOSTICS_PER_KIND: dict[str, int] = {
+    "panic": 1,
+    "abort": 1,
+    "assert": 1,
+    "watchdog": 1,
+    "boot_loop": 1,
+    "error": 5,
+    "warning": 5,
+    "unknown": 1,
+}
+
 
 def _logical_command(port: str) -> list[str]:
     # 逻辑命令只保留动作与用户显式选择的串口名。
     return ["idf.py", "-p", port, "flash"]
+
+
+def _logical_monitor_command(port: str) -> list[str]:
+    return ["idf.py", "-p", port, "monitor"]
+
+
+def _parse_device_diagnostics(
+    log_text: str,
+) -> list[DeviceLogDiagnostic]:
+    """从脱敏后的串口日志中提取 ESP32 常见故障模式。"""
+
+    lines = log_text.splitlines()
+    diagnostics: list[DeviceLogDiagnostic] = []
+    claimed: set[int] = set()
+    kind_counts: dict[str, int] = {}
+
+    def add(
+        kind: str,
+        summary: str,
+        index: int,
+        context_lines: int,
+    ) -> None:
+        cap = _MAX_DIAGNOSTICS_PER_KIND.get(kind, 1)
+        if kind_counts.get(kind, 0) >= cap:
+            return
+
+        excerpt = [
+            line.strip()
+            for line in lines[index : index + context_lines]
+            if line.strip()
+        ]
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        diagnostics.append(
+            DeviceLogDiagnostic(
+                kind=kind,  # type: ignore[arg-type]
+                summary=summary,
+                lines=excerpt,
+            )
+        )
+        claimed.update(range(index, min(len(lines), index + context_lines)))
+
+    # 启动回环：单次采集内出现多次复位信号。
+    reset_indices = [
+        index
+        for index, line in enumerate(lines)
+        if "rst:0x" in line.casefold()
+    ]
+    if len(reset_indices) >= 2:
+        add(
+            "boot_loop",
+            "检测到重复复位，疑似启动回环",
+            reset_indices[0],
+            4,
+        )
+
+    for index, line in enumerate(lines):
+        if index in claimed:
+            continue
+
+        lowered = line.casefold()
+        if "guru meditation error" in lowered:
+            add("panic", "Guru Meditation 崩溃", index, 6)
+        elif "abort() was called" in lowered:
+            add("abort", "abort() 被调用", index, 4)
+        elif "assert failed" in lowered:
+            add("assert", "断言失败", index, 4)
+        elif "watchdog" in lowered or "task_wdt" in lowered:
+            add("watchdog", "看门狗触发", index, 4)
+        elif lowered.startswith("e ("):
+            add("error", "ESP-IDF 错误日志", index, 2)
+        elif lowered.startswith("w ("):
+            add("warning", "ESP-IDF 警告日志", index, 2)
+        elif "backtrace:" in lowered:
+            add("unknown", "未归类的回溯信息", index, 6)
+
+    return diagnostics
 
 
 def _validate_port_name(port: str) -> None:
@@ -65,12 +158,14 @@ class EspIdfDeviceAdapter:
         idf_command: Sequence[str] = ("idf.py",),
         flash_timeout_seconds: int = 300,
         max_summary_chars: int = 16_000,
+        max_monitor_chars: int = 32_000,
     ) -> None:
         self.idf_command = validate_idf_command_tokens(idf_command)
 
         limits = {
             "flash_timeout_seconds": flash_timeout_seconds,
             "max_summary_chars": max_summary_chars,
+            "max_monitor_chars": max_monitor_chars,
         }
 
         for name, value in limits.items():
@@ -83,6 +178,7 @@ class EspIdfDeviceAdapter:
 
         self.flash_timeout_seconds = flash_timeout_seconds
         self.max_summary_chars = max_summary_chars
+        self.max_monitor_chars = max_monitor_chars
 
     def discover_serial_ports(self) -> list[SerialPortInfo]:
         ports: list[SerialPortInfo] = []
@@ -212,3 +308,96 @@ class EspIdfDeviceAdapter:
             return "environment"
 
         return "unknown"
+
+    def _terminate_process_tree(self, process: subprocess.Popen[str]) -> None:
+        # 尽力清理：idf.py monitor 会派生自己的监控子进程，
+        # 只终止直接子进程可能让子进程继续占用串口。
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+            else:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        except OSError:
+            pass
+
+    def monitor(
+        self,
+        project_path: Path,
+        port: str,
+        timeout_seconds: int,
+    ) -> MonitorEvidence:
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, int)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a positive integer")
+
+        _validate_port_name(port)
+        root = _resolve_project_root(project_path)
+        validate_espidf_launcher(self.idf_command)
+
+        environment = build_safe_idf_environment(
+            allow_dependency_downloads=False,
+        )
+        # Windows 上以独立进程组启动，超时后 taskkill /T 才能带走整棵树。
+        creationflags = (
+            subprocess.CREATE_NEW_PROCESS_GROUP
+            if os.name == "nt"
+            else 0
+        )
+
+        try:
+            process = subprocess.Popen(
+                [*self.idf_command, "-p", port, "monitor"],
+                cwd=root,
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                creationflags=creationflags,
+            )
+        except OSError as error:
+            raise EspIdfError(
+                category="process",
+                message="ESP-IDF 进程无法启动",
+                retryable=True,
+            ) from error
+
+        terminated_by_timeout = False
+        try:
+            # 采集窗口：等待进程输出或超时，二者都是正常结果。
+            stdout, stderr = process.communicate(
+                timeout=timeout_seconds
+            )
+        except subprocess.TimeoutExpired:
+            terminated_by_timeout = True
+            self._terminate_process_tree(process)
+            stdout, stderr = process.communicate()
+
+        sanitized_log = _sanitize_output(
+            f"{stdout or ''}\n{stderr or ''}",
+            root,
+            self.max_monitor_chars,
+        )
+
+        return MonitorEvidence(
+            command=_logical_monitor_command(port),
+            port=port,
+            capture_timeout_seconds=timeout_seconds,
+            captured_log=sanitized_log,
+            terminated_by_timeout=terminated_by_timeout,
+            diagnostics=_parse_device_diagnostics(sanitized_log),
+        )

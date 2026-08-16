@@ -72,3 +72,55 @@ class ApprovalRequest(BaseModel):
     summary: str = Field(min_length=1)
     step_description: str = Field(min_length=1)
     attempts: int = Field(ge=0)
+
+
+class DeviceLogDiagnostic(BaseModel):
+    # 从受控采集的串口日志中结构化提取的故障模式。
+    kind: Literal[
+        "panic",
+        "abort",
+        "assert",
+        "watchdog",
+        "boot_loop",
+        "error",
+        "warning",
+        "unknown",
+    ]
+    summary: str = Field(min_length=1)
+    # 仅保留脱敏后的少量上下文行，避免把整段日志放进 State。
+    lines: list[str] = Field(default_factory=list, max_length=8)
+
+
+class MonitorEvidence(BaseModel):
+    command: list[str] = Field(min_length=1)
+    port: str
+    capture_timeout_seconds: int = Field(ge=1)
+    # 已经过 ANSI/绝对路径脱敏并限长的日志正文。
+    captured_log: str = ""
+    # True 表示采集窗口正常到期；False 表示进程自行退出。
+    terminated_by_timeout: bool
+    diagnostics: list[DeviceLogDiagnostic] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_port_has_no_whitespace(self) -> MonitorEvidence:
+        if any(character.isspace() for character in self.port):
+            raise ValueError("monitor evidence port cannot contain whitespace")
+
+        return self
+
+
+class DeviceDiagnosis(BaseModel):
+    # 日志分析结论：healthy 与 repair_needed 互斥。
+    healthy: bool
+    repair_needed: bool
+    summary: str = Field(min_length=1)
+    findings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_diagnosis_consistency(self) -> DeviceDiagnosis:
+        if self.healthy and self.repair_needed:
+            raise ValueError(
+                "healthy diagnosis cannot require a repair"
+            )
+
+        return self

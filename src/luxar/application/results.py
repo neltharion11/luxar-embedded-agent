@@ -40,6 +40,12 @@ def state_to_result(state: WorkflowState) -> dict[str, object]:
         ),
         "build_evidence": _serialize_model(state.get("build_evidence")),
         "flash_evidence": _serialize_model(state.get("flash_evidence")),
+        "monitor_evidence": _serialize_model(
+            state.get("monitor_evidence")
+        ),
+        "device_diagnosis": _serialize_model(
+            state.get("device_diagnosis")
+        ),
         "approval_status": state.get(
             "approval_status",
             "not_requested",

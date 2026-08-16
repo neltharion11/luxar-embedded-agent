@@ -174,5 +174,38 @@ def test_bootstrap_constructs_device_adapter_and_memory_checkpointer() -> None:
     )
 
     assert isinstance(context.flasher, EspIdfDeviceAdapter)
+    assert context.monitor is context.flasher
     assert isinstance(context.checkpointer, InMemorySaver)
     assert context.serial_port is None
+    assert context.monitor_timeout_seconds == 10
+
+
+def test_bootstrap_injects_monitor_analyst_and_window() -> None:
+    from luxar.adapters.deepseek.log_analyst import DeepSeekLogAnalyst
+    from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+    from luxar.adapters.fake_monitor import FakeMonitor
+
+    monitor = FakeMonitor([])
+    analyst = FakeLogAnalyst([])
+    context = build_deepseek_runtime_context(
+        espidf=FakeEspIdf([]),
+        workspace=FakeWorkspace([]),
+        project_path=Path("firmware"),
+        monitor=monitor,
+        log_analyst=analyst,
+        monitor_timeout_seconds=30,
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert context.monitor is monitor
+    assert context.log_analyst is analyst
+    assert context.monitor_timeout_seconds == 30
+    # 未注入分析师时默认使用修复级模型。
+    default_context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+    assert isinstance(default_context.log_analyst, DeepSeekLogAnalyst)
+    assert default_context.log_analyst._model == "deepseek-v4-pro"

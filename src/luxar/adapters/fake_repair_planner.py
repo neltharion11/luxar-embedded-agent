@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from luxar.domain.devices import DeviceDiagnosis
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan
 from luxar.domain.repairs import ProjectFile, RepairPlan
@@ -11,13 +12,14 @@ from luxar.domain.requirements import FirmwareRequirement
 class FakeRepairPlanner:
     def __init__(self, repair: RepairPlan) -> None:
         self.repair = repair
-        # 嵌套 tuple 类型精确描述每条调用记录中四个位置的类型。
+        # 嵌套 tuple 类型精确描述每条调用记录中五个位置的类型。
         self.calls: list[
             tuple[
                 FirmwareRequirement,
                 ExecutionPlan,
                 BuildEvidence,
                 list[ProjectFile],
+                DeviceDiagnosis | None,
             ]
         ] = []
 
@@ -27,6 +29,7 @@ class FakeRepairPlanner:
         plan: ExecutionPlan,
         evidence: BuildEvidence,
         files: list[ProjectFile],
+        device_diagnosis: DeviceDiagnosis | None = None,
     ) -> RepairPlan:
         self.calls.append(
             (
@@ -35,6 +38,7 @@ class FakeRepairPlanner:
                 evidence,
                 # 复制文件列表，避免调用后修改原列表导致历史记录跟着变化。
                 list(files),
+                device_diagnosis,
             )
         )
 

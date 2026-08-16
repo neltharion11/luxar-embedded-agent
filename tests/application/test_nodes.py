@@ -5,6 +5,8 @@ from langgraph.runtime import Runtime
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_flasher import FakeFlasher
+from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+from luxar.adapters.fake_monitor import FakeMonitor
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -12,6 +14,7 @@ from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
 from luxar.application.context import RuntimeContext
 from luxar.application.nodes import (
+    analyze_device_logs,
     analyze_requirement,
     build_project,
     completed,
@@ -19,8 +22,14 @@ from luxar.application.nodes import (
     create_project,
     execute_next_step,
     failed,
+    monitor_project,
     repair_project,
     request_clarification,
+)
+from luxar.domain.devices import (
+    DeviceDiagnosis,
+    DeviceLogDiagnostic,
+    MonitorEvidence,
 )
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan, PlanStep
@@ -76,6 +85,9 @@ def test_analyze_requirement_uses_runtime_parser_and_updates_state() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
     runtime = Runtime(context=context)
     state = {
@@ -129,6 +141,9 @@ def test_create_plan_passes_structured_requirement_to_runtime_planner() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     update = create_plan(
@@ -173,6 +188,9 @@ def test_build_project_records_tool_evidence_attempt_and_path() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     update = build_project(
@@ -274,6 +292,9 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
     state = {
         "requirement": requirement,
@@ -286,11 +307,14 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
     update = repair_project(state, Runtime(context=context))
 
     assert workspace.read_calls == [project_path]
-    assert repair_planner.calls == [(requirement, plan, evidence, files)]
+    assert repair_planner.calls == [
+        (requirement, plan, evidence, files, None)
+    ]
     assert workspace.apply_calls == [(project_path, repair)]
     assert update == {
         "repair_plan": repair,
         "changed_files": ["main/main.c"],
+        "repair_origin": "build",
         "status": "repaired",
         "trace": [
             "analyze_requirement",
@@ -388,28 +412,31 @@ def test_execute_next_step_supports_build_steps_in_s1() -> None:
     assert "error" not in update
 
 
-def test_execute_next_step_rejects_not_yet_supported_step_with_fixed_error() -> None:
-    # S3 实现了 create/build/flash；监控步骤在 S4 之前必须给出固定失败。
-    state = {
-        "plan": ExecutionPlan(
-            steps=[
-                PlanStep(kind="build_project", description="Build"),
-                PlanStep(kind="flash_project", description="Flash"),
-                PlanStep(kind="monitor_project", description="Monitor"),
-            ]
-        ),
-        "plan_index": 2,
-        "trace": [],
-    }
+def test_execute_next_step_rejects_unknown_step_with_fixed_error() -> None:
+    # 领域验证器会挡住未知步骤；此处用 model_construct 绕过验证，
+    # 证明分发器自身仍有第二道防御。
+    plan = ExecutionPlan.model_construct(
+        steps=[
+            PlanStep.model_construct(
+                kind="erase_flash",  # type: ignore[arg-type]
+                description="未知动作",
+            )
+        ]
+    )
+    update = execute_next_step(
+        {
+            "plan": plan,
+            "plan_index": 0,
+            "trace": [],
+        }
+    )
 
-    update = execute_next_step(state)
-
-    assert update["pending_step_kind"] == "monitor_project"
+    assert update["pending_step_kind"] == "erase_flash"
     error = update["error"]
     assert error.stage == "planning"
     assert error.category == "model_output"
     assert error.retryable is False
-    assert "monitor_project" in error.message
+    assert "erase_flash" in error.message
     assert error.user_suggestion
 
 
@@ -441,6 +468,9 @@ def test_create_project_uses_context_creator_and_explicit_target() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     update = create_project(
@@ -481,6 +511,9 @@ def test_create_project_falls_back_to_requirement_target() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     create_project(
@@ -491,3 +524,188 @@ def test_create_project_falls_back_to_requirement_target() -> None:
     assert creator.calls == [
         (Path("workspace"), "blink", "esp32")
     ]
+
+
+def monitor_evidence() -> MonitorEvidence:
+    return MonitorEvidence(
+        command=["idf.py", "-p", "COM3", "monitor"],
+        port="COM3",
+        capture_timeout_seconds=10,
+        captured_log="boot ok",
+        terminated_by_timeout=True,
+    )
+
+
+def test_monitor_project_uses_context_port_and_window() -> None:
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    plan = ExecutionPlan(
+        steps=[PlanStep(kind="build_project", description="Build project")]
+    )
+    monitor = FakeMonitor([monitor_evidence()])
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([]),
+        project_path=Path("workspace/blink"),
+        repair_planner=configured_repair_planner(),
+        workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
+        flasher=FakeFlasher([]),
+        monitor=monitor,
+        log_analyst=FakeLogAnalyst([]),
+        serial_port="COM3",
+        monitor_timeout_seconds=25,
+        checkpointer=InMemorySaver(),
+    )
+
+    update = monitor_project(
+        {"trace": ["analyze_requirement", "create_plan"]},
+        Runtime(context=context),
+    )
+
+    assert update == {
+        "monitor_evidence": monitor_evidence(),
+        "status": "monitoring",
+        "trace": [
+            "analyze_requirement",
+            "create_plan",
+            "monitor_project",
+        ],
+    }
+    assert monitor.calls == [
+        (Path("workspace/blink"), "COM3", 25)
+    ]
+
+
+def test_analyze_device_logs_healthy_diagnosis() -> None:
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    plan = ExecutionPlan(
+        steps=[PlanStep(kind="build_project", description="Build project")]
+    )
+    diagnosis = DeviceDiagnosis(
+        healthy=True,
+        repair_needed=False,
+        summary="运行正常",
+    )
+    analyst = FakeLogAnalyst([diagnosis])
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([]),
+        project_path=Path("workspace/blink"),
+        repair_planner=configured_repair_planner(),
+        workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
+        flasher=FakeFlasher([]),
+        monitor=FakeMonitor([]),
+        log_analyst=analyst,
+        serial_port=None,
+        monitor_timeout_seconds=10,
+        checkpointer=InMemorySaver(),
+    )
+    evidence = monitor_evidence()
+
+    update = analyze_device_logs(
+        {
+            "requirement": requirement,
+            "monitor_evidence": evidence,
+            "trace": ["monitor_project"],
+        },
+        Runtime(context=context),
+    )
+
+    assert update == {
+        "device_diagnosis": diagnosis,
+        "device_cycles": 1,
+        "status": "diagnosed",
+        "trace": ["monitor_project", "analyze_device_logs"],
+    }
+    assert analyst.calls == [(requirement, evidence)]
+
+
+def test_analyze_device_logs_budget_exhaustion_sets_fixed_error() -> None:
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    plan = ExecutionPlan(
+        steps=[PlanStep(kind="build_project", description="Build project")]
+    )
+    diagnosis = DeviceDiagnosis(
+        healthy=False,
+        repair_needed=True,
+        summary="仍然崩溃",
+    )
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([]),
+        project_path=Path("workspace/blink"),
+        repair_planner=configured_repair_planner(),
+        workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
+        flasher=FakeFlasher([]),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([diagnosis]),
+        serial_port=None,
+        monitor_timeout_seconds=10,
+        checkpointer=InMemorySaver(),
+    )
+
+    update = analyze_device_logs(
+        {
+            "requirement": requirement,
+            "monitor_evidence": monitor_evidence(),
+            "device_cycles": 3,
+            "trace": [],
+        },
+        Runtime(context=context),
+    )
+
+    assert update["device_cycles"] == 4
+    error = update["error"]
+    assert error.stage == "monitor"
+    assert error.category == "unknown"
+    assert error.retryable is False
+    assert "上限" in error.message
+
+
+def test_analyze_device_logs_unhealthy_without_repair_sets_error() -> None:
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    plan = ExecutionPlan(
+        steps=[PlanStep(kind="build_project", description="Build project")]
+    )
+    diagnosis = DeviceDiagnosis(
+        healthy=False,
+        repair_needed=False,
+        summary="疑似硬件故障",
+    )
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([]),
+        project_path=Path("workspace/blink"),
+        repair_planner=configured_repair_planner(),
+        workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
+        flasher=FakeFlasher([]),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([diagnosis]),
+        serial_port=None,
+        monitor_timeout_seconds=10,
+        checkpointer=InMemorySaver(),
+    )
+
+    update = analyze_device_logs(
+        {
+            "requirement": requirement,
+            "monitor_evidence": monitor_evidence(),
+            "trace": [],
+        },
+        Runtime(context=context),
+    )
+
+    error = update["error"]
+    assert error.stage == "monitor"
+    assert "未发现可修复项" in error.message

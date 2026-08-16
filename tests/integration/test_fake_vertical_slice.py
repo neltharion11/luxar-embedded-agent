@@ -4,6 +4,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_flasher import FakeFlasher
+from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+from luxar.adapters.fake_monitor import FakeMonitor
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -60,6 +62,9 @@ def make_fixture(
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
     return (
         context,
@@ -149,6 +154,7 @@ def test_source_failure_is_repaired_rebuilt_and_completed() -> None:
             plan,
             failed,
             [ProjectFile(path="main/main.c", content="broken source")],
+            None,
         )
     ]
 
@@ -346,6 +352,9 @@ def test_creation_then_build_completes_with_both_evidences() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     result = build_graph().invoke(
@@ -431,6 +440,9 @@ def test_create_build_flash_slice_completes_with_approval() -> None:
         flasher=FakeFlasher([flashed]),
         serial_port="COM3",
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     run_result = run_workflow(

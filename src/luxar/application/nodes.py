@@ -18,6 +18,7 @@ _SUPPORTED_STEP_KINDS = frozenset(
         "create_project",
         "build_project",
         "flash_project",
+        "monitor_project",
     }
 )
 
@@ -313,12 +314,16 @@ def repair_project(
     # 先由 Workspace 受控读取文件，RepairPlanner 本身没有任意磁盘访问权限。
     files = workspace.read_project_files(project_path)
 
+    # 设备回路修复携带日志诊断；纯构建修复传 None。
+    device_diagnosis = state.get("device_diagnosis")
+
     # 修复模型同时看到需求、原计划、失败证据和源码，返回经过验证的 RepairPlan。
     repair = repair_planner.create_repair(
         state["requirement"],
         state["plan"],
         state["build_evidence"],
         files,
+        device_diagnosis=device_diagnosis,
     )
 
     # 只有 Workspace 能产生写文件副作用，并返回实际修改的相对路径。
@@ -327,13 +332,108 @@ def repair_project(
         repair,
     )
 
+    # 记录本次修复的触发来源：路由据此决定重建成功后的去向。
+    repair_origin = (
+        "monitor" if device_diagnosis is not None else "build"
+    )
+
     # 此处不返回 attempts 和 build_evidence，因此旧值会保留；下一次构建才覆盖证据。
     return {
         "repair_plan": repair,
         "changed_files": changed_files,
+        "repair_origin": repair_origin,
         "status": "repaired",
         "trace": [
             *state.get("trace", []),
             "repair_project",
         ],
     }
+
+
+# 设备修复回路的最大轮数；耗尽后终止，防止硬件回路无限运行。
+_MAX_DEVICE_CYCLES = 3
+
+_DEVICE_BUDGET_MESSAGE = "设备修复循环达到上限"
+
+_DEVICE_BUDGET_SUGGESTION = "请人工检查硬件连接与固件逻辑"
+
+_NO_REPAIR_MESSAGE = "设备运行日志异常但未发现可修复项"
+
+_NO_REPAIR_SUGGESTION = "请人工检查设备运行日志"
+
+
+def monitor_project(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    port = runtime.context.serial_port
+    if port is None:
+        raise EspIdfError(
+            category="serial",
+            message="未配置监控串口",
+            retryable=False,
+        )
+
+    # 采集窗口由 Context 配置；超时是正常结束方式而不是失败。
+    evidence = runtime.context.monitor.monitor(
+        runtime.context.project_path,
+        port,
+        runtime.context.monitor_timeout_seconds,
+    )
+
+    return {
+        "monitor_evidence": evidence,
+        "status": "monitoring",
+        "trace": [
+            *state.get("trace", []),
+            "monitor_project",
+        ],
+    }
+
+
+def analyze_device_logs(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    # 只有 LogAnalystPort 能把日志变成诊断；LLM 无权直接宣称设备健康。
+    diagnosis = runtime.context.log_analyst.analyze(
+        state["requirement"],
+        state["monitor_evidence"],
+    )
+    cycles = state.get("device_cycles", 0) + 1
+
+    update: dict[str, object] = {
+        "device_diagnosis": diagnosis,
+        "device_cycles": cycles,
+        "status": "diagnosed",
+        "trace": [
+            *state.get("trace", []),
+            "analyze_device_logs",
+        ],
+    }
+
+    # 需要修复但预算耗尽：以固定脱敏错误终止。
+    if diagnosis.repair_needed and cycles > _MAX_DEVICE_CYCLES:
+        update["error"] = WorkflowError.model_validate(
+            {
+                "stage": "monitor",
+                "category": "unknown",
+                "message": _DEVICE_BUDGET_MESSAGE,
+                "retryable": False,
+                "user_suggestion": _DEVICE_BUDGET_SUGGESTION,
+            }
+        )
+
+    # 不健康但无修复建议：同样终止，避免虚假完成。
+    if not diagnosis.healthy and not diagnosis.repair_needed:
+        update["error"] = WorkflowError.model_validate(
+            {
+                "stage": "monitor",
+                "category": "unknown",
+                "message": _NO_REPAIR_MESSAGE,
+                "retryable": False,
+                "user_suggestion": _NO_REPAIR_SUGGESTION,
+            }
+        )
+
+    return update

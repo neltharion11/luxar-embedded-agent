@@ -8,6 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from luxar.application.context import RuntimeContext
 from luxar.application.nodes import (
+    analyze_device_logs,
     analyze_requirement,
     build_project,
     completed,
@@ -16,6 +17,7 @@ from luxar.application.nodes import (
     execute_next_step,
     failed,
     flash_project,
+    monitor_project,
     repair_project,
     request_clarification,
     request_flash_approval,
@@ -23,6 +25,7 @@ from luxar.application.nodes import (
 from luxar.application.routing import (
     route_after_approval,
     route_after_build,
+    route_after_diagnosis,
     route_after_dispatch,
     route_after_flash,
     route_after_project_creation,
@@ -75,6 +78,14 @@ def build_graph(
         flash_project,
     )
     builder.add_node(
+        "monitor_project",
+        monitor_project,
+    )
+    builder.add_node(
+        "analyze_device_logs",
+        analyze_device_logs,
+    )
+    builder.add_node(
         "request_clarification",
         request_clarification,
     )
@@ -117,6 +128,7 @@ def build_graph(
             "create_project": "create_project",
             "build_project": "build_project",
             "request_flash_approval": "request_flash_approval",
+            "monitor_project": "monitor_project",
             "completed": "completed",
             "failed": "failed",
         },
@@ -132,12 +144,13 @@ def build_graph(
         },
     )
 
-    # 构建后可能继续计划、修复、原样重试或失败，其中自环代表 timeout 重试。
+    # 构建后可能继续计划、进入设备回路、修复、原样重试或失败。
     builder.add_conditional_edges(
         "build_project",
         route_after_build,
         {
             "execute_next_step": "execute_next_step",
+            "request_flash_approval": "request_flash_approval",
             "repair_project": "repair_project",
             "build_project": "build_project",
             "failed": "failed",
@@ -164,7 +177,23 @@ def build_graph(
         route_after_flash,
         {
             "execute_next_step": "execute_next_step",
+            "monitor_project": "monitor_project",
             "flash_project": "flash_project",
+            "failed": "failed",
+        },
+    )
+
+    # 监控采集结束后进入日志分析；健康完成，需要修复进入设备回路。
+    builder.add_edge(
+        "monitor_project",
+        "analyze_device_logs",
+    )
+    builder.add_conditional_edges(
+        "analyze_device_logs",
+        route_after_diagnosis,
+        {
+            "repair_project": "repair_project",
+            "completed": "completed",
             "failed": "failed",
         },
     )

@@ -135,6 +135,45 @@ def test_repair_planner_sends_all_evidence_files_and_repair_model() -> None:
     assert model == "deepseek-v4-pro"
 
 
+def test_repair_planner_includes_device_diagnosis_when_present() -> None:
+    from luxar.domain.devices import DeviceDiagnosis
+
+    client = FakeJsonCompletionClient(
+        [
+            {
+                "diagnosis": "修复看门狗",
+                "replacements": [
+                    {
+                        "path": "main/main.c",
+                        "content": "fixed source",
+                    }
+                ],
+            }
+        ]
+    )
+    planner = DeepSeekRepairPlanner(client, "deepseek-v4-pro")
+    requirement, plan, evidence, files = make_repair_inputs()
+    diagnosis = DeviceDiagnosis(
+        healthy=False,
+        repair_needed=True,
+        summary="看门狗超时",
+        findings=["task_wdt 超时"],
+    )
+
+    planner.create_repair(
+        requirement,
+        plan,
+        evidence,
+        files,
+        device_diagnosis=diagnosis,
+    )
+
+    payload = json.loads(client.calls[0][1])
+    assert payload["device_diagnosis"] == diagnosis.model_dump(
+        mode="json"
+    )
+
+
 @pytest.mark.parametrize(
     "payload",
     [

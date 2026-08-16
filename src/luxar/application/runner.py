@@ -104,6 +104,7 @@ ProgressStage = Literal[
     "planning",
     "build",
     "flash",
+    "monitor",
     "repair",
     "clarification",
     "completed",
@@ -130,6 +131,7 @@ _PROGRESS_BY_NODE: dict[
     "analyze_requirement": ("requirement", "需求分析完成"),
     "create_plan": ("planning", "执行计划已生成"),
     "repair_project": ("repair", "已应用受限制的源码修复"),
+    "monitor_project": ("monitor", "已采集设备运行日志"),
     "request_clarification": ("clarification", "需要补充需求信息"),
     "completed": ("completed", "工作流执行成功"),
     "failed": ("failed", "工作流执行失败"),
@@ -232,6 +234,8 @@ def espidf_error_to_workflow_error(
         stage = "project_creation"
     elif pending == "flash_project":
         stage = "flash"
+    elif pending == "monitor_project":
+        stage = "monitor"
     else:
         stage = "build"
 

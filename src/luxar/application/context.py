@@ -8,8 +8,9 @@ from pathlib import Path
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from luxar.ports.espidf import EspIdfPort
-from luxar.ports.espidf_device import EspIdfFlashPort
+from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
 from luxar.ports.espidf_project import EspIdfProjectPort
+from luxar.ports.log_analyst import LogAnalystPort
 from luxar.ports.planner import Planner
 from luxar.ports.requirement_parser import RequirementParser
 from luxar.ports.repair_planner import RepairPlanner
@@ -30,7 +31,11 @@ class RuntimeContext:
     # 目标芯片的可选显式配置；为 None 时创建节点回退到 requirement.target。
     target_chip: str | None
     flasher: EspIdfFlashPort
-    # 烧录使用的串口名；None 表示未配置，烧录节点会给出脱敏错误。
+    monitor: EspIdfMonitorPort
+    log_analyst: LogAnalystPort
+    # 烧录与监控共用的串口名；None 表示未配置，节点给出脱敏错误。
     serial_port: str | None
+    # 串口日志采集窗口秒数；超时是监控的正常结束方式。
+    monitor_timeout_seconds: int
     # interrupt() 需要 checkpointer；生产默认 InMemorySaver，测试可注入。
     checkpointer: BaseCheckpointSaver

@@ -6,6 +6,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_flasher import FakeFlasher
+from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+from luxar.adapters.fake_monitor import FakeMonitor
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -61,6 +63,9 @@ def test_runtime_context_keeps_dependencies_outside_workflow_state() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     assert context.requirement_parser is parser

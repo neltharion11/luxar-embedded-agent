@@ -69,6 +69,7 @@ def _report_progress(progress: WorkflowProgress) -> None:
         "planning": "计划",
         "build": "构建",
         "flash": "烧录",
+        "monitor": "监控",
         "repair": "修复",
         "clarification": "澄清",
         "completed": "完成",

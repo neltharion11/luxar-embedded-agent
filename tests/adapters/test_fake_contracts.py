@@ -128,6 +128,7 @@ def test_fake_repair_planner_returns_configured_plan_and_records_inputs() -> Non
             plan,
             evidence,
             [ProjectFile(path="main/main.c", content="broken source")],
+            None,
         )
     ]
 
@@ -181,3 +182,69 @@ def test_fake_project_creator_returns_configured_evidence_in_order() -> None:
 
     with pytest.raises(RuntimeError, match="no configured evidence"):
         creator.create_project(parent, "blink", "esp32")
+
+
+def test_fake_monitor_returns_evidence_in_order_and_records_calls() -> None:
+    from luxar.adapters.fake_monitor import FakeMonitor
+    from luxar.domain.devices import MonitorEvidence
+
+    first = MonitorEvidence(
+        command=["idf.py", "-p", "COM3", "monitor"],
+        port="COM3",
+        capture_timeout_seconds=10,
+        captured_log="first",
+        terminated_by_timeout=True,
+    )
+    second = MonitorEvidence(
+        command=["idf.py", "-p", "COM3", "monitor"],
+        port="COM3",
+        capture_timeout_seconds=10,
+        captured_log="second",
+        terminated_by_timeout=True,
+    )
+    monitor = FakeMonitor([first, second])
+    project_path = Path("workspace/blink")
+
+    assert monitor.monitor(project_path, "COM3", 10) is first
+    assert monitor.monitor(project_path, "COM3", 10) is second
+    assert monitor.calls == [
+        (project_path, "COM3", 10),
+        (project_path, "COM3", 10),
+    ]
+
+    with pytest.raises(RuntimeError, match="no configured evidence"):
+        monitor.monitor(project_path, "COM3", 10)
+
+
+def test_fake_log_analyst_returns_diagnoses_in_order() -> None:
+    from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+    from luxar.domain.devices import (
+        DeviceDiagnosis,
+        MonitorEvidence,
+    )
+
+    healthy = DeviceDiagnosis(
+        healthy=True,
+        repair_needed=False,
+        summary="运行正常",
+    )
+    broken = DeviceDiagnosis(
+        healthy=False,
+        repair_needed=True,
+        summary="看门狗超时",
+    )
+    analyst = FakeLogAnalyst([broken, healthy])
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    evidence = MonitorEvidence(
+        command=["idf.py", "-p", "COM3", "monitor"],
+        port="COM3",
+        capture_timeout_seconds=10,
+        terminated_by_timeout=True,
+    )
+
+    assert analyst.analyze(requirement, evidence) is broken
+    assert analyst.analyze(requirement, evidence) is healthy
+    assert analyst.calls == [
+        (requirement, evidence),
+        (requirement, evidence),
+    ]

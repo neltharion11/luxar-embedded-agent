@@ -25,6 +25,7 @@ def route_after_dispatch(
     "create_project",
     "build_project",
     "request_flash_approval",
+    "monitor_project",
     "completed",
     "failed",
 ]:
@@ -39,6 +40,9 @@ def route_after_dispatch(
 
     if pending == "flash_project":
         return "request_flash_approval"
+
+    if pending == "monitor_project":
+        return "monitor_project"
 
     # 计划执行完毕时分发器写入 None，进入 completed 终态。
     if pending is None:
@@ -73,6 +77,7 @@ def route_after_flash(
     state: WorkflowState,
 ) -> Literal[
     "execute_next_step",
+    "monitor_project",
     "flash_project",
     "failed",
 ]:
@@ -81,6 +86,10 @@ def route_after_flash(
     attempts = state.get("flash_attempts", 0)
 
     if evidence.success:
+        # 设备回路中的重烧录必须回到监控，而不是重新走计划游标。
+        if state.get("repair_origin") == "monitor":
+            return "monitor_project"
+
         return "execute_next_step"
 
     if attempts >= 2:
@@ -92,21 +101,41 @@ def route_after_flash(
     return "failed"
 
 
+def route_after_diagnosis(
+    state: WorkflowState,
+) -> Literal["repair_project", "completed", "failed"]:
+    # 健康即完成；需要修复进入设备回路；其余情况终止（节点已写入错误）。
+    diagnosis = state["device_diagnosis"]
+
+    if diagnosis.healthy:
+        return "completed"
+
+    if diagnosis.repair_needed and "error" not in state:
+        return "repair_project"
+
+    return "failed"
+
+
 def route_after_build(
     state: WorkflowState,
 ) -> Literal[
     "execute_next_step",
+    "request_flash_approval",
     "repair_project",
     "build_project",
     "failed",
 ]:
-    # Literal 返回类型向编辑器声明：本函数只能选择这四个合法目的地。
+    # Literal 返回类型向编辑器声明：本函数只能选择这五个合法目的地。
     evidence = state["build_evidence"]
     attempts = state.get("attempts", 0)
     max_attempts = state.get("max_attempts", 1)
 
     # 成功必须最先判断：即使恰好用完最后一次预算，成功结果仍应继续计划。
     if evidence.success:
+        # 设备回路修复后的重建需要重新烧录验证。
+        if state.get("repair_origin") == "monitor":
+            return "request_flash_approval"
+
         return "execute_next_step"
 
     # 失败且预算耗尽时先终止，防止后续分支形成无限循环。

@@ -5,6 +5,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_flasher import FakeFlasher
+from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+from luxar.adapters.fake_monitor import FakeMonitor
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -59,6 +61,7 @@ class RaisingRepairPlanner:
         plan: ExecutionPlan,
         evidence: BuildEvidence,
         files: list[ProjectFile],
+        device_diagnosis=None,
     ) -> RepairPlan:
         raise self.error
 
@@ -143,6 +146,9 @@ def make_context(
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
 
@@ -541,6 +547,9 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     run_result = run_workflow(
@@ -636,6 +645,9 @@ def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
         flasher=FakeFlasher([]),
         serial_port=None,
         checkpointer=InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
     run_result = run_workflow(

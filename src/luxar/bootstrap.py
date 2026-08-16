@@ -16,6 +16,7 @@ from luxar.adapters.deepseek.client import (
     DeepSeekJsonClient,
     JsonCompletionClient,
 )
+from luxar.adapters.deepseek.log_analyst import DeepSeekLogAnalyst
 from luxar.adapters.deepseek.planner import DeepSeekPlanner
 from luxar.adapters.deepseek.repair_planner import DeepSeekRepairPlanner
 from luxar.adapters.deepseek.requirement_parser import (
@@ -24,8 +25,9 @@ from luxar.adapters.deepseek.requirement_parser import (
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.application.context import RuntimeContext
 from luxar.ports.espidf import EspIdfPort
-from luxar.ports.espidf_device import EspIdfFlashPort
+from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
 from luxar.ports.espidf_project import EspIdfProjectPort
+from luxar.ports.log_analyst import LogAnalystPort
 from luxar.ports.workspace import WorkspacePort
 
 
@@ -36,8 +38,11 @@ def build_deepseek_runtime_context(
     workspace: WorkspacePort | None = None,
     project_creator: EspIdfProjectPort | None = None,
     flasher: EspIdfFlashPort | None = None,
+    monitor: EspIdfMonitorPort | None = None,
+    log_analyst: LogAnalystPort | None = None,
     target_chip: str | None = None,
     serial_port: str | None = None,
+    monitor_timeout_seconds: int = 10,
     checkpointer: BaseCheckpointSaver | None = None,
     settings: DeepSeekSettings | None = None,
     client: JsonCompletionClient | None = None,
@@ -67,11 +72,15 @@ def build_deepseek_runtime_context(
             idf_command=idf_command,
         )
 
-    if flasher is None:
-        # 与其余硬件 Adapter 共享同一个经过校验的 idf.py 启动器。
-        flasher = EspIdfDeviceAdapter(
+    if flasher is None or monitor is None:
+        # 烧录与监控共享同一个无状态设备 Adapter。
+        device_adapter = EspIdfDeviceAdapter(
             idf_command=idf_command,
         )
+        if flasher is None:
+            flasher = device_adapter
+        if monitor is None:
+            monitor = device_adapter
 
     if checkpointer is None:
         # 进程内持久化：足以支持 interrupt() 与同进程恢复；
@@ -90,6 +99,12 @@ def build_deepseek_runtime_context(
         client=client,
         model=settings.repair_model,
     )
+    if log_analyst is None:
+        # 日志分析复用修复级模型，避免低能力模型漏报设备故障。
+        log_analyst = DeepSeekLogAnalyst(
+            client=client,
+            model=settings.repair_model,
+        )
 
     return RuntimeContext(
         requirement_parser=requirement_parser,
@@ -99,8 +114,11 @@ def build_deepseek_runtime_context(
         workspace=workspace,
         project_creator=project_creator,
         flasher=flasher,
+        monitor=monitor,
+        log_analyst=log_analyst,
         project_path=project_path,
         target_chip=target_chip,
         serial_port=serial_port,
+        monitor_timeout_seconds=monitor_timeout_seconds,
         checkpointer=checkpointer,
     )

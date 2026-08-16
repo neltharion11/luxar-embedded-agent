@@ -394,6 +394,8 @@ def test_json_mode_emits_one_stable_document_without_progress(
         "created_project": None,
         "build_evidence": evidence.model_dump(mode="json"),
         "flash_evidence": None,
+        "monitor_evidence": None,
+        "device_diagnosis": None,
         "approval_status": "not_requested",
         "repair_plan": None,
         "changed_files": [],

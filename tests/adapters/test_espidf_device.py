@@ -279,3 +279,211 @@ def test_flash_rejects_invalid_project(
         EspIdfDeviceAdapter().flash(tmp_path / "missing", "COM4")
 
     assert captured.value.category == "invalid_project"
+
+
+class FakeMonitorProcess:
+    pid = 4242
+
+    def __init__(
+        self,
+        stdout_text: str = "",
+        stderr_text: str = "",
+        *,
+        timeout_on_first_communicate: bool,
+    ) -> None:
+        self.stdout_text = stdout_text
+        self.stderr_text = stderr_text
+        self.timeout_on_first_communicate = timeout_on_first_communicate
+        self.terminated = False
+        self.killed = False
+
+    def communicate(
+        self,
+        timeout: float | None = None,
+    ) -> tuple[str, str]:
+        if timeout is not None and self.timeout_on_first_communicate:
+            self.timeout_on_first_communicate = False
+            raise subprocess.TimeoutExpired(["idf.py", "monitor"], timeout)
+        return self.stdout_text, self.stderr_text
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def _patch_popen(
+    monkeypatch: pytest.MonkeyPatch,
+    process: FakeMonitorProcess,
+) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    def fake_popen(*args: object, **kwargs: object) -> FakeMonitorProcess:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.Popen",
+        fake_popen,
+    )
+    return captured
+
+
+def test_monitor_captures_window_and_terminates_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    process = FakeMonitorProcess(
+        stdout_text=(
+            "rst:0x1 (POWERON_RESET)\n"
+            "Guru Meditation Error: Core 0 panic'ed\n"
+            "C:\\tools\\secret-path\n"
+        ),
+        timeout_on_first_communicate=True,
+    )
+    captured = _patch_popen(monkeypatch, process)
+    taskkill_calls: list[object] = []
+
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.run",
+        lambda *args, **kwargs: taskkill_calls.append(args),
+    )
+
+    evidence = EspIdfDeviceAdapter().monitor(project, "COM4", 10)
+
+    assert evidence.terminated_by_timeout is True
+    assert evidence.capture_timeout_seconds == 10
+    assert evidence.port == "COM4"
+    assert "secret-path" not in evidence.captured_log
+    assert "Guru Meditation Error" in evidence.captured_log
+    kinds = [diagnostic.kind for diagnostic in evidence.diagnostics]
+    assert "panic" in kinds
+    assert list(captured["args"][0]) == [
+        "idf.py",
+        "-p",
+        "COM4",
+        "monitor",
+    ]
+    assert captured["kwargs"]["shell"] is False
+    assert captured["kwargs"]["cwd"] == project.resolve()
+    # 超时后清理了整个进程树。
+    assert taskkill_calls
+    assert "4242" in str(taskkill_calls[0])
+
+
+def test_monitor_self_exit_is_not_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    process = FakeMonitorProcess(
+        stdout_text="boot ok\n",
+        timeout_on_first_communicate=False,
+    )
+    _patch_popen(monkeypatch, process)
+
+    evidence = EspIdfDeviceAdapter().monitor(project, "COM4", 10)
+
+    assert evidence.terminated_by_timeout is False
+    assert "boot ok" in evidence.captured_log
+
+
+def test_monitor_rejects_invalid_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+
+    with pytest.raises(EspIdfError) as captured:
+        EspIdfDeviceAdapter().monitor(project, "COM3;rm", 10)
+
+    assert captured.value.category == "serial"
+
+
+def test_monitor_rejects_invalid_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        EspIdfDeviceAdapter().monitor(project, "COM4", 0)
+
+
+def test_monitor_process_spawn_failure_is_sanitized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+
+    def raise_oserror(*args: object, **kwargs: object) -> None:
+        raise OSError("SECRET_PROCESS_DETAIL")
+
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.Popen",
+        raise_oserror,
+    )
+
+    with pytest.raises(EspIdfError) as captured:
+        EspIdfDeviceAdapter().monitor(project, "COM4", 10)
+
+    assert captured.value.category == "process"
+    assert "SECRET_PROCESS_DETAIL" not in captured.value.message
+
+
+@pytest.mark.parametrize(
+    ("log_text", "expected_kind"),
+    [
+        ("Guru Meditation Error: Core 0 panic'ed", "panic"),
+        ("abort() was called on CPU0", "abort"),
+        ("assert failed: xQueueSemaphoreTake", "assert"),
+        ("task_wdt: Task watchdog got triggered", "watchdog"),
+        ("I (0) cpu_start: starting\nBacktrace: 0x4001", "unknown"),
+        ("E (1234) gpio: failed to init", "error"),
+        ("W (1234) wifi: weak signal", "warning"),
+    ],
+)
+def test_parse_device_diagnostics_patterns(
+    log_text: str,
+    expected_kind: str,
+) -> None:
+    from luxar.adapters.espidf_device import _parse_device_diagnostics
+
+    diagnostics = _parse_device_diagnostics(log_text)
+
+    assert [diagnostic.kind for diagnostic in diagnostics] == [
+        expected_kind
+    ]
+
+
+def test_parse_device_diagnostics_detects_boot_loop() -> None:
+    from luxar.adapters.espidf_device import _parse_device_diagnostics
+
+    diagnostics = _parse_device_diagnostics(
+        "rst:0x1 (POWERON_RESET)\n"
+        "boot: starting\n"
+        "rst:0x1 (POWERON_RESET)\n"
+        "boot: starting\n"
+    )
+
+    assert [diagnostic.kind for diagnostic in diagnostics] == [
+        "boot_loop"
+    ]
+
+
+def test_parse_device_diagnostics_bounds_error_count() -> None:
+    from luxar.adapters.espidf_device import _parse_device_diagnostics
+
+    log = "\n\n".join(f"E (1{i}) comp: message {i}" for i in range(12))
+    diagnostics = _parse_device_diagnostics(log)
+
+    assert len(diagnostics) == 5
+    assert all(diagnostic.kind == "error" for diagnostic in diagnostics)

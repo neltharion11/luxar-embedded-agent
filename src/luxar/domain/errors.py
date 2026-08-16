@@ -14,6 +14,7 @@ class WorkflowError(BaseModel):
         "project_creation",
         "build",
         "flash",
+        "monitor",
         "repair",
     ]
 

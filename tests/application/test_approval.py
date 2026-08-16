@@ -6,6 +6,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_flasher import FakeFlasher
+from luxar.adapters.fake_log_analyst import FakeLogAnalyst
+from luxar.adapters.fake_monitor import FakeMonitor
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -68,6 +70,9 @@ def make_context(
         flasher=flasher,
         serial_port=serial_port,
         checkpointer=checkpointer or InMemorySaver(),
+        monitor=FakeMonitor([]),
+        log_analyst=FakeLogAnalyst([]),
+        monitor_timeout_seconds=10,
     )
 
 

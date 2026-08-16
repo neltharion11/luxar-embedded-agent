@@ -3,7 +3,10 @@ from pydantic import ValidationError
 
 from luxar.domain.devices import (
     ApprovalRequest,
+    DeviceDiagnosis,
+    DeviceLogDiagnostic,
     FlashEvidence,
+    MonitorEvidence,
     SerialPortInfo,
 )
 
@@ -113,4 +116,81 @@ def test_approval_request_rejects_invalid_fields(
                 "attempts": 0,
                 field: value,
             }
+        )
+
+
+def test_monitor_evidence_accepts_capture_window() -> None:
+    evidence = MonitorEvidence(
+        command=["idf.py", "-p", "COM3", "monitor"],
+        port="COM3",
+        capture_timeout_seconds=10,
+        captured_log="boot ok",
+        terminated_by_timeout=True,
+        diagnostics=[
+            DeviceLogDiagnostic(
+                kind="boot_loop",
+                summary="重复复位",
+                lines=["rst:0x1", "rst:0x1"],
+            )
+        ],
+    )
+
+    assert evidence.terminated_by_timeout is True
+    assert len(evidence.diagnostics) == 1
+
+
+def test_monitor_evidence_rejects_invalid_values() -> None:
+    with pytest.raises(ValidationError):
+        MonitorEvidence(
+            command=["idf.py", "-p", "COM3", "monitor"],
+            port="COM 3",
+            capture_timeout_seconds=10,
+            terminated_by_timeout=False,
+        )
+
+    with pytest.raises(ValidationError):
+        MonitorEvidence(
+            command=["idf.py", "-p", "COM3", "monitor"],
+            port="COM3",
+            capture_timeout_seconds=0,
+            terminated_by_timeout=False,
+        )
+
+
+def test_device_diagnosis_accepts_healthy() -> None:
+    diagnosis = DeviceDiagnosis(
+        healthy=True,
+        repair_needed=False,
+        summary="运行正常",
+    )
+
+    assert diagnosis.healthy is True
+
+
+def test_device_diagnosis_accepts_repair_needed() -> None:
+    diagnosis = DeviceDiagnosis(
+        healthy=False,
+        repair_needed=True,
+        summary="看门狗超时",
+        findings=["task_wdt 超时"],
+    )
+
+    assert diagnosis.repair_needed is True
+
+
+def test_device_diagnosis_rejects_healthy_with_repair() -> None:
+    with pytest.raises(ValidationError, match="cannot require a repair"):
+        DeviceDiagnosis(
+            healthy=True,
+            repair_needed=True,
+            summary="矛盾诊断",
+        )
+
+
+def test_device_diagnosis_rejects_empty_summary() -> None:
+    with pytest.raises(ValidationError):
+        DeviceDiagnosis(
+            healthy=True,
+            repair_needed=False,
+            summary="",
         )
