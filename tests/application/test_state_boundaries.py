@@ -5,6 +5,7 @@ import pytest
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_planner import FakePlanner
+from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
 from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
@@ -45,6 +46,7 @@ def test_runtime_context_keeps_dependencies_outside_workflow_state() -> None:
         )
     )
     workspace = FakeWorkspace([])
+    project_creator = FakeProjectCreator([])
     context = RuntimeContext(
         requirement_parser=parser,
         planner=planner,
@@ -52,6 +54,8 @@ def test_runtime_context_keeps_dependencies_outside_workflow_state() -> None:
         project_path=Path("workspace/blink"),
         repair_planner=repair_planner,
         workspace=workspace,
+        project_creator=project_creator,
+        target_chip=None,
     )
 
     assert context.requirement_parser is parser
@@ -59,6 +63,8 @@ def test_runtime_context_keeps_dependencies_outside_workflow_state() -> None:
     assert context.espidf is espidf
     assert context.repair_planner is repair_planner
     assert context.workspace is workspace
+    assert context.project_creator is project_creator
+    assert context.target_chip is None
 
     with pytest.raises(FrozenInstanceError):
         context.project_path = Path("workspace/other")  # type: ignore[misc]

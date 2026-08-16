@@ -9,9 +9,10 @@ from luxar.application.state import WorkflowState
 from luxar.domain.errors import WorkflowError
 
 
-# S1 只有 build_project 真正可执行；后续切片逐个放开其余步骤。
+# 已实现步骤词表随切片扩展；未进入本表的步骤会被分发器拒绝。
 _SUPPORTED_STEP_KINDS = frozenset(
     {
+        "create_project",
         "build_project",
     }
 )
@@ -100,6 +101,32 @@ def execute_next_step(
         )
 
     return update
+
+
+def create_project(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    # 项目只能创建在 Context 指定的父目录内；芯片优先采用显式配置。
+    project_path = runtime.context.project_path
+    target_chip = (
+        runtime.context.target_chip
+        or state["requirement"].target
+    )
+    evidence = runtime.context.project_creator.create_project(
+        parent_dir=project_path.parent,
+        project_name=project_path.name,
+        target_chip=target_chip,
+    )
+
+    return {
+        "created_project": evidence,
+        "status": "project_created",
+        "trace": [
+            *state.get("trace", []),
+            "create_project",
+        ],
+    }
 
 
 def build_project(

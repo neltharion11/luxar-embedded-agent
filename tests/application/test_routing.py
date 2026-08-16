@@ -3,9 +3,11 @@ import pytest
 from luxar.application.routing import (
     route_after_build,
     route_after_dispatch,
+    route_after_project_creation,
     route_after_requirement,
 )
 from luxar.domain.evidence import BuildEvidence
+from luxar.domain.projects import ProjectEvidence
 from luxar.domain.requirements import FirmwareRequirement
 
 
@@ -43,6 +45,12 @@ def test_dispatch_routes_build_step_to_build_node() -> None:
     assert route_after_dispatch(state) == "build_project"
 
 
+def test_dispatch_routes_creation_step_to_creation_node() -> None:
+    state = {"pending_step_kind": "create_project"}
+
+    assert route_after_dispatch(state) == "create_project"
+
+
 def test_dispatch_routes_none_to_completed() -> None:
     state = {"pending_step_kind": None}
 
@@ -51,7 +59,7 @@ def test_dispatch_routes_none_to_completed() -> None:
 
 @pytest.mark.parametrize(
     "pending_kind",
-    ["create_project", "flash_project", "monitor_project"],
+    ["flash_project", "monitor_project"],
 )
 def test_dispatch_routes_not_yet_supported_steps_to_failed(
     pending_kind: str,
@@ -59,6 +67,32 @@ def test_dispatch_routes_not_yet_supported_steps_to_failed(
     state = {"pending_step_kind": pending_kind}
 
     assert route_after_dispatch(state) == "failed"
+
+
+def test_successful_creation_continues_plan() -> None:
+    state = {
+        "created_project": ProjectEvidence(
+            success=True,
+            command=["idf.py", "create-project", "blink"],
+            return_code=0,
+            created_dir="blink",
+        )
+    }
+
+    assert route_after_project_creation(state) == "execute_next_step"
+
+
+def test_failed_creation_terminates() -> None:
+    state = {
+        "created_project": ProjectEvidence(
+            success=False,
+            command=["idf.py", "create-project", "blink"],
+            return_code=1,
+            error_category="environment",
+        )
+    }
+
+    assert route_after_project_creation(state) == "failed"
 
 
 def test_successful_final_attempt_continues_plan() -> None:

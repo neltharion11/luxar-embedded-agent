@@ -34,14 +34,75 @@ def test_main_rejects_invalid_project_inputs(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    missing = tmp_path / "missing"
-    assert cli.main(["run", "--project", str(missing), "--task", "build"]) == 2
-    assert "项目路径不存在或不是目录" in capsys.readouterr().err
+    missing_parent = tmp_path / "missing-parent" / "blink"
+    assert (
+        cli.main(
+            [
+                "run",
+                "--project",
+                str(missing_parent),
+                "--task",
+                "build",
+            ]
+        )
+        == 2
+    )
+    assert "项目父目录不存在或不是目录" in capsys.readouterr().err
 
     file_path = tmp_path / "file"
     file_path.write_text("not a directory", encoding="utf-8")
     assert cli.main(["run", "--project", str(file_path), "--task", "build"]) == 2
-    assert "项目路径不存在或不是目录" in capsys.readouterr().err
+    assert "项目路径已存在但不是目录" in capsys.readouterr().err
+
+
+def test_main_allows_not_yet_existing_project_for_creation_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def fake_bootstrap(**kwargs: object) -> object:
+        received.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(cli, "build_deepseek_runtime_context", fake_bootstrap)
+    monkeypatch.setattr(
+        cli,
+        "run_workflow",
+        lambda **_: WorkflowState(status="completed", trace=[]),
+    )
+
+    result = cli.main(
+        [
+            "run",
+            "--project",
+            str(tmp_path / "blink"),
+            "--task",
+            "create blink",
+            "--target",
+            "esp32s3",
+        ]
+    )
+
+    assert result == 0
+    assert received["project_path"] == tmp_path / "blink"
+    assert received["target_chip"] == "esp32s3"
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["ESP32", "esp32;idf.py", "esp-32", "esp32 "],
+)
+def test_cli_rejects_invalid_target_chip_values(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    with pytest.raises(SystemExit) as captured:
+        cli.build_parser().parse_args(
+            ["run", "--project", str(tmp_path), "--target", target]
+        )
+
+    assert captured.value.code == 2
 
 
 def test_json_mode_requires_task_without_calling_input(
@@ -106,6 +167,7 @@ def test_ordinary_mode_prompts_for_missing_task_and_builds_initial_state(
     assert result == 0
     assert calls["bootstrap"] == {
         "project_path": tmp_path,
+        "target_chip": None,
         "allow_dependency_downloads": False,
     }
     runner_call = calls["runner"]

@@ -4,6 +4,7 @@ import pytest
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_planner import FakePlanner
+from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
 from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
@@ -135,6 +136,8 @@ def make_context(
             [ProjectFile(path="main/main.c", content="broken source")]
         ),
         project_path=Path("workspace/blink"),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
 
 
@@ -480,13 +483,31 @@ def test_espidf_error_mapping_uses_safe_application_text(
         message="SECRET_ESPIDF_PATH",
         retryable=retryable,
     )
-    workflow_error = espidf_error_to_workflow_error(error)
+    workflow_error = espidf_error_to_workflow_error(
+        error,
+        {"pending_step_kind": "build_project"},
+    )
 
     assert workflow_error.stage == "build"
     assert workflow_error.category == expected_category
     assert workflow_error.retryable is retryable
     assert "SECRET_ESPIDF_PATH" not in workflow_error.message
     assert "SECRET_ESPIDF_PATH" not in workflow_error.user_suggestion
+
+
+def test_espidf_error_mapping_uses_project_creation_stage() -> None:
+    from luxar.application.runner import espidf_error_to_workflow_error
+
+    workflow_error = espidf_error_to_workflow_error(
+        EspIdfError(
+            category="invalid_project",
+            message="SECRET_PATH",
+            retryable=False,
+        ),
+        {"pending_step_kind": "create_project"},
+    )
+
+    assert workflow_error.stage == "project_creation"
 
 
 def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
@@ -505,6 +526,8 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
         ),
         workspace=FakeWorkspace([]),
         project_path=Path("workspace/blink"),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
 
     result = run_workflow(
@@ -593,6 +616,8 @@ def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
         ),
         workspace=FakeWorkspace([]),
         project_path=Path("SECRET_PROJECT_PATH"),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
 
     result = run_workflow(

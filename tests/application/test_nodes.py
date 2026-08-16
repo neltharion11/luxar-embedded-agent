@@ -4,6 +4,7 @@ from langgraph.runtime import Runtime
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_planner import FakePlanner
+from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
 from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
@@ -13,6 +14,7 @@ from luxar.application.nodes import (
     build_project,
     completed,
     create_plan,
+    create_project,
     execute_next_step,
     failed,
     repair_project,
@@ -20,6 +22,7 @@ from luxar.application.nodes import (
 )
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan, PlanStep
+from luxar.domain.projects import ProjectEvidence
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
 
@@ -66,6 +69,8 @@ def test_analyze_requirement_uses_runtime_parser_and_updates_state() -> None:
         project_path=Path("workspace/blink"),
         repair_planner=configured_repair_planner(),
         workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
     runtime = Runtime(context=context)
     state = {
@@ -114,6 +119,8 @@ def test_create_plan_passes_structured_requirement_to_runtime_planner() -> None:
         project_path=Path("workspace/blink"),
         repair_planner=configured_repair_planner(),
         workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
 
     update = create_plan(
@@ -153,6 +160,8 @@ def test_build_project_records_tool_evidence_attempt_and_path() -> None:
         project_path=project_path,
         repair_planner=configured_repair_planner(),
         workspace=FakeWorkspace([]),
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
 
     update = build_project(
@@ -249,6 +258,8 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
         project_path=project_path,
         repair_planner=repair_planner,
         workspace=workspace,
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
     state = {
         "requirement": requirement,
@@ -385,3 +396,77 @@ def test_execute_next_step_rejects_not_yet_supported_step_with_fixed_error() -> 
     assert error.retryable is False
     assert "flash_project" in error.message
     assert error.user_suggestion
+
+
+def create_evidence() -> ProjectEvidence:
+    return ProjectEvidence(
+        success=True,
+        command=["idf.py", "create-project", "blink"],
+        return_code=0,
+        created_dir="blink",
+    )
+
+
+def test_create_project_uses_context_creator_and_explicit_target() -> None:
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    plan = ExecutionPlan(
+        steps=[PlanStep(kind="build_project", description="Build project")]
+    )
+    creator = FakeProjectCreator([create_evidence()])
+    project_path = Path("workspace/blink")
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([]),
+        project_path=project_path,
+        repair_planner=configured_repair_planner(),
+        workspace=FakeWorkspace([]),
+        project_creator=creator,
+        target_chip="esp32s3",
+    )
+
+    update = create_project(
+        {"requirement": requirement, "trace": ["analyze_requirement", "create_plan"]},
+        Runtime(context=context),
+    )
+
+    assert update == {
+        "created_project": create_evidence(),
+        "status": "project_created",
+        "trace": [
+            "analyze_requirement",
+            "create_plan",
+            "create_project",
+        ],
+    }
+    # 显式配置的芯片优先于模型输出。
+    assert creator.calls == [
+        (project_path.parent, "blink", "esp32s3")
+    ]
+
+
+def test_create_project_falls_back_to_requirement_target() -> None:
+    requirement = FirmwareRequirement(target="esp32", feature="gpio_blink")
+    plan = ExecutionPlan(
+        steps=[PlanStep(kind="build_project", description="Build project")]
+    )
+    creator = FakeProjectCreator([create_evidence()])
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([]),
+        project_path=Path("workspace/blink"),
+        repair_planner=configured_repair_planner(),
+        workspace=FakeWorkspace([]),
+        project_creator=creator,
+        target_chip=None,
+    )
+
+    create_project(
+        {"requirement": requirement, "trace": []},
+        Runtime(context=context),
+    )
+
+    assert creator.calls == [
+        (Path("workspace"), "blink", "esp32")
+    ]

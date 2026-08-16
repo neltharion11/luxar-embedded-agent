@@ -11,6 +11,7 @@ from luxar.application.nodes import (
     build_project,
     completed,
     create_plan,
+    create_project,
     execute_next_step,
     failed,
     repair_project,
@@ -19,6 +20,7 @@ from luxar.application.nodes import (
 from luxar.application.routing import (
     route_after_build,
     route_after_dispatch,
+    route_after_project_creation,
     route_after_requirement,
 )
 from luxar.application.state import WorkflowState
@@ -43,6 +45,10 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node(
         "execute_next_step",
         execute_next_step,
+    )
+    builder.add_node(
+        "create_project",
+        create_project,
     )
     builder.add_node(
         "build_project",
@@ -87,13 +93,24 @@ def build_graph() -> CompiledStateGraph:
         "execute_next_step",
     )
 
-    # S1 只放开 build_project；其余词表步骤由分发器写出固定错误并路由到 failed。
+    # 未实现词表步骤由分发器写出固定错误并路由到 failed。
     builder.add_conditional_edges(
         "execute_next_step",
         route_after_dispatch,
         {
+            "create_project": "create_project",
             "build_project": "build_project",
             "completed": "completed",
+            "failed": "failed",
+        },
+    )
+
+    # 创建成功后回到游标继续计划；失败证据直接终止。
+    builder.add_conditional_edges(
+        "create_project",
+        route_after_project_creation,
+        {
+            "execute_next_step": "execute_next_step",
             "failed": "failed",
         },
     )

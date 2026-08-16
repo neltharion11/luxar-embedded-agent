@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from luxar.ports.espidf import EspIdfPort
+from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.planner import Planner
 from luxar.ports.requirement_parser import RequirementParser
 from luxar.ports.repair_planner import RepairPlanner
@@ -22,3 +23,6 @@ class RuntimeContext:
     project_path: Path
     repair_planner: RepairPlanner
     workspace: WorkspacePort
+    project_creator: EspIdfProjectPort
+    # 目标芯片的可选显式配置；为 None 时创建节点回退到 requirement.target。
+    target_chip: str | None

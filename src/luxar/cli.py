@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -26,6 +27,15 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
+def _target_chip(value: str) -> str:
+    # 芯片名只接受小写标识符，杜绝任何命令选项注入。
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", value):
+        raise argparse.ArgumentTypeError(
+            "目标芯片必须是 esp32、esp32s3 之类的小写标识符"
+        )
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="luxar",
@@ -35,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subcommands.add_parser("run", help="运行一个固件任务")
     run_parser.add_argument("--project", type=Path, required=True)
     run_parser.add_argument("--task")
+    run_parser.add_argument(
+        "--target",
+        type=_target_chip,
+        help="目标芯片，例如 esp32 或 esp32s3（创建任务时建议提供）",
+    )
     run_parser.add_argument(
         "--max-attempts",
         type=_positive_integer,
@@ -141,8 +156,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     project: Path = args.project
 
-    if not project.exists() or not project.is_dir():
-        print("项目路径不存在或不是目录", file=sys.stderr)
+    # 创建任务允许项目目录尚不存在，但父目录必须真实存在。
+    parent = project.parent
+    if not parent.exists() or not parent.is_dir():
+        print("项目父目录不存在或不是目录", file=sys.stderr)
+        return 2
+
+    if project.exists() and not project.is_dir():
+        print("项目路径已存在但不是目录", file=sys.stderr)
         return 2
 
     if args.json and args.task is None:
@@ -159,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             context = build_deepseek_runtime_context(
                 project_path=project,
+                target_chip=args.target,
                 allow_dependency_downloads=args.allow_dependency_downloads,
             )
         except (ValidationError, ValueError):

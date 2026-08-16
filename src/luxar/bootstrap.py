@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from luxar.adapters.espidf_cli import EspIdfCliAdapter
+from luxar.adapters.espidf_project import EspIdfProjectAdapter
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
 from luxar.adapters.deepseek.client import (
     DeepSeekJsonClient,
@@ -19,6 +20,7 @@ from luxar.adapters.deepseek.requirement_parser import (
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.application.context import RuntimeContext
 from luxar.ports.espidf import EspIdfPort
+from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.workspace import WorkspacePort
 
 
@@ -27,6 +29,8 @@ def build_deepseek_runtime_context(
     project_path: Path,
     espidf: EspIdfPort | None = None,
     workspace: WorkspacePort | None = None,
+    project_creator: EspIdfProjectPort | None = None,
+    target_chip: str | None = None,
     settings: DeepSeekSettings | None = None,
     client: JsonCompletionClient | None = None,
     allow_dependency_downloads: bool = False,
@@ -49,6 +53,12 @@ def build_deepseek_runtime_context(
     if workspace is None:
         workspace = LocalWorkspaceAdapter()
 
+    if project_creator is None:
+        # 与构建 Adapter 共享同一个经过校验的 idf.py 启动器。
+        project_creator = EspIdfProjectAdapter(
+            idf_command=idf_command,
+        )
+
     requirement_parser = DeepSeekRequirementParser(
         client=client,
         model=settings.fast_model,
@@ -68,5 +78,7 @@ def build_deepseek_runtime_context(
         repair_planner=repair_planner,
         espidf=espidf,
         workspace=workspace,
+        project_creator=project_creator,
         project_path=project_path,
+        target_chip=target_chip,
     )

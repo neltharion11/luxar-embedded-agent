@@ -7,6 +7,7 @@ from typing import Literal, TypedDict
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan
+from luxar.domain.projects import ProjectEvidence
 from luxar.domain.requirements import FirmwareRequirement
 from luxar.domain.repairs import RepairPlan
 
@@ -16,6 +17,7 @@ WorkflowStatus = Literal[
     "requirement_analyzed",
     "needs_clarification",
     "planned",
+    "project_created",
     "building",
     "retrying",
     "repaired",
@@ -53,3 +55,5 @@ class WorkflowState(TypedDict, total=False):
     pending_step_kind: PendingStepKind
     # S4 使用：记录触发修复的来源，决定重建成功后回到构建还是进入设备回路。
     repair_origin: Literal["build", "monitor"] | None
+    # S2：项目创建步骤产生的真实工具证据。
+    created_project: ProjectEvidence

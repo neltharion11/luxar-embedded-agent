@@ -21,10 +21,17 @@ def route_after_requirement(
 
 def route_after_dispatch(
     state: WorkflowState,
-) -> Literal["build_project", "completed", "failed"]:
-    # S1 只有 build_project 可执行；其余词表步骤暂时路由到 failed，
-    # 分发器节点已经为它们写入了固定的不支持错误。
+) -> Literal[
+    "create_project",
+    "build_project",
+    "completed",
+    "failed",
+]:
+    # 已实现步骤进入对应节点；未实现步骤由分发器写入固定错误并路由到 failed。
     pending = state.get("pending_step_kind")
+
+    if pending == "create_project":
+        return "create_project"
 
     if pending == "build_project":
         return "build_project"
@@ -32,6 +39,18 @@ def route_after_dispatch(
     # 计划执行完毕时分发器写入 None，进入 completed 终态。
     if pending is None:
         return "completed"
+
+    return "failed"
+
+
+def route_after_project_creation(
+    state: WorkflowState,
+) -> Literal["execute_next_step", "failed"]:
+    # 与构建相同：成功与否只能由创建证据决定，失败直接终止。
+    evidence = state["created_project"]
+
+    if evidence.success:
+        return "execute_next_step"
 
     return "failed"
 

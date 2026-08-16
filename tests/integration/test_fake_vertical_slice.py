@@ -2,6 +2,7 @@ from pathlib import Path
 
 from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_planner import FakePlanner
+from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
 from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
@@ -9,6 +10,7 @@ from luxar.application.context import RuntimeContext
 from luxar.application.graph import build_graph
 from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
 from luxar.domain.plans import ExecutionPlan, PlanStep
+from luxar.domain.projects import ProjectEvidence
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
 
@@ -50,6 +52,8 @@ def make_fixture(
         project_path=Path("workspace/blink"),
         repair_planner=repair_planner,
         workspace=workspace,
+        project_creator=FakeProjectCreator([]),
+        target_chip=None,
     )
     return (
         context,
@@ -286,3 +290,79 @@ def test_stream_reports_repair_loop_node_order() -> None:
         "execute_next_step",
         "completed",
     ]
+
+
+def test_creation_then_build_completes_with_both_evidences() -> None:
+    requirement = FirmwareRequirement(
+        target="esp32",
+        feature="gpio_blink",
+        gpio=2,
+    )
+    created = ProjectEvidence(
+        success=True,
+        command=["idf.py", "create-project", "blink"],
+        return_code=0,
+        created_dir="blink",
+    )
+    built = BuildEvidence(
+        success=True,
+        command=["idf.py", "build"],
+        return_code=0,
+    )
+    plan = ExecutionPlan(
+        steps=[
+            PlanStep(kind="create_project", description="Create project"),
+            PlanStep(kind="build_project", description="Build project"),
+        ]
+    )
+    parser = FakeRequirementParser(requirement)
+    planner = FakePlanner(plan)
+    creator = FakeProjectCreator([created])
+    espidf = FakeEspIdf([built])
+    workspace = FakeWorkspace(
+        [ProjectFile(path="main/main.c", content="source")]
+    )
+    repair = RepairPlan(
+        diagnosis="not needed",
+        replacements=[
+            FileReplacement(path="main/main.c", content="fixed source")
+        ],
+    )
+    context = RuntimeContext(
+        requirement_parser=parser,
+        planner=planner,
+        espidf=espidf,
+        project_path=Path("workspace/blink"),
+        repair_planner=FakeRepairPlanner(repair),
+        workspace=workspace,
+        project_creator=creator,
+        target_chip="esp32",
+    )
+
+    result = build_graph().invoke(
+        {
+            "task_text": "create an ESP32 GPIO blink project",
+            "attempts": 0,
+            "max_attempts": 3,
+            "trace": [],
+        },
+        context=context,
+    )
+
+    assert result["status"] == "completed"
+    assert result["created_project"] is created
+    assert result["build_evidence"] is built
+    assert result["trace"] == [
+        "analyze_requirement",
+        "create_plan",
+        "execute_next_step",
+        "create_project",
+        "execute_next_step",
+        "build_project",
+        "execute_next_step",
+        "completed",
+    ]
+    assert creator.calls == [(Path("workspace"), "blink", "esp32")]
+    assert espidf.calls == [Path("workspace/blink")]
+    assert parser.calls == ["create an ESP32 GPIO blink project"]
+    assert planner.calls == [requirement]

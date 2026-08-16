@@ -6,7 +6,9 @@ from luxar.adapters.deepseek.repair_planner import DeepSeekRepairPlanner
 from luxar.adapters.deepseek.requirement_parser import DeepSeekRequirementParser
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.adapters.espidf_cli import EspIdfCliAdapter
+from luxar.adapters.espidf_project import EspIdfProjectAdapter
 from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_workspace import FakeWorkspace
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
 from luxar.bootstrap import build_deepseek_runtime_context
@@ -103,3 +105,35 @@ def test_bootstrap_constructs_one_client_when_none_is_injected(
     assert context.requirement_parser._client is client
     assert context.planner._client is client
     assert context.repair_planner._client is client
+
+
+def test_bootstrap_injects_project_creator_and_target_chip() -> None:
+    creator = FakeProjectCreator([])
+    context = build_deepseek_runtime_context(
+        espidf=FakeEspIdf([]),
+        workspace=FakeWorkspace([]),
+        project_creator=creator,
+        target_chip="esp32s3",
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert context.project_creator is creator
+    assert context.target_chip == "esp32s3"
+
+
+def test_bootstrap_constructs_project_adapter_with_shared_launcher() -> None:
+    context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+        idf_command=("trusted-python", "trusted-idf.py"),
+    )
+
+    assert isinstance(context.project_creator, EspIdfProjectAdapter)
+    assert context.project_creator.idf_command == (
+        "trusted-python",
+        "trusted-idf.py",
+    )
+    assert context.target_chip is None

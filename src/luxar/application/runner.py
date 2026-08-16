@@ -196,6 +196,7 @@ def workspace_error_to_workflow_error(
 
 def espidf_error_to_workflow_error(
     error: EspIdfError,
+    state: WorkflowState,
 ) -> WorkflowError:
     category = (
         "dependency"
@@ -203,9 +204,15 @@ def espidf_error_to_workflow_error(
         else "environment"
     )
 
+    # 分发器在执行节点前写入 pending_step_kind，因此它可以
+    # 精确指出失败发生在计划执行链的哪个阶段。
+    stage = "build"
+    if state.get("pending_step_kind") == "create_project":
+        stage = "project_creation"
+
     return WorkflowError.model_validate(
         {
-            "stage": "build",
+            "stage": stage,
             "category": category,
             "message": ESPIDF_ERROR_MESSAGES[error.category],
             "retryable": error.retryable,
@@ -253,7 +260,10 @@ def run_workflow(
             elif isinstance(error, WorkspaceError):
                 workflow_error = workspace_error_to_workflow_error(error)
             else:
-                workflow_error = espidf_error_to_workflow_error(error)
+                workflow_error = espidf_error_to_workflow_error(
+                    error,
+                    latest_state,
+                )
 
             failure_update = failed(latest_state)
             latest_state = cast(

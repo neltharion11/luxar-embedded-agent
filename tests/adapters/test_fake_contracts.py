@@ -151,3 +151,33 @@ def test_fake_workspace_records_reads_and_applied_repairs() -> None:
     assert changed_files == ["main/main.c"]
     assert workspace.read_calls == [project_path]
     assert workspace.apply_calls == [(project_path, repair)]
+
+
+def test_fake_project_creator_returns_configured_evidence_in_order() -> None:
+    from luxar.adapters.fake_project_creator import FakeProjectCreator
+    from luxar.domain.projects import ProjectEvidence
+
+    first = ProjectEvidence(
+        success=False,
+        command=["idf.py", "create-project", "blink"],
+        return_code=1,
+        error_category="environment",
+    )
+    second = ProjectEvidence(
+        success=True,
+        command=["idf.py", "create-project", "blink"],
+        return_code=0,
+        created_dir="blink",
+    )
+    creator = FakeProjectCreator([first, second])
+    parent = Path("workspace")
+
+    assert creator.create_project(parent, "blink", "esp32") is first
+    assert creator.create_project(parent, "blink", "esp32") is second
+    assert creator.calls == [
+        (parent, "blink", "esp32"),
+        (parent, "blink", "esp32"),
+    ]
+
+    with pytest.raises(RuntimeError, match="no configured evidence"):
+        creator.create_project(parent, "blink", "esp32")
