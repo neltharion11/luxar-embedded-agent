@@ -42,9 +42,30 @@ def test_parser_allows_bare_invocation() -> None:
     assert args.command is None
 
 
+def _clear_luxar_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    skip_dotenv: bool = True,
+) -> None:
+    # 隔离仓库真实 .env:loader 会读当前目录的 .env,测试必须从干净环境开始。
+    if skip_dotenv:
+        monkeypatch.setenv("LUXAR_SKIP_DOTENV", "1")
+    else:
+        monkeypatch.delenv("LUXAR_SKIP_DOTENV", raising=False)
+    for name in (
+        "LUXAR_PROJECTS_ROOT",
+        "LUXAR_SERIAL_PORT",
+        "LUXAR_TARGET_CHIP",
+        "LUXAR_WEB_PORT",
+        "LUXAR_PYTHON",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_bare_luxar_starts_web_with_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _clear_luxar_env(monkeypatch)
     received: dict[str, object] = {}
 
     def fake_serve(**kwargs: object) -> int:
@@ -66,6 +87,7 @@ def test_bare_luxar_reads_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _clear_luxar_env(monkeypatch)
     received: dict[str, object] = {}
 
     def fake_serve(**kwargs: object) -> int:
@@ -95,6 +117,7 @@ def test_bare_luxar_reads_environment(
 def test_bare_luxar_ignores_invalid_web_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _clear_luxar_env(monkeypatch)
     received: dict[str, object] = {}
 
     def fake_serve(**kwargs: object) -> int:
@@ -108,6 +131,58 @@ def test_bare_luxar_ignores_invalid_web_port(
 
     assert result == 0
     assert received["port"] == 8000
+
+
+def test_main_loads_repo_dotenv_when_environment_unset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_luxar_env(monkeypatch, skip_dotenv=False)
+    received: dict[str, object] = {}
+
+    def fake_serve(**kwargs: object) -> int:
+        received.update(kwargs)
+        return 0
+
+    (tmp_path / ".env").write_text(
+        "LUXAR_WEB_PORT=9000\n"
+        "LUXAR_SERIAL_PORT=COM4\n"
+        "# 注释行被忽略\n"
+        "DEEPSEEK_API_KEY=sk-test\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("luxar.web.serve", fake_serve)
+
+    result = cli.main([])
+
+    assert result == 0
+    assert received["port"] == 9000
+    assert received["serial_port"] == "COM4"
+
+
+def test_real_environment_beats_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_luxar_env(monkeypatch, skip_dotenv=False)
+    received: dict[str, object] = {}
+
+    def fake_serve(**kwargs: object) -> int:
+        received.update(kwargs)
+        return 0
+
+    (tmp_path / ".env").write_text(
+        "LUXAR_WEB_PORT=9000\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LUXAR_WEB_PORT", "7000")
+    monkeypatch.setattr("luxar.web.serve", fake_serve)
+
+    cli.main([])
+
+    assert received["port"] == 7000
 
 
 def test_main_rejects_invalid_project_inputs(

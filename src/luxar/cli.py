@@ -290,7 +290,42 @@ def _default_web_port() -> int:
         return 8000
 
 
+def _load_env_file() -> None:
+    """把仓库 .env 的 KEY=VALUE 加载为环境变量(不覆盖已有值)。
+
+    依次检查当前目录与仓库根目录;真实环境变量优先级最高,
+    setup.ps1/run-web.ps1 先设置的值也不会被覆盖。
+    LUXAR_SKIP_DOTENV=1 时完全跳过(测试隔离用)。
+    """
+
+    if os.environ.get("LUXAR_SKIP_DOTENV"):
+        return
+
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    ]
+    seen: set[Path] = set()
+
+    for candidate in candidates:
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+
+        for line in candidate.read_text(
+            encoding="utf-8-sig"
+        ).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value.strip()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _load_env_file()
     args = build_parser().parse_args(argv)
 
     if args.command is None:
