@@ -1,6 +1,9 @@
 from pathlib import Path
 
+from langgraph.checkpoint.memory import InMemorySaver
+
 from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.adapters.fake_flasher import FakeFlasher
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -54,6 +57,9 @@ def make_fixture(
         workspace=workspace,
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
     return (
         context,
@@ -337,6 +343,9 @@ def test_creation_then_build_completes_with_both_evidences() -> None:
         workspace=workspace,
         project_creator=creator,
         target_chip="esp32",
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
     result = build_graph().invoke(
@@ -366,3 +375,91 @@ def test_creation_then_build_completes_with_both_evidences() -> None:
     assert espidf.calls == [Path("workspace/blink")]
     assert parser.calls == ["create an ESP32 GPIO blink project"]
     assert planner.calls == [requirement]
+
+
+def test_create_build_flash_slice_completes_with_approval() -> None:
+    from luxar.application.runner import run_workflow
+    from luxar.domain.devices import FlashEvidence
+
+    requirement = FirmwareRequirement(
+        target="esp32",
+        feature="gpio_blink",
+        gpio=2,
+    )
+    created = ProjectEvidence(
+        success=True,
+        command=["idf.py", "create-project", "blink"],
+        return_code=0,
+        created_dir="blink",
+    )
+    built = BuildEvidence(
+        success=True,
+        command=["idf.py", "build"],
+        return_code=0,
+    )
+    flashed = FlashEvidence(
+        success=True,
+        command=["idf.py", "-p", "COM3", "flash"],
+        return_code=0,
+        port="COM3",
+    )
+    plan = ExecutionPlan(
+        steps=[
+            PlanStep(kind="create_project", description="Create"),
+            PlanStep(kind="build_project", description="Build"),
+            PlanStep(kind="flash_project", description="Flash"),
+        ]
+    )
+    context = RuntimeContext(
+        requirement_parser=FakeRequirementParser(requirement),
+        planner=FakePlanner(plan),
+        espidf=FakeEspIdf([built]),
+        project_path=Path("workspace/blink"),
+        repair_planner=FakeRepairPlanner(
+            RepairPlan(
+                diagnosis="unused",
+                replacements=[
+                    FileReplacement(path="main/main.c", content="x")
+                ],
+            )
+        ),
+        workspace=FakeWorkspace(
+            [ProjectFile(path="main/main.c", content="source")]
+        ),
+        project_creator=FakeProjectCreator([created]),
+        target_chip=None,
+        flasher=FakeFlasher([flashed]),
+        serial_port="COM3",
+        checkpointer=InMemorySaver(),
+    )
+
+    run_result = run_workflow(
+        initial_state={
+            "task_text": "create and flash blink",
+            "attempts": 0,
+            "max_attempts": 3,
+            "trace": [],
+        },
+        context=context,
+        approval_handler=lambda request: True,
+    )
+
+    assert run_result.state["status"] == "completed"
+    # checkpoint 序列化会重建 Pydantic 对象，因此用相等性而非同一性断言。
+    assert run_result.state["created_project"] == created
+    assert run_result.state["build_evidence"] == built
+    assert run_result.state["flash_evidence"] == flashed
+    assert run_result.state["approval_status"] == "approved"
+    assert run_result.state["trace"] == [
+        "analyze_requirement",
+        "create_plan",
+        "execute_next_step",
+        "create_project",
+        "execute_next_step",
+        "build_project",
+        "execute_next_step",
+        "request_flash_approval",
+        "flash_project",
+        "execute_next_step",
+        "completed",
+    ]

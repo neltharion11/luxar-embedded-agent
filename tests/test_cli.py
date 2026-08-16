@@ -7,10 +7,15 @@ from pathlib import Path
 import pytest
 
 from luxar import cli
+from luxar.application.runner import WorkflowRunResult
 from luxar.application.state import WorkflowState
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.requirements import FirmwareRequirement
+
+
+def _run_result(state: WorkflowState) -> WorkflowRunResult:
+    return WorkflowRunResult(state=state, thread_id="test-thread")
 
 
 @pytest.mark.parametrize(
@@ -69,7 +74,7 @@ def test_main_allows_not_yet_existing_project_for_creation_tasks(
     monkeypatch.setattr(
         cli,
         "run_workflow",
-        lambda **_: WorkflowState(status="completed", trace=[]),
+        lambda **_: _run_result(WorkflowState(status="completed", trace=[])),
     )
 
     result = cli.main(
@@ -153,9 +158,11 @@ def test_ordinary_mode_prompts_for_missing_task_and_builds_initial_state(
         calls["bootstrap"] = kwargs
         return context
 
-    def fake_runner(**kwargs: object) -> WorkflowState:
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
         calls["runner"] = kwargs
-        return WorkflowState(status="completed", attempts=1, trace=[])
+        return _run_result(
+            WorkflowState(status="completed", attempts=1, trace=[])
+        )
 
     monkeypatch.setattr(cli, "build_deepseek_runtime_context", fake_bootstrap)
     monkeypatch.setattr(cli, "run_workflow", fake_runner)
@@ -196,7 +203,7 @@ def test_explicit_dependency_authorization_reaches_bootstrap(
     monkeypatch.setattr(
         cli,
         "run_workflow",
-        lambda **_: WorkflowState(status="completed", trace=[]),
+        lambda **_: _run_result(WorkflowState(status="completed", trace=[])),
     )
 
     result = cli.main(
@@ -307,7 +314,7 @@ def test_human_output_and_exit_code_by_final_status(
     expected_text: list[str],
 ) -> None:
     monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
-    monkeypatch.setattr(cli, "run_workflow", lambda **_: state)
+    monkeypatch.setattr(cli, "run_workflow", lambda **_: _run_result(state))
 
     result = cli.main(["run", "--project", str(tmp_path), "--task", "build"])
 
@@ -321,11 +328,13 @@ def test_ordinary_progress_uses_stderr_only(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fake_runner(**kwargs: object) -> WorkflowState:
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
         reporter = kwargs["progress_reporter"]
         assert callable(reporter)
         reporter(cli.WorkflowProgress("requirement", "需求分析完成", 0))
-        return WorkflowState(status="completed", attempts=0, trace=[])
+        return _run_result(
+            WorkflowState(status="completed", attempts=0, trace=[])
+        )
 
     monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
     monkeypatch.setattr(cli, "run_workflow", fake_runner)
@@ -352,15 +361,17 @@ def test_json_mode_emits_one_stable_document_without_progress(
         stdout_summary="safe summary",
     )
 
-    def fake_runner(**kwargs: object) -> WorkflowState:
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
         assert kwargs["progress_reporter"] is None
-        return WorkflowState(
-            status="completed",
-            attempts=1,
-            build_evidence=evidence,
-            changed_files=[],
-            trace=["analyze_requirement", "completed"],
-            task_text="SECRET_TASK_MUST_NOT_SERIALIZE",
+        return _run_result(
+            WorkflowState(
+                status="completed",
+                attempts=1,
+                build_evidence=evidence,
+                changed_files=[],
+                trace=["analyze_requirement", "completed"],
+                task_text="SECRET_TASK_MUST_NOT_SERIALIZE",
+            )
         )
 
     monkeypatch.setattr(cli, "build_deepseek_runtime_context", lambda **_: object())
@@ -380,7 +391,10 @@ def test_json_mode_emits_one_stable_document_without_progress(
         "attempts": 1,
         "requirement": None,
         "plan": None,
+        "created_project": None,
         "build_evidence": evidence.model_dump(mode="json"),
+        "flash_evidence": None,
+        "approval_status": "not_requested",
         "repair_plan": None,
         "changed_files": [],
         "error": None,
@@ -408,7 +422,9 @@ def test_json_failed_state_is_stdout_business_result(
     monkeypatch.setattr(
         cli,
         "run_workflow",
-        lambda **_: WorkflowState(status="failed", error=error, trace=["failed"]),
+        lambda **_: _run_result(
+            WorkflowState(status="failed", error=error, trace=["failed"])
+        ),
     )
 
     result = cli.main(

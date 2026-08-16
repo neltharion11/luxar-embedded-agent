@@ -1,11 +1,14 @@
 import pytest
 
 from luxar.application.routing import (
+    route_after_approval,
     route_after_build,
     route_after_dispatch,
+    route_after_flash,
     route_after_project_creation,
     route_after_requirement,
 )
+from luxar.domain.devices import FlashEvidence
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.projects import ProjectEvidence
 from luxar.domain.requirements import FirmwareRequirement
@@ -57,9 +60,15 @@ def test_dispatch_routes_none_to_completed() -> None:
     assert route_after_dispatch(state) == "completed"
 
 
+def test_dispatch_routes_flash_step_to_approval() -> None:
+    state = {"pending_step_kind": "flash_project"}
+
+    assert route_after_dispatch(state) == "request_flash_approval"
+
+
 @pytest.mark.parametrize(
     "pending_kind",
-    ["flash_project", "monitor_project"],
+    ["monitor_project"],
 )
 def test_dispatch_routes_not_yet_supported_steps_to_failed(
     pending_kind: str,
@@ -93,6 +102,67 @@ def test_failed_creation_terminates() -> None:
     }
 
     assert route_after_project_creation(state) == "failed"
+
+
+def test_approved_flash_routes_to_flash_node() -> None:
+    state = {"approval_status": "approved"}
+
+    assert route_after_approval(state) == "flash_project"
+
+
+@pytest.mark.parametrize(
+    "approval_status",
+    ["rejected", "not_requested", "pending"],
+)
+def test_not_approved_flash_routes_to_failed(
+    approval_status: str,
+) -> None:
+    state = {"approval_status": approval_status}
+
+    assert route_after_approval(state) == "failed"
+
+
+def test_successful_flash_continues_plan() -> None:
+    state = {
+        "flash_evidence": FlashEvidence(
+            success=True,
+            command=["idf.py", "-p", "COM3", "flash"],
+            return_code=0,
+            port="COM3",
+        )
+    }
+
+    assert route_after_flash(state) == "execute_next_step"
+
+
+@pytest.mark.parametrize(
+    ("error_category", "flash_attempts", "expected"),
+    [
+        ("serial", 1, "flash_project"),
+        ("timeout", 1, "flash_project"),
+        ("serial", 2, "failed"),
+        ("timeout", 2, "failed"),
+        ("environment", 1, "failed"),
+        ("unknown", 1, "failed"),
+    ],
+)
+def test_failed_flash_routes_by_category_and_budget(
+    error_category: str | None,
+    flash_attempts: int,
+    expected: str,
+) -> None:
+    state = {
+        "flash_evidence": FlashEvidence(
+            success=False,
+            command=["idf.py", "-p", "COM3", "flash"],
+            return_code=1,
+            port="COM3",
+            error_category=error_category,  # type: ignore[arg-type]
+        ),
+        "flash_attempts": flash_attempts,
+    }
+
+    assert route_after_flash(state) == expected
 
 
 def test_successful_final_attempt_continues_plan() -> None:

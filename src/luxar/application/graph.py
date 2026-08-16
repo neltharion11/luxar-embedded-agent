@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -14,19 +15,26 @@ from luxar.application.nodes import (
     create_project,
     execute_next_step,
     failed,
+    flash_project,
     repair_project,
     request_clarification,
+    request_flash_approval,
 )
 from luxar.application.routing import (
+    route_after_approval,
     route_after_build,
     route_after_dispatch,
+    route_after_flash,
     route_after_project_creation,
     route_after_requirement,
 )
 from luxar.application.state import WorkflowState
 
 
-def build_graph() -> CompiledStateGraph:
+def build_graph(
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> CompiledStateGraph:
     # StateGraph 在编译期只需要 State/Context 的类型，不创建任何具体 Adapter。
     builder = StateGraph(
         WorkflowState,
@@ -57,6 +65,14 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node(
         "repair_project",
         repair_project,
+    )
+    builder.add_node(
+        "request_flash_approval",
+        request_flash_approval,
+    )
+    builder.add_node(
+        "flash_project",
+        flash_project,
     )
     builder.add_node(
         "request_clarification",
@@ -100,6 +116,7 @@ def build_graph() -> CompiledStateGraph:
         {
             "create_project": "create_project",
             "build_project": "build_project",
+            "request_flash_approval": "request_flash_approval",
             "completed": "completed",
             "failed": "failed",
         },
@@ -133,6 +150,25 @@ def build_graph() -> CompiledStateGraph:
         "build_project",
     )
 
+    # 烧录前必须经过人工审批；批准后执行真实烧录，失败按类别重试或终止。
+    builder.add_conditional_edges(
+        "request_flash_approval",
+        route_after_approval,
+        {
+            "flash_project": "flash_project",
+            "failed": "failed",
+        },
+    )
+    builder.add_conditional_edges(
+        "flash_project",
+        route_after_flash,
+        {
+            "execute_next_step": "execute_next_step",
+            "flash_project": "flash_project",
+            "failed": "failed",
+        },
+    )
+
     # 三个业务终态都连接到 LangGraph 的虚拟 END 节点。
     builder.add_edge(
         "request_clarification",
@@ -148,4 +184,5 @@ def build_graph() -> CompiledStateGraph:
     )
 
     # compile 会检查并冻结拓扑，返回能够 invoke/stream 的 CompiledStateGraph。
-    return builder.compile()
+    # interrupt() 需要 checkpointer；未提供时本图不支持中断。
+    return builder.compile(checkpointer=checkpointer)

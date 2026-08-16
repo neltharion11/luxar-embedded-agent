@@ -152,7 +152,7 @@ def create_app(
                             body.allow_dependency_downloads
                         ),
                     )
-                    result = workflow_runner(
+                    run_result = workflow_runner(
                         initial_state=WorkflowState(
                             task_text=body.message,
                             attempts=0,
@@ -162,7 +162,7 @@ def create_app(
                         context=context,
                         progress_reporter=report,
                     )
-                    envelope = state_to_result(result)
+                    envelope = state_to_result(run_result.state)
                     publish("result", envelope)
                     with history_lock:
                         messages = history.setdefault(project, [])

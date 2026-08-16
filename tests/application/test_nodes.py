@@ -1,8 +1,10 @@
 from pathlib import Path
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.runtime import Runtime
 
 from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.adapters.fake_flasher import FakeFlasher
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -71,6 +73,9 @@ def test_analyze_requirement_uses_runtime_parser_and_updates_state() -> None:
         workspace=FakeWorkspace([]),
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
     runtime = Runtime(context=context)
     state = {
@@ -121,6 +126,9 @@ def test_create_plan_passes_structured_requirement_to_runtime_planner() -> None:
         workspace=FakeWorkspace([]),
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
     update = create_plan(
@@ -162,6 +170,9 @@ def test_build_project_records_tool_evidence_attempt_and_path() -> None:
         workspace=FakeWorkspace([]),
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
     update = build_project(
@@ -260,6 +271,9 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
         workspace=workspace,
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
     state = {
         "requirement": requirement,
@@ -375,26 +389,27 @@ def test_execute_next_step_supports_build_steps_in_s1() -> None:
 
 
 def test_execute_next_step_rejects_not_yet_supported_step_with_fixed_error() -> None:
-    # S1 只实现了 build_project；flashing 步骤在 S3 之前必须给出固定失败。
+    # S3 实现了 create/build/flash；监控步骤在 S4 之前必须给出固定失败。
     state = {
         "plan": ExecutionPlan(
             steps=[
                 PlanStep(kind="build_project", description="Build"),
                 PlanStep(kind="flash_project", description="Flash"),
+                PlanStep(kind="monitor_project", description="Monitor"),
             ]
         ),
-        "plan_index": 1,
+        "plan_index": 2,
         "trace": [],
     }
 
     update = execute_next_step(state)
 
-    assert update["pending_step_kind"] == "flash_project"
+    assert update["pending_step_kind"] == "monitor_project"
     error = update["error"]
     assert error.stage == "planning"
     assert error.category == "model_output"
     assert error.retryable is False
-    assert "flash_project" in error.message
+    assert "monitor_project" in error.message
     assert error.user_suggestion
 
 
@@ -423,6 +438,9 @@ def test_create_project_uses_context_creator_and_explicit_target() -> None:
         workspace=FakeWorkspace([]),
         project_creator=creator,
         target_chip="esp32s3",
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
     update = create_project(
@@ -460,6 +478,9 @@ def test_create_project_falls_back_to_requirement_target() -> None:
         workspace=FakeWorkspace([]),
         project_creator=creator,
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
     create_project(

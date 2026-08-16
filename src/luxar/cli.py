@@ -68,6 +68,7 @@ def _report_progress(progress: WorkflowProgress) -> None:
         "requirement": "需求",
         "planning": "计划",
         "build": "构建",
+        "flash": "烧录",
         "repair": "修复",
         "clarification": "澄清",
         "completed": "完成",
@@ -193,11 +194,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_attempts=args.max_attempts,
             trace=[],
         )
-        result = run_workflow(
+        run_result = run_workflow(
             initial_state=initial_state,
             context=context,
             progress_reporter=None if args.json else _report_progress,
         )
+        result = run_result.state
     except KeyboardInterrupt:
         print("操作已取消", file=sys.stderr)
         return 130

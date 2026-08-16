@@ -254,8 +254,8 @@ safety. Behavior is unchanged; existing tests keep passing.
 
 - Serial discovery uses `serial.tools.list_ports` (new bounded `pyserial`
   dependency). Names are validated against platform patterns:
-  `^COM\d+$` on Windows, `^/dev/tty(USB|ACM|S)\d+$` on POSIX. Anything else is
-  rejected before any hardware access.
+  `^COM[1-9]\d*$` on Windows, `^/dev/tty(USB|ACM|S)\d+$` on POSIX. Anything
+  else is rejected before any hardware access.
 - `flash` reuses the existing project preflight (real root, no links,
   dependency authorization), then runs `idf.py -p <port> flash` with
   `shell=False`, bounded timeout, captured output, no retry. Timeout becomes
@@ -317,9 +317,13 @@ pause into the presentation-specific interaction:
 
 Rejection routes to `failed` with `approval_rejected`. Approval state persists
 in `WorkflowState`, so the bounded device loop re-flashes without re-prompting.
-Exact `interrupt()` semantics (GraphInterrupt versus `__interrupt__` state
-key) are verified against the installed `langgraph>=1.2,<1.3` during the S3
-slice and locked by tests.
+
+S3 verified the installed `langgraph` 1.2.11 semantics and locked them with
+tests: `invoke()`/`stream()` do NOT raise on pause; the paused snapshot carries
+an internal `__interrupt__` key (a tuple of `Interrupt` objects) that the
+runner detects, converts into `ApprovalRequest`, and strips from business
+State. Resume uses `Command(resume={"approved": bool})` with the same
+`thread_id`; the interrupt payload travels through the checkpoint as JSON.
 
 ## 9. Safety boundaries
 
@@ -348,7 +352,6 @@ State additions:
 ```text
 plan_index: int
 created_project: ProjectEvidence | None
-serial_port: str | None
 flash_evidence: FlashEvidence | None
 flash_attempts: int
 monitor_evidence: MonitorEvidence | None
@@ -364,10 +367,16 @@ RuntimeContext additions:
 ```text
 project_creator: EspIdfProjectPort
 flasher: EspIdfFlashPort
-monitor: EspIdfMonitorPort
-log_analyst: LogAnalystPort
+serial_port: str | None        (runtime configuration, like project_path)
+target_chip: str | None
+monitor: EspIdfMonitorPort     (S4)
+log_analyst: LogAnalystPort    (S4)
 checkpointer: BaseCheckpointSaver
 ```
+
+The serial port is runtime configuration and therefore lives in
+`RuntimeContext` rather than State; it is re-supplied on resume with the same
+Context. It never enters checkpoints or the result envelope.
 
 The allowlisted result envelope (`results.py`) gains `created_project`,
 `flash_evidence`, `monitor_evidence`, `device_diagnosis`, and

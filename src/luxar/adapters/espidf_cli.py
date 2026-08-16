@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shutil  # 保留导入：测试通过本模块路径 monkeypatch shutil.which
 import subprocess
@@ -21,6 +20,7 @@ from luxar.adapters.espidf_common import (
     _is_link_or_junction,
     _sanitize_output,
     _strip_ansi,
+    build_safe_idf_environment,
     validate_espidf_launcher,
     validate_idf_command_tokens,
 )
@@ -431,14 +431,9 @@ class EspIdfCliAdapter:
                 retryable=False,
             )
 
-        environment = os.environ.copy()
-        environment["IDF_COMPONENT_NO_COLORS"] = "1"
-        environment["IDF_COMPONENT_NO_HINTS"] = "1"
-
-        if self.allow_dependency_downloads:
-            environment.pop("IDF_COMPONENT_MANAGER", None)
-        else:
-            environment["IDF_COMPONENT_MANAGER"] = "0"
+        environment = build_safe_idf_environment(
+            self.allow_dependency_downloads,
+        )
 
         return root, environment
 

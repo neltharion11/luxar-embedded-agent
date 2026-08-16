@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
+
 from luxar.adapters.espidf_cli import EspIdfCliAdapter
+from luxar.adapters.espidf_device import EspIdfDeviceAdapter
 from luxar.adapters.espidf_project import EspIdfProjectAdapter
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
 from luxar.adapters.deepseek.client import (
@@ -20,6 +24,7 @@ from luxar.adapters.deepseek.requirement_parser import (
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.application.context import RuntimeContext
 from luxar.ports.espidf import EspIdfPort
+from luxar.ports.espidf_device import EspIdfFlashPort
 from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.workspace import WorkspacePort
 
@@ -30,7 +35,10 @@ def build_deepseek_runtime_context(
     espidf: EspIdfPort | None = None,
     workspace: WorkspacePort | None = None,
     project_creator: EspIdfProjectPort | None = None,
+    flasher: EspIdfFlashPort | None = None,
     target_chip: str | None = None,
+    serial_port: str | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
     settings: DeepSeekSettings | None = None,
     client: JsonCompletionClient | None = None,
     allow_dependency_downloads: bool = False,
@@ -59,6 +67,17 @@ def build_deepseek_runtime_context(
             idf_command=idf_command,
         )
 
+    if flasher is None:
+        # 与其余硬件 Adapter 共享同一个经过校验的 idf.py 启动器。
+        flasher = EspIdfDeviceAdapter(
+            idf_command=idf_command,
+        )
+
+    if checkpointer is None:
+        # 进程内持久化：足以支持 interrupt() 与同进程恢复；
+        # 跨进程的 SQLite 持久化属于后续切片。
+        checkpointer = InMemorySaver()
+
     requirement_parser = DeepSeekRequirementParser(
         client=client,
         model=settings.fast_model,
@@ -79,6 +98,9 @@ def build_deepseek_runtime_context(
         espidf=espidf,
         workspace=workspace,
         project_creator=project_creator,
+        flasher=flasher,
         project_path=project_path,
         target_chip=target_chip,
+        serial_port=serial_port,
+        checkpointer=checkpointer,
     )

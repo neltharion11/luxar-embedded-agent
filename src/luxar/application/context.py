@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 from luxar.ports.espidf import EspIdfPort
+from luxar.ports.espidf_device import EspIdfFlashPort
 from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.planner import Planner
 from luxar.ports.requirement_parser import RequirementParser
@@ -26,3 +29,8 @@ class RuntimeContext:
     project_creator: EspIdfProjectPort
     # 目标芯片的可选显式配置；为 None 时创建节点回退到 requirement.target。
     target_chip: str | None
+    flasher: EspIdfFlashPort
+    # 烧录使用的串口名；None 表示未配置，烧录节点会给出脱敏错误。
+    serial_port: str | None
+    # interrupt() 需要 checkpointer；生产默认 InMemorySaver，测试可注入。
+    checkpointer: BaseCheckpointSaver

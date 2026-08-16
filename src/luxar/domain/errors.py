@@ -13,6 +13,7 @@ class WorkflowError(BaseModel):
         "planning",
         "project_creation",
         "build",
+        "flash",
         "repair",
     ]
 
@@ -28,6 +29,8 @@ class WorkflowError(BaseModel):
         "rate_limit",
         "service",
         "workspace",
+        "serial",
+        "approval_rejected",
     ]
 
     message: str

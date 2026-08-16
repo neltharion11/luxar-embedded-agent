@@ -6,9 +6,13 @@ import threading
 
 from fastapi.testclient import TestClient
 
-from luxar.application.runner import WorkflowProgress
+from luxar.application.runner import WorkflowProgress, WorkflowRunResult
 from luxar.application.state import WorkflowState
 from luxar.web import create_app
+
+
+def _run_result(state: WorkflowState) -> WorkflowRunResult:
+    return WorkflowRunResult(state=state, thread_id="test-thread")
 
 
 def make_project(root: Path, name: str = "blink") -> Path:
@@ -40,7 +44,7 @@ def test_app_serves_ui_health_and_safe_project_list(tmp_path: Path) -> None:
     app = create_app(
         projects_root=tmp_path,
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
-        workflow_runner=lambda **_: WorkflowState(),
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
         ui_path=ui,
     )
     client = TestClient(app)
@@ -60,7 +64,7 @@ def test_default_app_serves_migrated_original_ui(tmp_path: Path) -> None:
     app = create_app(
         projects_root=tmp_path,
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
-        workflow_runner=lambda **_: WorkflowState(),
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
     )
 
     response = TestClient(app).get("/")
@@ -82,16 +86,18 @@ def test_sse_runs_shared_application_and_emits_allowlisted_result(
         received["bootstrap"] = kwargs
         return context
 
-    def fake_runner(**kwargs: object) -> WorkflowState:
+    def fake_runner(**kwargs: object) -> WorkflowRunResult:
         received["runner"] = kwargs
         reporter = kwargs["progress_reporter"]
         assert callable(reporter)
         reporter(WorkflowProgress("requirement", "需求分析完成", 0))
-        return WorkflowState(
-            task_text="SECRET_TASK_MUST_NOT_SERIALIZE",
-            status="completed",
-            attempts=1,
-            trace=["analyze_requirement", "completed"],
+        return _run_result(
+            WorkflowState(
+                task_text="SECRET_TASK_MUST_NOT_SERIALIZE",
+                status="completed",
+                attempts=1,
+                trace=["analyze_requirement", "completed"],
+            )
         )
 
     app = create_app(
@@ -147,7 +153,7 @@ def test_web_rejects_invalid_project_before_bootstrap(tmp_path: Path) -> None:
     app = create_app(
         projects_root=tmp_path,
         bootstrap_factory=lambda **kwargs: calls.append(kwargs),  # type: ignore[arg-type]
-        workflow_runner=lambda **_: WorkflowState(),
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
     )
     response = TestClient(app).post(
         "/api/conversations/..%5Csecret",
@@ -168,7 +174,7 @@ def test_web_sanitizes_startup_error(tmp_path: Path) -> None:
     app = create_app(
         projects_root=tmp_path,
         bootstrap_factory=fail_bootstrap,  # type: ignore[arg-type]
-        workflow_runner=lambda **_: WorkflowState(),
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
     )
     response = TestClient(app).post(
         "/api/conversations/blink",
@@ -189,8 +195,8 @@ def test_process_local_history_and_reset(tmp_path: Path) -> None:
     app = create_app(
         projects_root=tmp_path,
         bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
-        workflow_runner=lambda **_: WorkflowState(
-            status="completed", attempts=1, trace=[]
+        workflow_runner=lambda **_: _run_result(
+            WorkflowState(status="completed", attempts=1, trace=[])
         ),
     )
     client = TestClient(app)

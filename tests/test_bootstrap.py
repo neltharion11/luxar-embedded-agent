@@ -137,3 +137,42 @@ def test_bootstrap_constructs_project_adapter_with_shared_launcher() -> None:
         "trusted-idf.py",
     )
     assert context.target_chip is None
+
+
+def test_bootstrap_injects_flasher_serial_port_and_checkpointer() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from luxar.adapters.fake_flasher import FakeFlasher
+
+    flasher = FakeFlasher([])
+    checkpointer = InMemorySaver()
+    context = build_deepseek_runtime_context(
+        espidf=FakeEspIdf([]),
+        workspace=FakeWorkspace([]),
+        project_path=Path("firmware"),
+        flasher=flasher,
+        serial_port="COM3",
+        checkpointer=checkpointer,
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert context.flasher is flasher
+    assert context.serial_port == "COM3"
+    assert context.checkpointer is checkpointer
+
+
+def test_bootstrap_constructs_device_adapter_and_memory_checkpointer() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from luxar.adapters.espidf_device import EspIdfDeviceAdapter
+
+    context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert isinstance(context.flasher, EspIdfDeviceAdapter)
+    assert isinstance(context.checkpointer, InMemorySaver)
+    assert context.serial_port is None

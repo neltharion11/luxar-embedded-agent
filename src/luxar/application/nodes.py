@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 
 from luxar.application.context import RuntimeContext
 from luxar.application.state import WorkflowState
+from luxar.domain.devices import ApprovalRequest
 from luxar.domain.errors import WorkflowError
+from luxar.ports.espidf_errors import EspIdfError
 
 
 # 已实现步骤词表随切片扩展；未进入本表的步骤会被分发器拒绝。
@@ -14,12 +17,19 @@ _SUPPORTED_STEP_KINDS = frozenset(
     {
         "create_project",
         "build_project",
+        "flash_project",
     }
 )
 
 _UNSUPPORTED_STEP_MESSAGE = "执行计划包含当前版本不支持的步骤"
 
 _UNSUPPORTED_STEP_SUGGESTION = "请更换模型或升级 LUXAR 后重试"
+
+_APPROVAL_SUMMARY = "即将向串口设备烧录固件，请确认目标芯片与串口"
+
+_APPROVAL_REJECTED_MESSAGE = "烧录申请被用户拒绝"
+
+_APPROVAL_REJECTED_SUGGESTION = "确认目标芯片和串口后重新运行任务"
 
 
 def analyze_requirement(
@@ -125,6 +135,107 @@ def create_project(
         "trace": [
             *state.get("trace", []),
             "create_project",
+        ],
+    }
+
+
+def request_flash_approval(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    trace = [
+        *state.get("trace", []),
+        "request_flash_approval",
+    ]
+
+    # 本次运行已经批准过烧录：设备修复回路的重烧录不再重复询问。
+    if state.get("approval_status") == "approved":
+        return {"trace": trace}
+
+    port = runtime.context.serial_port
+    if port is None:
+        # 缺少串口是运行配置问题，不是用户决策，直接以脱敏错误终止。
+        return {
+            "error": WorkflowError.model_validate(
+                {
+                    "stage": "flash",
+                    "category": "serial",
+                    "message": "未配置烧录串口",
+                    "retryable": False,
+                    "user_suggestion": "请通过 --port 指定开发板串口",
+                }
+            ),
+            "trace": trace,
+        }
+
+    request = ApprovalRequest(
+        project_name=runtime.context.project_path.name,
+        port=port,
+        target_chip=(
+            runtime.context.target_chip
+            or state["requirement"].target
+        ),
+        summary=_APPROVAL_SUMMARY,
+        step_description="flash_project",
+        attempts=state.get("flash_attempts", 0),
+    )
+
+    # interrupt() 在这里暂停整个 Graph；恢复值由 Runner 的
+    # Command(resume={"approved": ...}) 提供，JSON 载荷可安全进 checkpoint。
+    decision = interrupt(request.model_dump(mode="json"))
+    approved = (
+        isinstance(decision, dict)
+        and bool(decision.get("approved"))
+    )
+
+    if approved:
+        return {
+            "approval_status": "approved",
+            "approval_request": request,
+            "trace": trace,
+        }
+
+    return {
+        "approval_status": "rejected",
+        "approval_request": request,
+        "error": WorkflowError.model_validate(
+            {
+                "stage": "flash",
+                "category": "approval_rejected",
+                "message": _APPROVAL_REJECTED_MESSAGE,
+                "retryable": False,
+                "user_suggestion": _APPROVAL_REJECTED_SUGGESTION,
+            }
+        ),
+        "trace": trace,
+    }
+
+
+def flash_project(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    port = runtime.context.serial_port
+    if port is None:
+        raise EspIdfError(
+            category="serial",
+            message="未配置烧录串口",
+            retryable=False,
+        )
+
+    # 烧录成功与否只能由 EspIdfFlashPort 返回的真实证据决定。
+    evidence = runtime.context.flasher.flash(
+        runtime.context.project_path,
+        port,
+    )
+
+    return {
+        "flash_evidence": evidence,
+        "flash_attempts": state.get("flash_attempts", 0) + 1,
+        "status": "flashing",
+        "trace": [
+            *state.get("trace", []),
+            "flash_project",
         ],
     }
 

@@ -24,6 +24,7 @@ def route_after_dispatch(
 ) -> Literal[
     "create_project",
     "build_project",
+    "request_flash_approval",
     "completed",
     "failed",
 ]:
@@ -35,6 +36,9 @@ def route_after_dispatch(
 
     if pending == "build_project":
         return "build_project"
+
+    if pending == "flash_project":
+        return "request_flash_approval"
 
     # 计划执行完毕时分发器写入 None，进入 completed 终态。
     if pending is None:
@@ -51,6 +55,39 @@ def route_after_project_creation(
 
     if evidence.success:
         return "execute_next_step"
+
+    return "failed"
+
+
+def route_after_approval(
+    state: WorkflowState,
+) -> Literal["flash_project", "failed"]:
+    # 批准后真正执行烧录；拒绝或审批失败都终止。
+    if state.get("approval_status") == "approved":
+        return "flash_project"
+
+    return "failed"
+
+
+def route_after_flash(
+    state: WorkflowState,
+) -> Literal[
+    "execute_next_step",
+    "flash_project",
+    "failed",
+]:
+    # 烧录成功继续计划；串口/超时在预算内直接重试一次，其余失败终止。
+    evidence = state["flash_evidence"]
+    attempts = state.get("flash_attempts", 0)
+
+    if evidence.success:
+        return "execute_next_step"
+
+    if attempts >= 2:
+        return "failed"
+
+    if evidence.error_category in {"serial", "timeout"}:
+        return "flash_project"
 
     return "failed"
 

@@ -108,6 +108,25 @@ def validate_idf_command_tokens(command: Sequence[str]) -> tuple[str, ...]:
     return normalized
 
 
+def build_safe_idf_environment(
+    allow_dependency_downloads: bool,
+) -> dict[str, str]:
+    """构造 idf.py 子进程环境：去颜色、去提示，默认禁止依赖下载。"""
+
+    import os
+
+    environment = os.environ.copy()
+    environment["IDF_COMPONENT_NO_COLORS"] = "1"
+    environment["IDF_COMPONENT_NO_HINTS"] = "1"
+
+    if allow_dependency_downloads:
+        environment.pop("IDF_COMPONENT_MANAGER", None)
+    else:
+        environment["IDF_COMPONENT_MANAGER"] = "0"
+
+    return environment
+
+
 def validate_espidf_launcher(idf_command: tuple[str, ...]) -> None:
     """确认 idf.py 启动器可用，失败时抛出脱敏的环境错误。"""
 

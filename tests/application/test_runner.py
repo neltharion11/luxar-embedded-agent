@@ -1,8 +1,10 @@
 from pathlib import Path
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.adapters.fake_flasher import FakeFlasher
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -138,6 +140,9 @@ def make_context(
         project_path=Path("workspace/blink"),
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
 
@@ -229,13 +234,14 @@ def test_runner_returns_failed_state_for_requirement_error() -> None:
         evidence_sequence=[],
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="create ESP32 firmware",
             trace=[],
         ),
         context=context,
     )
+    result = run_result.state
 
     assert result["task_text"] == "create ESP32 firmware"
     assert result["status"] == "failed"
@@ -259,10 +265,11 @@ def test_runner_preserves_requirement_when_planning_fails() -> None:
         evidence_sequence=[],
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(task_text="blink GPIO 2", trace=[]),
         context=context,
     )
+    result = run_result.state
 
     assert result["requirement"] is requirement
     assert result["status"] == "failed"
@@ -302,7 +309,7 @@ def test_runner_preserves_build_evidence_when_repair_fails() -> None:
         evidence_sequence=[evidence],
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="repair ESP32 firmware",
             attempts=0,
@@ -311,6 +318,7 @@ def test_runner_preserves_build_evidence_when_repair_fails() -> None:
         ),
         context=context,
     )
+    result = run_result.state
 
     assert result["requirement"] is requirement
     assert result["plan"] is plan
@@ -343,7 +351,7 @@ def test_runner_keeps_successful_workflow_behavior() -> None:
         evidence_sequence=[succeeded],
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="build ESP32 firmware",
             attempts=0,
@@ -352,6 +360,7 @@ def test_runner_keeps_successful_workflow_behavior() -> None:
         ),
         context=context,
     )
+    result = run_result.state
 
     assert result["status"] == "completed"
     assert result["build_evidence"] is succeeded
@@ -434,7 +443,7 @@ def test_runner_preserves_latest_state_when_workspace_read_fails() -> None:
         ),
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="repair ESP32 firmware",
             attempts=0,
@@ -443,6 +452,7 @@ def test_runner_preserves_latest_state_when_workspace_read_fails() -> None:
         ),
         context=context,
     )
+    result = run_result.state
 
     assert result["requirement"] is requirement
     assert result["plan"] is plan
@@ -528,9 +538,12 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
         project_path=Path("workspace/blink"),
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="build ESP32 firmware",
             attempts=0,
@@ -539,6 +552,7 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
         ),
         context=context,
     )
+    result = run_result.state
 
     assert result["requirement"] is requirement
     assert result["plan"] is plan
@@ -576,7 +590,7 @@ def test_runner_reports_safe_progress_for_complete_repair_loop() -> None:
         evidence_sequence=[failed_evidence, succeeded_evidence],
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="SECRET_TASK_TEXT",
             attempts=0,
@@ -586,6 +600,7 @@ def test_runner_reports_safe_progress_for_complete_repair_loop() -> None:
         context=context,
         progress_reporter=events.append,
     )
+    result = run_result.state
 
     assert result["status"] == "completed"
     assert events == [
@@ -618,9 +633,12 @@ def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
         project_path=Path("SECRET_PROJECT_PATH"),
         project_creator=FakeProjectCreator([]),
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
-    result = run_workflow(
+    run_result = run_workflow(
         initial_state=WorkflowState(
             task_text="build firmware",
             attempts=0,
@@ -630,6 +648,7 @@ def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
         context=context,
         progress_reporter=events.append,
     )
+    result = run_result.state
 
     assert result["status"] == "failed"
     assert events == [

@@ -2,8 +2,10 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.adapters.fake_flasher import FakeFlasher
 from luxar.adapters.fake_planner import FakePlanner
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_repair_planner import FakeRepairPlanner
@@ -56,6 +58,9 @@ def test_runtime_context_keeps_dependencies_outside_workflow_state() -> None:
         workspace=workspace,
         project_creator=project_creator,
         target_chip=None,
+        flasher=FakeFlasher([]),
+        serial_port=None,
+        checkpointer=InMemorySaver(),
     )
 
     assert context.requirement_parser is parser
