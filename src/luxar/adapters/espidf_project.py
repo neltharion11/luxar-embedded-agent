@@ -215,13 +215,16 @@ class EspIdfProjectAdapter:
         parent_root: Path,
         project_name: str,
     ) -> tuple[int, str, str]:
+        # IDF v5+/v6 语义：--path 指定项目要直接创建的目录，
+        # NAME 只用作主源文件名。因此把完整目标目录作为 --path。
+        target_dir = parent_root / project_name
         try:
             result = subprocess.run(
                 [
                     *self.idf_command,
                     "create-project",
                     "--path",
-                    str(parent_root),
+                    str(target_dir),
                     project_name,
                 ],
                 cwd=parent_root,

@@ -214,3 +214,61 @@ boundary remain intact.
 Next enterprise slice: design LangGraph checkpoint persistence and human
 approval before expanding the Agent with resumable interaction. No persistence
 or approval is implemented in the CLI slice.
+
+## Full-Pipeline checkpoint (2026-08-16)
+
+Authoritative documents:
+
+- `docs/superpowers/specs/2026-08-16-luxar-full-pipeline-design.md`
+- `docs/superpowers/plans/2026-08-16-luxar-full-pipeline-plan.md`
+- `docs/learning/11-full-pipeline.md`
+
+Six slices (S1–S6) turned the build-only Agent into the complete
+create → build → flash (human approval) → monitor → log-analysis pipeline.
+
+S1 made `ExecutionPlan` the real execution contract: the step vocabulary is
+`create_project/build_project/flash_project/monitor_project` with ordering
+validators, and a cursor dispatcher node executes steps in order.
+
+S2 added `ProjectEvidence`, `EspIdfProjectPort`, and `EspIdfProjectAdapter`
+(`idf.py create-project` inside a contained parent directory, idempotent
+reuse of existing projects, `CONFIG_IDF_TARGET` consistency in
+`sdkconfig.defaults`). Shared preflight/sanitization internals moved to
+`adapters/espidf_common.py`.
+
+S3 added `FlashEvidence`, `EspIdfFlashPort`, platform-pattern port-name
+validation, and human approval through LangGraph `interrupt()`. The runner
+returns `WorkflowRunResult(thread_id, pending_approval)` and resumes with
+`Command(resume=...)` against an injected `InMemorySaver`. Verified
+langgraph 1.2.11 semantics: pause surfaces as a `__interrupt__` snapshot
+key, never an exception; the runner strips it from business State.
+Approval persists per run, so device-loop re-flashes never re-prompt.
+
+S4 added `MonitorEvidence`, `DeviceLogDiagnostic`, `DeviceDiagnosis`,
+`EspIdfMonitorPort` (bounded capture window, process-tree termination,
+ESP32 failure-pattern extraction), `LogAnalystPort` and
+`DeepSeekLogAnalyst` (logs treated as untrusted data). The device loop
+repair → rebuild → re-flash → re-monitor is bounded by `device_cycles ≤ 3`;
+`repair_origin` routes rebuilt firmware back through flash into monitor.
+`RepairPlanner.create_repair` gained an optional `device_diagnosis`.
+
+S5 added `luxar ports`, `--port`, interactive y/N approval (default
+reject), a JSON-mode `--approve-flash` guard, an `approval` SSE event,
+and `POST /api/conversations/{project}/approval` (strict contract, 409
+without pending approval). `luxar ports` verified against the real CH340
+board on COM4 (VID:PID=1A86:7523).
+
+S6 added `docs/learning/11-full-pipeline.md`, security searches, and an
+opt-in real device smoke (`tests/smoke/test_device_smoke.py`, gated by
+`LUXAR_RUN_ESPIDF_SMOKE=1` + `LUXAR_ESP32_PORT`) that drives the real
+ESP-IDF v6.0.2 toolchain found at `F:\esp\v6.0.2\esp-idf`: real
+create-project, real build, real flash, and a real monitor capture window.
+
+Latest complete offline verification: `493 passed, 8 skipped`.
+
+Learning environment note: development uses the local conda env
+`C:\Users\41562\.conda\envs\luxar-learning` with a sandbox workaround for
+`os.mkdir` mode handling (`F:\LUXAR\.site-tools`, gitignored, loaded via
+`PYTHONPATH`); `pyserial` is installed into that directory because the
+sandbox denies writes into the conda environment.
+

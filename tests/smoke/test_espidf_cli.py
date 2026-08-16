@@ -33,18 +33,34 @@ def _write_minimal_espidf_project(project: Path) -> None:
     )
 
 
+def _resolve_launcher() -> tuple[str, ...]:
+    """解析可执行的 idf.py 启动器。
+
+    激活脚本把 idf.py 注册成 PowerShell 函数而不是可执行文件，
+    因此本机已知的 venv python + 脚本安装优先。
+    """
+
+    venv_python = (
+        r"F:\Espressif\tools\python\v6.0.2\venv\Scripts\python.exe"
+    )
+    idf_script = r"F:\esp\v6.0.2\esp-idf\tools\idf.py"
+
+    if Path(venv_python).is_file() and Path(idf_script).is_file():
+        return (venv_python, idf_script)
+
+    return ("idf.py",)
+
+
 def test_real_espidf_build_is_explicitly_opt_in(tmp_path: Path) -> None:
-    """显式开关和可发现的 idf.py 同时满足时才运行真实构建。"""
+    """显式开关和环境可用时运行真实构建。"""
 
     if os.environ.get("LUXAR_RUN_ESPIDF_SMOKE") != "1":
         pytest.skip("set LUXAR_RUN_ESPIDF_SMOKE=1 to run the real ESP-IDF smoke")
 
-    if shutil.which("idf.py") is None:
-        pytest.skip("idf.py is not available in the active environment")
-
     _write_minimal_espidf_project(tmp_path)
 
     evidence = EspIdfCliAdapter(
+        idf_command=_resolve_launcher(),
         allow_dependency_downloads=False,
     ).build(tmp_path)
 

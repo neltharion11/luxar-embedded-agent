@@ -111,11 +111,12 @@ def test_create_project_runs_command_and_writes_target_config(
         stdout_summary="Created project blink\n",
     )
     args = captured["args"][0]
+    # IDF v5+/v6:--path 是项目要直接创建的目录,NAME 是主源文件名。
     assert list(args) == [
         "idf.py",
         "create-project",
         "--path",
-        str(parent),
+        str(parent / "blink"),
         "blink",
     ]
     assert captured["kwargs"]["shell"] is False
