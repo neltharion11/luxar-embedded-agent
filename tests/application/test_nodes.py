@@ -13,6 +13,7 @@ from luxar.application.nodes import (
     build_project,
     completed,
     create_plan,
+    execute_next_step,
     failed,
     repair_project,
     request_clarification,
@@ -275,3 +276,112 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
     }
     assert state["attempts"] == 1
     assert state["build_evidence"] is evidence
+
+
+def make_multi_step_plan() -> ExecutionPlan:
+    return ExecutionPlan(
+        steps=[
+            PlanStep(kind="create_project", description="Create project"),
+            PlanStep(kind="build_project", description="Build project"),
+            PlanStep(kind="flash_project", description="Flash project"),
+        ]
+    )
+
+
+def test_execute_next_step_dispatches_first_step_and_advances_cursor() -> None:
+    state = {
+        "plan": ExecutionPlan(
+            steps=[
+                PlanStep(kind="build_project", description="Build"),
+                PlanStep(kind="flash_project", description="Flash"),
+            ]
+        ),
+        "plan_index": 0,
+        "trace": ["analyze_requirement", "create_plan"],
+    }
+
+    update = execute_next_step(state)
+
+    assert update == {
+        "plan_index": 1,
+        "pending_step_kind": "build_project",
+        "trace": [
+            "analyze_requirement",
+            "create_plan",
+            "execute_next_step",
+        ],
+    }
+
+
+def test_execute_next_step_uses_zero_when_cursor_missing() -> None:
+    update = execute_next_step(
+        {
+            "plan": ExecutionPlan(
+                steps=[
+                    PlanStep(kind="build_project", description="Build"),
+                ]
+            ),
+            "trace": [],
+        }
+    )
+
+    assert update["plan_index"] == 1
+    assert update["pending_step_kind"] == "build_project"
+    assert "error" not in update
+
+
+def test_execute_next_step_reports_completion_when_plan_exhausted() -> None:
+    plan = make_multi_step_plan()
+    state = {
+        "plan": plan,
+        "plan_index": len(plan.steps),
+        "trace": [],
+    }
+
+    update = execute_next_step(state)
+
+    assert update == {
+        "pending_step_kind": None,
+        "trace": ["execute_next_step"],
+    }
+
+
+def test_execute_next_step_supports_build_steps_in_s1() -> None:
+    state = {
+        "plan": ExecutionPlan(
+            steps=[
+                PlanStep(kind="build_project", description="Build"),
+            ]
+        ),
+        "plan_index": 0,
+        "trace": [],
+    }
+
+    update = execute_next_step(state)
+
+    assert update["pending_step_kind"] == "build_project"
+    assert "error" not in update
+
+
+def test_execute_next_step_rejects_not_yet_supported_step_with_fixed_error() -> None:
+    # S1 只实现了 build_project；flashing 步骤在 S3 之前必须给出固定失败。
+    state = {
+        "plan": ExecutionPlan(
+            steps=[
+                PlanStep(kind="build_project", description="Build"),
+                PlanStep(kind="flash_project", description="Flash"),
+            ]
+        ),
+        "plan_index": 1,
+        "trace": [],
+    }
+
+    update = execute_next_step(state)
+
+    assert update["pending_step_kind"] == "flash_project"
+    error = update["error"]
+    assert error.stage == "planning"
+    assert error.category == "model_output"
+    assert error.retryable is False
+    assert "flash_project" in error.message
+    assert error.user_suggestion

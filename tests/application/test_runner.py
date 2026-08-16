@@ -320,6 +320,7 @@ def test_runner_preserves_build_evidence_when_repair_fails() -> None:
     assert result["trace"] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "build_project",
         "failed",
     ]
@@ -354,7 +355,9 @@ def test_runner_keeps_successful_workflow_behavior() -> None:
     assert result["trace"] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "build_project",
+        "execute_next_step",
         "completed",
     ]
 
@@ -450,6 +453,7 @@ def test_runner_preserves_latest_state_when_workspace_read_fails() -> None:
     assert result["trace"] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "build_project",
         "failed",
     ]
@@ -523,6 +527,7 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
     assert result["trace"] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "failed",
     ]
 

@@ -24,6 +24,15 @@ WorkflowStatus = Literal[
 ]
 
 
+# 游标分发时记录当前正在执行的步骤类型；None 表示没有待分发步骤。
+PendingStepKind = Literal[
+    "create_project",
+    "build_project",
+    "flash_project",
+    "monitor_project",
+] | None
+
+
 class WorkflowState(TypedDict, total=False):
     # TypedDict 只描述字典应有哪些键和值类型，运行时仍是普通 dict。
     # total=False 表示节点可以逐步补充字段，不要求初始 State 一次提供全部键。
@@ -38,3 +47,9 @@ class WorkflowState(TypedDict, total=False):
     trace: list[str]
     repair_plan: RepairPlan
     changed_files: list[str]
+    # S1：计划游标。plan_index 指向下一个未执行的步骤。
+    plan_index: int
+    # S1：分发器写下的待执行步骤类型，供条件路由选择目标节点。
+    pending_step_kind: PendingStepKind
+    # S4 使用：记录触发修复的来源，决定重建成功后回到构建还是进入设备回路。
+    repair_origin: Literal["build", "monitor"] | None

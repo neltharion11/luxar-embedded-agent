@@ -6,6 +6,19 @@ from langgraph.runtime import Runtime
 
 from luxar.application.context import RuntimeContext
 from luxar.application.state import WorkflowState
+from luxar.domain.errors import WorkflowError
+
+
+# S1 只有 build_project 真正可执行；后续切片逐个放开其余步骤。
+_SUPPORTED_STEP_KINDS = frozenset(
+    {
+        "build_project",
+    }
+)
+
+_UNSUPPORTED_STEP_MESSAGE = "执行计划包含当前版本不支持的步骤"
+
+_UNSUPPORTED_STEP_SUGGESTION = "请更换模型或升级 LUXAR 后重试"
 
 
 def analyze_requirement(
@@ -46,6 +59,47 @@ def create_plan(
             "create_plan",
         ],
     }
+
+
+def execute_next_step(
+    state: WorkflowState,
+) -> dict[str, object]:
+    # 计划游标分发器：只负责读取已验证的计划并推进游标，不调用任何外部能力。
+    plan = state["plan"]
+    index = state.get("plan_index", 0)
+    trace = [
+        *state.get("trace", []),
+        "execute_next_step",
+    ]
+
+    # 所有步骤都已执行完毕：清空待分发步骤，路由到 completed 终态节点。
+    if index >= len(plan.steps):
+        return {
+            "pending_step_kind": None,
+            "trace": trace,
+        }
+
+    # 分发前推进游标，因此步骤节点永远不需要管理 plan_index。
+    step = plan.steps[index]
+    update: dict[str, object] = {
+        "plan_index": index + 1,
+        "pending_step_kind": step.kind,
+        "trace": trace,
+    }
+
+    # 词表已由领域模型验证；此处只拒绝当前版本尚未实现的步骤。
+    if step.kind not in _SUPPORTED_STEP_KINDS:
+        update["error"] = WorkflowError.model_validate(
+            {
+                "stage": "planning",
+                "category": "model_output",
+                "message": f"{_UNSUPPORTED_STEP_MESSAGE}：{step.kind}",
+                "retryable": False,
+                "user_suggestion": _UNSUPPORTED_STEP_SUGGESTION,
+            }
+        )
+
+    return update
 
 
 def build_project(

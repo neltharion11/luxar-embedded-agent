@@ -1,4 +1,4 @@
-"""Graph 装配器：注册七个业务节点、普通边和条件边，并编译为可执行工作流。"""
+"""Graph 装配器：注册业务节点、普通边和条件边，并编译为可执行工作流。"""
 
 from __future__ import annotations
 
@@ -11,12 +11,14 @@ from luxar.application.nodes import (
     build_project,
     completed,
     create_plan,
+    execute_next_step,
     failed,
     repair_project,
     request_clarification,
 )
 from luxar.application.routing import (
     route_after_build,
+    route_after_dispatch,
     route_after_requirement,
 )
 from luxar.application.state import WorkflowState
@@ -37,6 +39,10 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node(
         "create_plan",
         create_plan,
+    )
+    builder.add_node(
+        "execute_next_step",
+        execute_next_step,
     )
     builder.add_node(
         "build_project",
@@ -75,18 +81,29 @@ def build_graph() -> CompiledStateGraph:
         },
     )
 
-    # 计划生成后没有分支，必定进入第一次构建。
+    # 计划生成后进入游标分发器，由已验证的步骤决定下一个动作。
     builder.add_edge(
         "create_plan",
-        "build_project",
+        "execute_next_step",
     )
 
-    # 构建后可能完成、修复、原样重试或失败，其中自环代表 timeout 重试。
+    # S1 只放开 build_project；其余词表步骤由分发器写出固定错误并路由到 failed。
+    builder.add_conditional_edges(
+        "execute_next_step",
+        route_after_dispatch,
+        {
+            "build_project": "build_project",
+            "completed": "completed",
+            "failed": "failed",
+        },
+    )
+
+    # 构建后可能继续计划、修复、原样重试或失败，其中自环代表 timeout 重试。
     builder.add_conditional_edges(
         "build_project",
         route_after_build,
         {
-            "completed": "completed",
+            "execute_next_step": "execute_next_step",
             "repair_project": "repair_project",
             "build_project": "build_project",
             "failed": "failed",

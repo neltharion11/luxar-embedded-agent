@@ -1,4 +1,4 @@
-"""条件路由：只读取结构化 State，决定需求分析或构建之后应前往哪个节点。"""
+"""条件路由：只读取结构化 State，决定每个分支节点之后应前往哪个节点。"""
 
 from __future__ import annotations
 
@@ -19,10 +19,27 @@ def route_after_requirement(
     return "request_clarification"
 
 
+def route_after_dispatch(
+    state: WorkflowState,
+) -> Literal["build_project", "completed", "failed"]:
+    # S1 只有 build_project 可执行；其余词表步骤暂时路由到 failed，
+    # 分发器节点已经为它们写入了固定的不支持错误。
+    pending = state.get("pending_step_kind")
+
+    if pending == "build_project":
+        return "build_project"
+
+    # 计划执行完毕时分发器写入 None，进入 completed 终态。
+    if pending is None:
+        return "completed"
+
+    return "failed"
+
+
 def route_after_build(
     state: WorkflowState,
 ) -> Literal[
-    "completed",
+    "execute_next_step",
     "repair_project",
     "build_project",
     "failed",
@@ -32,9 +49,9 @@ def route_after_build(
     attempts = state.get("attempts", 0)
     max_attempts = state.get("max_attempts", 1)
 
-    # 成功必须最先判断：即使恰好用完最后一次预算，成功结果仍应完成。
+    # 成功必须最先判断：即使恰好用完最后一次预算，成功结果仍应继续计划。
     if evidence.success:
-        return "completed"
+        return "execute_next_step"
 
     # 失败且预算耗尽时先终止，防止后续分支形成无限循环。
     if attempts >= max_attempts:

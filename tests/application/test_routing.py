@@ -1,6 +1,10 @@
 import pytest
 
-from luxar.application.routing import route_after_build, route_after_requirement
+from luxar.application.routing import (
+    route_after_build,
+    route_after_dispatch,
+    route_after_requirement,
+)
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.requirements import FirmwareRequirement
 
@@ -33,7 +37,31 @@ def test_incomplete_requirement_routes_to_clarification() -> None:
     assert destination == "request_clarification"
 
 
-def test_successful_final_attempt_routes_to_completed() -> None:
+def test_dispatch_routes_build_step_to_build_node() -> None:
+    state = {"pending_step_kind": "build_project"}
+
+    assert route_after_dispatch(state) == "build_project"
+
+
+def test_dispatch_routes_none_to_completed() -> None:
+    state = {"pending_step_kind": None}
+
+    assert route_after_dispatch(state) == "completed"
+
+
+@pytest.mark.parametrize(
+    "pending_kind",
+    ["create_project", "flash_project", "monitor_project"],
+)
+def test_dispatch_routes_not_yet_supported_steps_to_failed(
+    pending_kind: str,
+) -> None:
+    state = {"pending_step_kind": pending_kind}
+
+    assert route_after_dispatch(state) == "failed"
+
+
+def test_successful_final_attempt_continues_plan() -> None:
     state = {
         "build_evidence": BuildEvidence(
             success=True,
@@ -46,7 +74,7 @@ def test_successful_final_attempt_routes_to_completed() -> None:
 
     destination = route_after_build(state)
 
-    assert destination == "completed"
+    assert destination == "execute_next_step"
 
 
 @pytest.mark.parametrize(

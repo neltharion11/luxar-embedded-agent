@@ -121,9 +121,11 @@ def test_source_failure_is_repaired_rebuilt_and_completed() -> None:
     assert result["trace"] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "build_project",
         "repair_project",
         "build_project",
+        "execute_next_step",
         "completed",
     ]
     assert parser.calls == ["create an ESP32 GPIO blink project"]
@@ -201,8 +203,10 @@ def test_timeout_retries_without_repair_then_completes() -> None:
     assert result["trace"] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "build_project",
         "build_project",
+        "execute_next_step",
         "completed",
     ]
     assert len(espidf.calls) == 2
@@ -275,8 +279,10 @@ def test_stream_reports_repair_loop_node_order() -> None:
     assert [next(iter(update)) for update in updates] == [
         "analyze_requirement",
         "create_plan",
+        "execute_next_step",
         "build_project",
         "repair_project",
         "build_project",
+        "execute_next_step",
         "completed",
     ]
