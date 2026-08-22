@@ -78,6 +78,27 @@ def test_bootstrap_passes_explicit_espidf_authorization_and_command() -> None:
     )
 
 
+def test_bootstrap_uses_explicit_idf_root_for_relative_example_library(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    explicit = tmp_path / "selected-idf"
+    (explicit / "examples").mkdir(parents=True)
+    stale = tmp_path / "stale-idf"
+    (stale / "examples").mkdir(parents=True)
+    monkeypatch.setenv("IDF_PATH", str(stale))
+
+    context = build_deepseek_runtime_context(
+        project_path=Path("firmware"),
+        settings=DeepSeekSettings(api_key="test-key"),
+        client=FakeJsonCompletionClient([]),
+        idf_path=explicit,
+    )
+
+    assert context.example_library is not None
+    assert context.example_library._idf_path == explicit.resolve()
+
+
 def test_bootstrap_constructs_one_client_when_none_is_injected(
     monkeypatch,
 ) -> None:

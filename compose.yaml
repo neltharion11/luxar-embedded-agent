@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: luxar
+      POSTGRES_USER: luxar
+      POSTGRES_PASSWORD: luxar-local
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - luxar-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U luxar -d luxar"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  luxar-postgres-data:

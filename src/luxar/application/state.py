@@ -12,7 +12,9 @@ from luxar.domain.devices import (
 )
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
+from luxar.domain.idf_examples import EspIdfExampleReference
 from luxar.domain.plans import ExecutionPlan
+from luxar.domain.project_analysis import ProjectAnalysis
 from luxar.domain.projects import ProjectEvidence
 from luxar.domain.requirements import FirmwareRequirement
 from luxar.domain.repairs import RepairPlan
@@ -21,9 +23,11 @@ from luxar.domain.repairs import RepairPlan
 WorkflowStatus = Literal[
     # 状态值使用有限字符串集合，避免节点写入拼错或未知的阶段名称。
     "requirement_analyzed",
+    "project_analyzed",
     "needs_clarification",
     "planned",
     "project_created",
+    "implemented",
     "building",
     "flashing",
     "monitoring",
@@ -38,6 +42,7 @@ WorkflowStatus = Literal[
 # 游标分发时记录当前正在执行的步骤类型；None 表示没有待分发步骤。
 PendingStepKind = Literal[
     "create_project",
+    "implement_change",
     "build_project",
     "flash_project",
     "monitor_project",
@@ -48,7 +53,10 @@ class WorkflowState(TypedDict, total=False):
     # TypedDict 只描述字典应有哪些键和值类型，运行时仍是普通 dict。
     # total=False 表示节点可以逐步补充字段，不要求初始 State 一次提供全部键。
     task_text: str
+    task_mode: Literal["firmware", "inspection"]
     requirement: FirmwareRequirement
+    project_analysis: ProjectAnalysis
+    inspection_response: str
     plan: ExecutionPlan
     build_evidence: BuildEvidence
     error: WorkflowError
@@ -57,6 +65,8 @@ class WorkflowState(TypedDict, total=False):
     status: WorkflowStatus
     trace: list[str]
     repair_plan: RepairPlan
+    implementation_plan: RepairPlan
+    reference_examples: list[EspIdfExampleReference]
     changed_files: list[str]
     # S1：计划游标。plan_index 指向下一个未执行的步骤。
     plan_index: int

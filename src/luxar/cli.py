@@ -22,6 +22,18 @@ from luxar.application.runner import WorkflowProgress, run_workflow
 from luxar.application.state import WorkflowState
 from luxar.bootstrap import build_deepseek_runtime_context, discover_serial_ports
 from luxar.domain.devices import ApprovalRequest
+from luxar.database import (
+    LocalStorageRuntime,
+    LocalStorageSettings,
+)
+from luxar.lance_knowledge import LanceDBKnowledgeIndex
+from luxar.knowledge import (
+    KnowledgeService,
+    KnowledgeSettings,
+    LocalHashEmbeddingAdapter,
+    OpenAIEmbeddingAdapter,
+)
+from luxar.sdk_knowledge import SdkExampleKnowledgeBase
 from luxar.ports.espidf_errors import EspIdfError
 
 
@@ -96,6 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
         "setup",
         help="一键准备开发环境（Windows PowerShell）",
     )
+    storage_parser = subcommands.add_parser(
+        "storage", help="检查 SQLite + LanceDB 本地持久化"
+    )
+    storage_commands = storage_parser.add_subparsers(
+        dest="storage_command", required=True
+    )
+    storage_commands.add_parser("health", help="检查本地持久化")
     return parser
 
 
@@ -203,6 +222,28 @@ def _run_setup() -> int:
     )
 
 
+def _run_storage(command: str) -> int:
+    if command != "health":
+        return 2
+    runtime = LocalStorageRuntime(
+        LocalStorageSettings.for_projects_root(_default_projects_roots()[0])
+    )
+    try:
+        runtime.open()
+        runtime.checkpointer()
+        if runtime.health():
+            print(f"SQLite 持久化正常：{runtime.settings.application_path}")
+            print(f"LanceDB 目录：{runtime.settings.knowledge_path}")
+            return 0
+    except (RuntimeError, ValueError, OSError):
+        print("本地持久化不可用，请检查 LUXAR_STORAGE_DIRECTORY", file=sys.stderr)
+        return 1
+    finally:
+        runtime.close()
+    print("本地持久化健康检查失败", file=sys.stderr)
+    return 1
+
+
 def _format_human_result(state: WorkflowState) -> str:
     status = state.get("status")
     lines: list[str]
@@ -227,7 +268,9 @@ def _format_human_result(state: WorkflowState) -> str:
         lines = ["LUXAR 需要更多信息", "状态：needs_clarification"]
         requirement = state.get("requirement")
         missing_fields = (
-            requirement.missing_fields if requirement is not None else []
+            requirement.blocking_missing_fields
+            if requirement is not None
+            else []
         )
         if missing_fields:
             lines.append("缺少字段：")
@@ -354,6 +397,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "setup":
         return _run_setup()
 
+    if args.command == "storage":
+        return _run_storage(args.storage_command)
+
     project: Path = args.project
 
     # 创建任务允许项目目录尚不存在，但父目录必须真实存在。
@@ -374,6 +420,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("--approve-flash 只能与 --json 一起使用", file=sys.stderr)
         return 2
 
+    storage_runtime: LocalStorageRuntime | None = None
     try:
         task = args.task if args.task is not None else input("请输入固件需求：")
         task = task.strip()
@@ -382,13 +429,51 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
         try:
-            context = build_deepseek_runtime_context(
-                project_path=project,
-                target_chip=args.target,
-                serial_port=args.port,
-                allow_dependency_downloads=args.allow_dependency_downloads,
+            storage_runtime = LocalStorageRuntime(
+                LocalStorageSettings.for_projects_root(project.parent)
             )
-        except (ValidationError, ValueError):
+            storage_runtime.open()
+            persistence = storage_runtime.persistence
+            checkpointer = storage_runtime.checkpointer()
+            knowledge_service = None
+            embedding_settings = KnowledgeSettings()
+            if embedding_settings.configured:
+                knowledge_index = LanceDBKnowledgeIndex(
+                    storage_runtime.settings.knowledge_path,
+                    dimensions=embedding_settings.dimensions,
+                )
+                knowledge_service = KnowledgeService(
+                    knowledge_index,
+                    OpenAIEmbeddingAdapter(embedding_settings),
+                )
+            sdk_embeddings = LocalHashEmbeddingAdapter()
+            sdk_example_knowledge = SdkExampleKnowledgeBase(
+                LanceDBKnowledgeIndex(
+                    storage_runtime.settings.sdk_knowledge_path,
+                    dimensions=sdk_embeddings.dimensions,
+                ),
+                sdk_embeddings,
+            )
+            bootstrap_options: dict[str, object] = {
+                "project_path": project,
+                "target_chip": args.target,
+                "serial_port": args.port,
+                "allow_dependency_downloads": args.allow_dependency_downloads,
+            }
+            active_idf_path = os.environ.get("IDF_PATH")
+            if active_idf_path:
+                bootstrap_options["idf_path"] = Path(active_idf_path)
+            bootstrap_options.update(
+                {
+                    "checkpointer": checkpointer,
+                    "persistence": persistence,
+                    "project_key": project.name,
+                    "knowledge_service": knowledge_service,
+                    "sdk_example_knowledge": sdk_example_knowledge,
+                }
+            )
+            context = build_deepseek_runtime_context(**bootstrap_options)
+        except (ValidationError, ValueError, RuntimeError, OSError):
             print("运行配置无效，请检查环境变量", file=sys.stderr)
             return 2
 
@@ -420,6 +505,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("操作已取消", file=sys.stderr)
         return 130
+    finally:
+        if storage_runtime is not None:
+            storage_runtime.close()
 
     _print_result(result, args.json)
     return _exit_code_for_state(result)

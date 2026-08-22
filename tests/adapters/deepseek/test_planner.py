@@ -81,6 +81,8 @@ def test_planner_sends_requirement_schema_and_selected_model() -> None:
     assert '"steps"' in system_prompt
     assert '"build_project"' in system_prompt
     assert "不能发明新动作" in system_prompt
+    assert "不得添加 requirement.peripherals 中不存在的外设" in system_prompt
+    assert "不得擅自加入 GPIO" in system_prompt
     assert json.loads(user_prompt) == {
         "requirement": requirement.model_dump(mode="json")
     }

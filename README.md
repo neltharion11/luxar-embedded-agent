@@ -2,10 +2,6 @@
 
 A clean, enterprise-shaped reconstruction of LUXAR using explicit domain models, Ports and Adapters, structured execution evidence, and LangGraph orchestration.
 
-## Learning notes
-
-Start with the Chinese [LUXAR Agent review guide](docs/learning/00-LUXAR-Agent-复习总览.md). It consolidates English-to-Chinese terminology, Python syntax used by this project, the layered architecture, end-to-end workflow paths, testing levels, and Agent safety rules. The numbered `docs/learning/01` through `11` files remain focused deep dives.
-
 ## Current milestone
 
 The evidence-driven Agent now covers the complete firmware pipeline:
@@ -120,6 +116,7 @@ luxar run    --project DIR --task "..." [--port COM4] [--target esp32] [--json]
 luxar ports
 luxar web    --projects-root DIR [--serial-port COM4] [--target esp32]
 luxar setup
+luxar storage health
 ```
 
 Bare `luxar` equals `luxar web` with values from `LUXAR_PROJECTS_ROOT`
@@ -128,6 +125,41 @@ Bare `luxar` equals `luxar web` with values from `LUXAR_PROJECTS_ROOT`
 back to `./projects` and port 8000.
 
 (`luxar-web` remains as a compatible alias for `luxar web`.)
+
+## Embedded SQLite durability and LanceDB knowledge
+
+LUXAR now uses an embedded local storage profile by default. SQLite stores
+workflow runs, conversations, approvals, structured project memory, and
+LangGraph `SqliteSaver` checkpoints. LanceDB stores knowledge documents,
+chunks, metadata, and vectors. No Docker or database service is required.
+
+See [STORAGE.md](STORAGE.md) for storage ownership, recovery, backup, and the
+optional PostgreSQL compatibility profile.
+
+```bat
+copy .env.example .env
+luxar storage health
+luxar
+```
+
+`GET /api/health/database` reports `database=sqlite` and `durable=true`. Project
+memories are structured JSON records exposed through
+`GET|PUT /api/projects/{project}/memories`; only explicit device selections
+are learned automatically. Raw conversations and model guesses are not
+silently promoted to long-term memory.
+
+The external knowledge API uses LanceDB vector search plus bounded lexical
+reranking:
+
+```text
+POST /api/projects/{project}/knowledge/documents
+POST /api/projects/{project}/knowledge/search
+```
+
+Set `LUXAR_EMBEDDING_API_KEY` (and optionally base URL/model/dimensions) to an
+independent OpenAI-compatible embedding endpoint. Retrieved chunks carry
+their title and source URI and enter requirement analysis as untrusted
+reference context, not as executable instructions.
 
 ## Zero-config startup for new machines
 
@@ -160,12 +192,16 @@ gateway right away. `scripts\setup.ps1` remains available standalone
 (`-Force` reinstall, `-NoPathEdit` skips the PATH write); `scripts\run-web.ps1`
 is a thin alias of `start.ps1`.
 
-Hardware note: build/flash/monitor tasks additionally need ESP-IDF; its
-install location is detected through `IDF_PATH`/`IDF_PYTHON_ENV_PATH`, and
-`start.ps1` exports those variables when found. A bare `luxar` started in a
-fresh terminal serves the Web UI regardless, but hardware tasks need the
-ESP-IDF environment variables present (use `start.ps1`, or activate your
-ESP-IDF environment first).
+Hardware note: LUXAR checks the ESP-IDF command when the Web gateway starts.
+It searches `IDF_PATH`/`IDF_PYTHON_ENV_PATH`, Espressif Installation Manager
+records, `idf.py` on `PATH`, common standard install directories, and the path
+previously saved from the Dashboard. The Web UI shows a global warning when no
+usable environment is found. The Dashboard can open a native folder picker for
+an ESP-IDF root; that choice is saved under the first project root at
+`.luxar/toolchain.json` and reused on later starts. A directory is considered
+usable only when its `tools/idf.py --version` command actually succeeds, so an
+incomplete ESP-IDF Python environment remains marked unavailable until it is
+repaired.
 
 ## Development environment
 

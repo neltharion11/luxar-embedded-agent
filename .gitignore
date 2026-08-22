@@ -12,7 +12,12 @@ dist/
 .venv/
 .site-tools/
 .tmp/
+.luxar-data/
 pip-install*.log
 projects/
 docs/
+.idea/
+pytest-tmp/
+BOSS*.md
+examples/deepseek_mode_router_demo.py
 

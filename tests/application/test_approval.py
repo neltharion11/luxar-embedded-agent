@@ -138,8 +138,9 @@ def test_resume_approved_completes_workflow() -> None:
     assert resumed.state["approval_status"] == "approved"
     assert resumed.state["flash_evidence"] == flash_success()
     assert resumed.state["trace"] == [
-        "analyze_requirement",
-        "create_plan",
+            "analyze_requirement",
+            "analyze_project",
+            "create_plan",
         "execute_next_step",
         "build_project",
         "execute_next_step",

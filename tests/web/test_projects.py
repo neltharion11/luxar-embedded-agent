@@ -34,7 +34,10 @@ def test_catalog_lists_only_sorted_direct_espidf_projects(tmp_path: Path) -> Non
 
     catalog = WebProjectCatalog(tmp_path)
 
-    assert [project.model_dump() for project in catalog.list_projects()] == [
+    assert [
+        project.model_dump(exclude_none=True)
+        for project in catalog.list_projects()
+    ] == [
         {"name": "alpha", "platform": "espidf", "root_index": 0},
         {"name": "zeta", "platform": "espidf", "root_index": 0},
     ]
@@ -55,6 +58,21 @@ def test_catalog_resolves_one_existing_project(tmp_path: Path) -> None:
     project = make_project(tmp_path, "blink")
 
     assert WebProjectCatalog(tmp_path).resolve("blink") == project.resolve()
+
+
+def test_catalog_reads_project_target_from_sdkconfig_defaults(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path, "blink")
+    (project / "sdkconfig.defaults").write_text(
+        "CONFIG_IDF_TARGET=esp32s3\n",
+        encoding="utf-8",
+    )
+
+    catalog = WebProjectCatalog(tmp_path)
+
+    assert catalog.target_chip("blink") == "esp32s3"
+    assert catalog.list_projects()[0].target_chip == "esp32s3"
 
 
 def test_catalog_rejects_missing_or_non_espidf_project(tmp_path: Path) -> None:

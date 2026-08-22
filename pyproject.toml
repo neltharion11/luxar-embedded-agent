@@ -14,9 +14,11 @@ dependencies = [
     "openai>=2,<3",
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
+    "lancedb>=0.25,<1",
     "pyserial>=3.5,<4",
     "PyYAML>=6,<7",
     "uvicorn>=0.35,<1",
+    "langgraph-checkpoint-sqlite>=3,<4",
 ]
 
 [project.scripts]
@@ -28,12 +30,16 @@ dev = [
     "httpx>=0.28,<1",
     "pytest>=8,<9",
 ]
+postgres = [
+    "psycopg[binary,pool]>=3.2,<4",
+    "langgraph-checkpoint-postgres>=3,<4",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-luxar = ["ui/*.html"]
+luxar = ["ui/*.html", "database/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,9 +6,14 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
 from luxar.application.context import RuntimeContext
+from luxar.application.project_analysis import (
+    analyze_current_project,
+    render_project_analysis,
+)
 from luxar.application.state import WorkflowState
 from luxar.domain.devices import ApprovalRequest
 from luxar.domain.errors import WorkflowError
+from luxar.ports.errors import CapabilityError
 from luxar.ports.espidf_errors import EspIdfError
 
 
@@ -16,6 +21,7 @@ from luxar.ports.espidf_errors import EspIdfError
 _SUPPORTED_STEP_KINDS = frozenset(
     {
         "create_project",
+        "implement_change",
         "build_project",
         "flash_project",
         "monitor_project",
@@ -41,6 +47,19 @@ def analyze_requirement(
     requirement = runtime.context.requirement_parser.parse(
         state["task_text"]
     )
+    # 项目创建/选择时固定的芯片是可信结构化上下文，不要求用户在每条
+    # 自然语言需求中重复声明，也不允许模型用空值覆盖它。
+    if runtime.context.target_chip:
+        requirement = requirement.model_copy(
+            update={
+                "target": runtime.context.target_chip,
+                "missing_fields": [
+                    field
+                    for field in requirement.missing_fields
+                    if field != "target"
+                ],
+            }
+        )
 
     # 节点返回局部更新而不是完整 State；LangGraph 会把这些键合并回当前状态。
     return {
@@ -61,7 +80,11 @@ def create_plan(
     requirement = state["requirement"]
     # State 提供业务输入，Runtime Context 提供完成动作所需的外部能力。
     planner = runtime.context.planner
-    plan = planner.create_plan(requirement)
+    # 规划器必须看到刚刚验证过的项目快照，不能只凭用户一句话猜测现状。
+    plan = planner.create_plan(
+        requirement,
+        project_analysis=state["project_analysis"],
+    )
 
     return {
         "plan": plan,
@@ -70,6 +93,59 @@ def create_plan(
             *state.get("trace", []),
             "create_plan",
         ],
+    }
+
+
+def analyze_project(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    """Create or reuse the validated snapshot used by every later decision."""
+
+    context = runtime.context
+    analysis = analyze_current_project(
+        project_path=context.project_path,
+        target_chip=context.target_chip,
+        workspace=context.workspace,
+        analyzer=context.project_analyzer,
+        persistence=context.persistence,
+        project_key=context.project_key,
+    )
+    update: dict[str, object] = {
+        "project_analysis": analysis,
+        "status": "project_analyzed",
+        "trace": [*state.get("trace", []), "analyze_project"],
+    }
+
+    # A successful creator followed by a missing project is contradictory tool
+    # evidence. Stop instead of planning against an imaginary workspace.
+    created = state.get("created_project")
+    if created is not None and created.success and not analysis.project_exists:
+        update["error"] = WorkflowError.model_validate(
+            {
+                "stage": "planning",
+                "category": "workspace",
+                "message": "项目创建成功后仍无法读取项目目录",
+                "retryable": False,
+                "user_suggestion": "请检查项目目录权限和创建工具输出",
+            }
+        )
+    return update
+
+
+def report_project(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    """Render the same analysis object used by planning as human prose."""
+
+    return {
+        "inspection_response": render_project_analysis(
+            runtime.context.project_path.name,
+            state["project_analysis"],
+        ),
+        "status": "completed",
+        "trace": [*state.get("trace", []), "report_project"],
     }
 
 
@@ -137,6 +213,78 @@ def create_project(
             *state.get("trace", []),
             "create_project",
         ],
+    }
+
+
+def implement_change(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    """Implement the requested change from current code, then refresh its snapshot."""
+
+    context = runtime.context
+    editor = context.firmware_editor
+    if editor is None:
+        raise CapabilityError(
+            category="service",
+            message="未配置固件代码实现能力",
+            retryable=False,
+        )
+
+    files = context.workspace.read_project_files(context.project_path)
+    references = state.get("reference_examples", [])
+    reference_files = []
+    if context.example_library is not None:
+        for reference in references:
+            reference_files.extend(context.example_library.read(reference))
+    change = editor.create_change(
+        state["requirement"],
+        state["project_analysis"],
+        files,
+        references,
+        reference_files,
+    )
+    changed_now = context.workspace.apply_repair(
+        context.project_path,
+        change,
+    )
+    refreshed = analyze_current_project(
+        project_path=context.project_path,
+        target_chip=context.target_chip,
+        workspace=context.workspace,
+        analyzer=context.project_analyzer,
+        persistence=context.persistence,
+        project_key=context.project_key,
+        force=True,
+    )
+
+    return {
+        "implementation_plan": change,
+        "changed_files": [
+            *state.get("changed_files", []),
+            *changed_now,
+        ],
+        "project_analysis": refreshed,
+        "status": "implemented",
+        "trace": [*state.get("trace", []), "implement_change"],
+    }
+
+
+def find_idf_examples(
+    state: WorkflowState,
+    runtime: Runtime[RuntimeContext],
+) -> dict[str, object]:
+    """Select official SDK examples before the first requirement-driven edit."""
+
+    library = runtime.context.example_library
+    references = (
+        library.search(state["requirement"], limit=2)
+        if library is not None
+        else []
+    )
+    return {
+        "reference_examples": references,
+        "trace": [*state.get("trace", []), "find_idf_examples"],
     }
 
 
@@ -332,6 +480,18 @@ def repair_project(
         repair,
     )
 
+    # Once files change, the old snapshot is invalid. Refresh immediately so a
+    # later repair/monitor step never reasons from the pre-repair code.
+    refreshed = analyze_current_project(
+        project_path=project_path,
+        target_chip=runtime.context.target_chip,
+        workspace=workspace,
+        analyzer=runtime.context.project_analyzer,
+        persistence=runtime.context.persistence,
+        project_key=runtime.context.project_key,
+        force=True,
+    )
+
     # 记录本次修复的触发来源：路由据此决定重建成功后的去向。
     repair_origin = (
         "monitor" if device_diagnosis is not None else "build"
@@ -340,7 +500,11 @@ def repair_project(
     # 此处不返回 attempts 和 build_evidence，因此旧值会保留；下一次构建才覆盖证据。
     return {
         "repair_plan": repair,
-        "changed_files": changed_files,
+        "changed_files": [
+            *state.get("changed_files", []),
+            *changed_files,
+        ],
+        "project_analysis": refreshed,
         "repair_origin": repair_origin,
         "status": "repaired",
         "trace": [

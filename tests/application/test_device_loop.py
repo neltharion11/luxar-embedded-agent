@@ -171,8 +171,9 @@ def test_device_loop_repairs_and_reflashes_until_healthy() -> None:
         findings=["task_wdt"],
     )
     assert run_result.state["trace"] == [
-        "analyze_requirement",
-        "create_plan",
+            "analyze_requirement",
+            "analyze_project",
+            "create_plan",
         "execute_next_step",
         "build_project",
         "execute_next_step",

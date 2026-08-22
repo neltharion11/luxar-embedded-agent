@@ -7,22 +7,44 @@ from typing import Literal
 from luxar.application.state import WorkflowState
 
 
+def route_from_start(
+    state: WorkflowState,
+) -> Literal["analyze_requirement", "analyze_project"]:
+    # 项目检查不需要伪造固件需求，但仍然必须进入同一个代码分析节点。
+    if state.get("task_mode") == "inspection":
+        return "analyze_project"
+    return "analyze_requirement"
+
+
 def route_after_requirement(
     state: WorkflowState,
-) -> Literal["create_plan", "request_clarification"]:
+) -> Literal["analyze_project", "request_clarification"]:
     # 路由不再分析原始自然语言，只读取已经验证过的 FirmwareRequirement。
     requirement = state["requirement"]
 
     if requirement.is_complete:
-        return "create_plan"
+        return "analyze_project"
 
     return "request_clarification"
+
+
+def route_after_project_analysis(
+    state: WorkflowState,
+) -> Literal["report_project", "create_project", "create_plan", "failed"]:
+    if "error" in state:
+        return "failed"
+    if state.get("task_mode") == "inspection":
+        return "report_project"
+    if state["project_analysis"].project_exists:
+        return "create_plan"
+    return "create_project"
 
 
 def route_after_dispatch(
     state: WorkflowState,
 ) -> Literal[
     "create_project",
+    "find_idf_examples",
     "build_project",
     "request_flash_approval",
     "monitor_project",
@@ -34,6 +56,9 @@ def route_after_dispatch(
 
     if pending == "create_project":
         return "create_project"
+
+    if pending == "implement_change":
+        return "find_idf_examples"
 
     if pending == "build_project":
         return "build_project"
@@ -53,12 +78,14 @@ def route_after_dispatch(
 
 def route_after_project_creation(
     state: WorkflowState,
-) -> Literal["execute_next_step", "failed"]:
+) -> Literal["analyze_project", "execute_next_step", "failed"]:
     # 与构建相同：成功与否只能由创建证据决定，失败直接终止。
     evidence = state["created_project"]
 
     if evidence.success:
-        return "execute_next_step"
+        # 缺失项目由 Graph 在规划前创建；旧计划中的 create_project 仍按
+        # 游标语义兼容执行，避免改变已持久化 checkpoint 的含义。
+        return "execute_next_step" if "plan" in state else "analyze_project"
 
     return "failed"
 

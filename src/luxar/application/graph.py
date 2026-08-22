@@ -9,6 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from luxar.application.context import RuntimeContext
 from luxar.application.nodes import (
     analyze_device_logs,
+    analyze_project,
     analyze_requirement,
     build_project,
     completed,
@@ -16,9 +17,12 @@ from luxar.application.nodes import (
     create_project,
     execute_next_step,
     failed,
+    find_idf_examples,
     flash_project,
+    implement_change,
     monitor_project,
     repair_project,
+    report_project,
     request_clarification,
     request_flash_approval,
 )
@@ -29,7 +33,9 @@ from luxar.application.routing import (
     route_after_dispatch,
     route_after_flash,
     route_after_project_creation,
+    route_after_project_analysis,
     route_after_requirement,
+    route_from_start,
 )
 from luxar.application.state import WorkflowState
 
@@ -50,6 +56,14 @@ def build_graph(
         analyze_requirement,
     )
     builder.add_node(
+        "analyze_project",
+        analyze_project,
+    )
+    builder.add_node(
+        "report_project",
+        report_project,
+    )
+    builder.add_node(
         "create_plan",
         create_plan,
     )
@@ -60,6 +74,14 @@ def build_graph(
     builder.add_node(
         "create_project",
         create_project,
+    )
+    builder.add_node(
+        "find_idf_examples",
+        find_idf_examples,
+    )
+    builder.add_node(
+        "implement_change",
+        implement_change,
     )
     builder.add_node(
         "build_project",
@@ -98,10 +120,14 @@ def build_graph(
         failed,
     )
 
-    # START 是 LangGraph 的虚拟入口；需求分析永远是第一个业务节点。
-    builder.add_edge(
+    # 项目检查跳过需求抽取，但与固件任务共用同一个源码分析节点。
+    builder.add_conditional_edges(
         START,
-        "analyze_requirement",
+        route_from_start,
+        {
+            "analyze_requirement": "analyze_requirement",
+            "analyze_project": "analyze_project",
+        },
     )
 
     # 条件边先调用路由函数，再用映射表把返回字符串解析为真实节点。
@@ -109,8 +135,20 @@ def build_graph(
         "analyze_requirement",
         route_after_requirement,
         {
-            "create_plan": "create_plan",
+            "analyze_project": "analyze_project",
             "request_clarification": "request_clarification",
+        },
+    )
+
+    # 分析结果决定：检查任务直接报告；缺失项目先创建；已有项目才允许规划。
+    builder.add_conditional_edges(
+        "analyze_project",
+        route_after_project_analysis,
+        {
+            "report_project": "report_project",
+            "create_project": "create_project",
+            "create_plan": "create_plan",
+            "failed": "failed",
         },
     )
 
@@ -126,6 +164,7 @@ def build_graph(
         route_after_dispatch,
         {
             "create_project": "create_project",
+            "find_idf_examples": "find_idf_examples",
             "build_project": "build_project",
             "request_flash_approval": "request_flash_approval",
             "monitor_project": "monitor_project",
@@ -139,9 +178,22 @@ def build_graph(
         "create_project",
         route_after_project_creation,
         {
+            "analyze_project": "analyze_project",
             "execute_next_step": "execute_next_step",
             "failed": "failed",
         },
+    )
+
+    # 代码实现前先检索当前 ESP-IDF 安装自带的官方例程。
+    builder.add_edge(
+        "find_idf_examples",
+        "implement_change",
+    )
+
+    # 初次代码实现完成后回到计划游标；实现节点内部已刷新项目分析。
+    builder.add_edge(
+        "implement_change",
+        "execute_next_step",
     )
 
     # 构建后可能继续计划、进入设备回路、修复、原样重试或失败。
@@ -201,6 +253,10 @@ def build_graph(
     # 三个业务终态都连接到 LangGraph 的虚拟 END 节点。
     builder.add_edge(
         "request_clarification",
+        END,
+    )
+    builder.add_edge(
+        "report_project",
         END,
     )
     builder.add_edge(

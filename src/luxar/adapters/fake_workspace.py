@@ -9,6 +9,8 @@ from luxar.domain.repairs import ProjectFile, RepairPlan
 
 
 class FakeWorkspace:
+    project_exists = True
+
     def __init__(
         self,
         files: Sequence[ProjectFile],
@@ -34,7 +36,25 @@ class FakeWorkspace:
     ) -> list[str]:
         self.apply_calls.append((project_path, repair))
 
-        # Fake 只报告计划里的目标路径，不产生真实文件副作用。
+        replacements = {
+            replacement.path: replacement.content
+            for replacement in repair.replacements
+        }
+        existing_paths = {item.path for item in self.files}
+        self.files = [
+            ProjectFile(
+                path=item.path,
+                content=replacements.get(item.path, item.content),
+            )
+            for item in self.files
+        ]
+        self.files.extend(
+            ProjectFile(path=path, content=content)
+            for path, content in replacements.items()
+            if path not in existing_paths
+        )
+
+        # 在内存中反映写入，以便刷新项目指纹的测试符合真实 Workspace 语义。
         return [
             replacement.path
             for replacement in repair.replacements

@@ -7,15 +7,18 @@ from luxar.application.routing import (
     route_after_dispatch,
     route_after_flash,
     route_after_project_creation,
+    route_after_project_analysis,
     route_after_requirement,
+    route_from_start,
 )
 from luxar.domain.devices import DeviceDiagnosis, FlashEvidence
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.projects import ProjectEvidence
+from luxar.domain.project_analysis import ProjectAnalysis
 from luxar.domain.requirements import FirmwareRequirement
 
 
-def test_complete_requirement_routes_to_planning() -> None:
+def test_complete_requirement_routes_to_project_analysis() -> None:
     state = {
         "requirement": FirmwareRequirement(
             target="esp32",
@@ -26,7 +29,7 @@ def test_complete_requirement_routes_to_planning() -> None:
 
     destination = route_after_requirement(state)
 
-    assert destination == "create_plan"
+    assert destination == "analyze_project"
 
 
 def test_incomplete_requirement_routes_to_clarification() -> None:
@@ -55,6 +58,12 @@ def test_dispatch_routes_creation_step_to_creation_node() -> None:
     assert route_after_dispatch(state) == "create_project"
 
 
+def test_dispatch_routes_implementation_step_to_editor_node() -> None:
+    state = {"pending_step_kind": "implement_change"}
+
+    assert route_after_dispatch(state) == "find_idf_examples"
+
+
 def test_dispatch_routes_none_to_completed() -> None:
     state = {"pending_step_kind": None}
 
@@ -73,7 +82,7 @@ def test_dispatch_routes_monitor_step_to_monitor_node() -> None:
     assert route_after_dispatch(state) == "monitor_project"
 
 
-def test_successful_creation_continues_plan() -> None:
+def test_successful_initial_creation_is_analyzed_before_planning() -> None:
     state = {
         "created_project": ProjectEvidence(
             success=True,
@@ -83,7 +92,31 @@ def test_successful_creation_continues_plan() -> None:
         )
     }
 
-    assert route_after_project_creation(state) == "execute_next_step"
+    assert route_after_project_creation(state) == "analyze_project"
+
+
+def test_project_analysis_drives_inspection_creation_and_planning() -> None:
+    existing = ProjectAnalysis(
+        project_exists=True,
+        has_source_code=True,
+        fingerprint="current",
+        summary="existing source",
+    )
+    missing = existing.model_copy(
+        update={"project_exists": False, "has_source_code": False}
+    )
+
+    assert route_from_start({"task_mode": "inspection"}) == "analyze_project"
+    assert route_from_start({"task_mode": "firmware"}) == "analyze_requirement"
+    assert route_after_project_analysis(
+        {"task_mode": "inspection", "project_analysis": existing}
+    ) == "report_project"
+    assert route_after_project_analysis(
+        {"task_mode": "firmware", "project_analysis": missing}
+    ) == "create_project"
+    assert route_after_project_analysis(
+        {"task_mode": "firmware", "project_analysis": existing}
+    ) == "create_plan"
 
 
 def test_failed_creation_terminates() -> None:

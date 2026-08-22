@@ -10,7 +10,9 @@ from pydantic import BaseModel
 class WorkflowError(BaseModel):
     stage: Literal[
         "requirement_analysis",
+        "project_analysis",
         "planning",
+        "implementation",
         "project_creation",
         "build",
         "flash",

@@ -135,6 +135,7 @@ def test_source_failure_is_repaired_rebuilt_and_completed() -> None:
     assert result["changed_files"] == ["main/main.c"]
     assert result["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "build_project",
@@ -146,7 +147,11 @@ def test_source_failure_is_repaired_rebuilt_and_completed() -> None:
     assert parser.calls == ["create an ESP32 GPIO blink project"]
     assert planner.calls == [requirement]
     assert espidf.calls == [context.project_path, context.project_path]
-    assert workspace.read_calls == [context.project_path]
+    assert workspace.read_calls == [
+        context.project_path,
+        context.project_path,
+        context.project_path,
+    ]
     assert workspace.apply_calls == [(context.project_path, repair)]
     assert repair_planner.calls == [
         (
@@ -218,6 +223,7 @@ def test_timeout_retries_without_repair_then_completes() -> None:
     assert result["attempts"] == 2
     assert result["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "build_project",
@@ -227,7 +233,7 @@ def test_timeout_retries_without_repair_then_completes() -> None:
     ]
     assert len(espidf.calls) == 2
     assert repair_planner.calls == []
-    assert workspace.read_calls == []
+    assert workspace.read_calls == [context.project_path]
 
 
 def test_environment_failure_terminates_without_repair() -> None:
@@ -258,7 +264,7 @@ def test_environment_failure_terminates_without_repair() -> None:
     assert result["build_evidence"] is failed
     assert len(espidf.calls) == 1
     assert repair_planner.calls == []
-    assert workspace.read_calls == []
+    assert workspace.read_calls == [context.project_path]
 
 
 def test_stream_reports_repair_loop_node_order() -> None:
@@ -294,6 +300,7 @@ def test_stream_reports_repair_loop_node_order() -> None:
 
     assert [next(iter(update)) for update in updates] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "build_project",
@@ -372,6 +379,7 @@ def test_creation_then_build_completes_with_both_evidences() -> None:
     assert result["build_evidence"] is built
     assert result["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "create_project",
@@ -464,6 +472,7 @@ def test_create_build_flash_slice_completes_with_approval() -> None:
     assert run_result.state["approval_status"] == "approved"
     assert run_result.state["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "create_project",

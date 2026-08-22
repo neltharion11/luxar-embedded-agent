@@ -11,10 +11,14 @@ from luxar.ports.espidf import EspIdfPort
 from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
 from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.log_analyst import LogAnalystPort
+from luxar.ports.idf_examples import EspIdfExampleLibrary
 from luxar.ports.planner import Planner
+from luxar.ports.project_analyzer import ProjectAnalyzer
+from luxar.ports.firmware_editor import FirmwareEditor
 from luxar.ports.requirement_parser import RequirementParser
 from luxar.ports.repair_planner import RepairPlanner
 from luxar.ports.workspace import WorkspacePort
+from luxar.database.persistence import PersistencePort
 
 
 @dataclass(frozen=True)
@@ -37,5 +41,12 @@ class RuntimeContext:
     serial_port: str | None
     # 串口日志采集窗口秒数；超时是监控的正常结束方式。
     monitor_timeout_seconds: int
-    # interrupt() 需要 checkpointer；生产默认 InMemorySaver，测试可注入。
+    # interrupt() 需要 checkpointer；Web/CLI 生命周期注入 SqliteSaver，
+    # 仅测试或显式无持久化调用回退 InMemorySaver。
     checkpointer: BaseCheckpointSaver
+    # Project analysis is shared by inspection and firmware implementation.
+    project_analyzer: ProjectAnalyzer | None = None
+    firmware_editor: FirmwareEditor | None = None
+    example_library: EspIdfExampleLibrary | None = None
+    persistence: PersistencePort | None = None
+    project_key: str | None = None

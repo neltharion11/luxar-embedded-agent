@@ -327,6 +327,34 @@ def test_existing_espidf_project_is_reused_without_recreation(
     ) == "CONFIG_IDF_TARGET=esp32\n"
 
 
+def test_existing_project_target_can_be_bound_without_idf_launcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "parent"
+    project = parent / "blink"
+    project.mkdir(parents=True)
+    (project / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_common.shutil.which",
+        lambda _: None,
+    )
+
+    evidence = EspIdfProjectAdapter().create_project(
+        parent,
+        "blink",
+        "esp32c3",
+    )
+
+    assert evidence.already_existed is True
+    assert (project / "sdkconfig.defaults").read_text(
+        encoding="utf-8"
+    ).endswith("CONFIG_IDF_TARGET=esp32c3\n")
+
+
 def test_existing_project_with_conflicting_target_is_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -22,6 +22,7 @@ from luxar.application.runner import (
 from luxar.application.state import WorkflowState
 from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
 from luxar.domain.plans import ExecutionPlan, PlanStep
+from luxar.domain.project_analysis import ProjectAnalysis
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
 from luxar.ports.errors import CapabilityError, CapabilityErrorCategory
@@ -47,7 +48,9 @@ class RaisingPlanner:
     def create_plan(
         self,
         requirement: FirmwareRequirement,
+        project_analysis: ProjectAnalysis | None = None,
     ) -> ExecutionPlan:
+        del project_analysis
         raise self.error
 
 
@@ -67,6 +70,8 @@ class RaisingRepairPlanner:
 
 
 class RaisingWorkspace:
+    project_exists = True
+
     def __init__(self, error: WorkspaceError) -> None:
         self.error = error
 
@@ -198,12 +203,31 @@ def test_capability_error_mapping_uses_safe_application_text(
                 task_text="task",
                 requirement=make_requirement(),
             ),
+            "project_analysis",
+        ),
+        (
+            WorkflowState(
+                task_text="task",
+                requirement=make_requirement(),
+                project_analysis=ProjectAnalysis(
+                    project_exists=True,
+                    has_source_code=True,
+                    fingerprint="current",
+                    summary="current project",
+                ),
+            ),
             "planning",
         ),
         (
             WorkflowState(
                 task_text="task",
                 requirement=make_requirement(),
+                project_analysis=ProjectAnalysis(
+                    project_exists=True,
+                    has_source_code=True,
+                    fingerprint="current",
+                    summary="current project",
+                ),
                 plan=make_plan(),
             ),
             "repair",
@@ -281,7 +305,11 @@ def test_runner_preserves_requirement_when_planning_fails() -> None:
     assert result["status"] == "failed"
     assert result["error"].stage == "planning"
     assert result["error"].category == "model_output"
-    assert result["trace"] == ["analyze_requirement", "failed"]
+    assert result["trace"] == [
+        "analyze_requirement",
+        "analyze_project",
+        "failed",
+    ]
 
 
 def test_runner_preserves_build_evidence_when_repair_fails() -> None:
@@ -336,6 +364,7 @@ def test_runner_preserves_build_evidence_when_repair_fails() -> None:
     assert result["error"].category == "service"
     assert result["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "build_project",
@@ -372,6 +401,7 @@ def test_runner_keeps_successful_workflow_behavior() -> None:
     assert result["build_evidence"] is succeeded
     assert result["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "build_project",
@@ -461,19 +491,15 @@ def test_runner_preserves_latest_state_when_workspace_read_fails() -> None:
     result = run_result.state
 
     assert result["requirement"] is requirement
-    assert result["plan"] is plan
-    assert result["build_evidence"] is evidence
-    assert result["build_evidence"].diagnostics[0].line == 21
-    assert result["attempts"] == 1
+    assert "plan" not in result
+    assert "build_evidence" not in result
+    assert result["attempts"] == 0
     assert result["status"] == "failed"
-    assert result["error"].stage == "repair"
+    assert result["error"].stage == "project_analysis"
     assert result["error"].category == "workspace"
     assert "SECRET_ABSOLUTE_PATH" not in result["error"].message
     assert result["trace"] == [
         "analyze_requirement",
-        "create_plan",
-        "execute_next_step",
-        "build_project",
         "failed",
     ]
 
@@ -572,6 +598,7 @@ def test_runner_preserves_latest_state_when_espidf_preflight_fails() -> None:
     assert result["error"].category == "dependency"
     assert result["trace"] == [
         "analyze_requirement",
+        "analyze_project",
         "create_plan",
         "execute_next_step",
         "failed",
@@ -612,15 +639,26 @@ def test_runner_reports_safe_progress_for_complete_repair_loop() -> None:
     result = run_result.state
 
     assert result["status"] == "completed"
-    assert events == [
-        WorkflowProgress("requirement", "需求分析完成", 0),
-        WorkflowProgress("planning", "执行计划已生成", 0),
-        WorkflowProgress("build", "已完成第 1 次构建", 1),
-        WorkflowProgress("repair", "已应用受限制的源码修复", 1),
-        WorkflowProgress("build", "已完成第 2 次构建", 2),
-        WorkflowProgress("completed", "工作流执行成功", 2),
+    assert [(event.stage, event.message, event.attempts) for event in events] == [
+        ("requirement", "需求分析完成", 0),
+        ("analysis", "当前项目代码分析完成", 0),
+        ("planning", "执行计划已生成", 0),
+        ("build", "已完成第 1 次构建", 1),
+        ("repair", "已应用受限制的源码修复", 1),
+        ("build", "已完成第 2 次构建", 2),
+        ("completed", "工作流执行成功", 2),
     ]
-    assert set(vars(events[0])) == {"stage", "message", "attempts"}
+    assert all(
+        event.narrative
+        for event in events
+        if event.stage not in {"completed", "failed"}
+    )
+    assert set(vars(events[0])) == {
+        "stage",
+        "message",
+        "attempts",
+        "narrative",
+    }
     assert "SECRET_TASK_TEXT" not in repr(events)
     assert str(context.project_path) not in repr(events)
 
@@ -663,11 +701,17 @@ def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
     result = run_result.state
 
     assert result["status"] == "failed"
-    assert events == [
-        WorkflowProgress("requirement", "需求分析完成", 0),
-        WorkflowProgress("planning", "执行计划已生成", 0),
-        WorkflowProgress("failed", "工作流执行失败", 0),
+    assert [(event.stage, event.message, event.attempts) for event in events] == [
+        ("requirement", "需求分析完成", 0),
+        ("analysis", "当前项目代码分析完成", 0),
+        ("planning", "执行计划已生成", 0),
+        ("failed", "工作流执行失败", 0),
     ]
+    assert all(
+        event.narrative
+        for event in events
+        if event.stage not in {"completed", "failed"}
+    )
     assert "SECRET_MANIFEST" not in repr(events)
     assert "SECRET_PROJECT_PATH" not in repr(events)
 

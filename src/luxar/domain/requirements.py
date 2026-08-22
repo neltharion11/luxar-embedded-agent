@@ -1,23 +1,108 @@
-"""固件需求领域模型：把自然语言需求转换成可验证、可路由的结构化数据。"""
+"""Generic firmware requirements without assuming any peripheral is required."""
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+PeripheralParameter = str | int | float | bool | None
+
+
+class PeripheralRequirement(BaseModel):
+    """One explicitly requested peripheral and only its relevant parameters."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    # ESP-IDF supports many peripherals (and custom components), so this must
+    # remain extensible rather than becoming another fixed hardware checklist.
+    kind: str = Field(min_length=1)
+    purpose: str = ""
+    instance: str | None = None
+    parameters: dict[str, PeripheralParameter] = Field(default_factory=dict)
+    missing_fields: list[str] = Field(default_factory=list)
 
 
 class FirmwareRequirement(BaseModel):
-    # Literal 限定当前阶段只支持 ESP-IDF，模型返回其他平台时 Pydantic 会拒绝。
+    """A project goal plus zero or more explicitly requested peripherals."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     platform: Literal["espidf"] = "espidf"
     target: str
-    feature: str
-    gpio: int | None = None
-    # default_factory 每次都会创建新列表，避免多个需求对象共享同一个可变列表。
+    project_type: Literal["empty", "application"] = "application"
+    goal: str
+    peripherals: list[PeripheralRequirement] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_gpio_shape(cls, value: object) -> object:
+        """Read old checkpoints while always serializing the generic shape."""
+
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        feature = data.pop("feature", None)
+        gpio = data.pop("gpio", None)
+        if feature is not None and "goal" not in data:
+            data["goal"] = str(feature)
+        goal = str(data.get("goal", ""))
+        if "project_type" not in data:
+            data["project_type"] = (
+                "empty"
+                if goal in {"empty_project", "empty", "minimal_project"}
+                else "application"
+            )
+
+        root_missing = list(data.get("missing_fields", []))
+        legacy_gpio_missing = "gpio" in root_missing
+        data["missing_fields"] = [
+            field for field in root_missing if field in {"target", "goal"}
+        ]
+        if "peripherals" not in data:
+            needs_gpio = gpio is not None or "gpio" in goal.casefold()
+            if needs_gpio or legacy_gpio_missing:
+                parameters = {} if gpio is None else {"pin": gpio}
+                data["peripherals"] = [
+                    {
+                        "kind": "gpio",
+                        "purpose": goal,
+                        "parameters": parameters,
+                        "missing_fields": (
+                            ["pin"] if legacy_gpio_missing else []
+                        ),
+                    }
+                ]
+        return data
+
+    @model_validator(mode="after")
+    def validate_project_semantics(self) -> "FirmwareRequirement":
+        self.missing_fields = [
+            field
+            for field in self.missing_fields
+            if field in {"target", "goal"}
+        ]
+        if self.project_type == "empty" and self.peripherals:
+            raise ValueError("empty projects cannot require peripherals")
+        return self
+
+    @property
+    def blocking_missing_fields(self) -> list[str]:
+        missing = list(self.missing_fields)
+        if not self.target.strip() and "target" not in missing:
+            missing.append("target")
+        if not self.goal.strip() and "goal" not in missing:
+            missing.append("goal")
+        for index, peripheral in enumerate(self.peripherals):
+            missing.extend(
+                f"peripherals[{index}].{field}"
+                for field in peripheral.missing_fields
+            )
+        return missing
 
     @property
     def is_complete(self) -> bool:
-        # @property 让调用方像读取普通字段一样使用 requirement.is_complete。
-        # 空列表在布尔判断中为 False，因此 not [] 得到 True，表示需求完整。
-        return not self.missing_fields
+        return not self.blocking_missing_fields

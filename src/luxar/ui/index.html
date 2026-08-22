@@ -19,10 +19,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 #sidebar .logo span{color:#60646c;font-weight:400}
 .logo-row{display:flex;align-items:center;justify-content:space-between;padding:20px 16px 8px 20px}
 .logo-row .logo{padding:0}
-.sidebar-actions{display:flex;gap:6px}
-.sidebar-mini-btn{cursor:pointer;width:28px;height:28px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;color:#60646c;font-size:14px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:all .15s}
-.sidebar-mini-btn:hover{background:#1c2024;color:#fff;border-color:#1c2024}
-.sidebar-section{padding:8px 12px}
+.sidebar-project-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0 10px}
+.sidebar-project-btn{cursor:pointer;min-height:34px;padding:7px 8px;border-radius:8px;border:1px solid #d8dbe0;background:#fff;color:#1c2024;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:5px;transition:all .15s}
+.sidebar-project-btn:hover{background:#f0f0f3;border-color:#b8bcc4}
+.sidebar-project-btn.primary{background:#1c2024;color:#fff;border-color:#1c2024}
+.sidebar-project-btn.primary:hover{background:#343a40}
+.sidebar-section{padding:8px 12px;display:flex;flex-direction:column;flex:1;min-height:0}
 .sidebar-section .label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#60646c;padding:4px 8px;margin-bottom:2px}
 .sidebar-project{cursor:pointer;padding:6px 8px;border-radius:8px;font-size:13px;color:#1c2024;transition:background .15s;display:flex;align-items:center;gap:8px}
 .sidebar-project:hover{background:#f0f0f3}
@@ -30,8 +32,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .sidebar-project.active .dot{background:#0d74ce}
 .sidebar-project.active{font-weight:600}
 .sidebar-project .proj-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar-project .proj-del{display:none;margin-left:auto;cursor:pointer;font-size:14px;color:#b0b4ba;padding:0 4px;border-radius:4px;flex-shrink:0}
-.sidebar-project:hover .proj-del{display:block}
+.sidebar-project .proj-del{opacity:0;visibility:hidden;margin-left:auto;cursor:pointer;font-size:14px;line-height:1;color:#b0b4ba;padding:3px 5px;border:0;background:transparent;border-radius:4px;flex-shrink:0;transition:opacity .15s,color .15s,background .15s}
+.sidebar-project:hover .proj-del,.sidebar-project:focus-within .proj-del{opacity:1;visibility:visible}
 .sidebar-project .proj-del:hover{color:#e54d42;background:#fce4e4}
 .sidebar-section-label{padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px}
 #sidebar-projects{flex:1;overflow-y:auto;min-height:0}
@@ -55,6 +57,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 #lang-btn{cursor:pointer;padding:4px 10px;border-radius:9999px;border:1px solid #e0e1e6;background:#fff;font-size:11px;font-weight:600;color:#1c2024;transition:background .15s}
 #lang-btn:hover{background:#f0f0f3}
 #main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.toolchain-warning{display:none;align-items:center;justify-content:space-between;gap:16px;padding:10px 20px;background:#fff7ed;border-bottom:1px solid #fed7aa;color:#9a3412;font-size:13px;flex-shrink:0}
+.toolchain-warning.visible{display:flex}
+.toolchain-warning button{cursor:pointer;border:1px solid #fdba74;background:#fff;color:#9a3412;border-radius:9999px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap}
+.toolchain-status-card{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.toolchain-status-main{display:flex;gap:12px;align-items:flex-start;min-width:0}
+.toolchain-status-dot{width:10px;height:10px;border-radius:50%;background:#f97316;margin-top:5px;flex-shrink:0}
+.toolchain-status-dot.available{background:#22c55e}
+.toolchain-path{font-family:'JetBrains Mono',monospace;font-size:11px;color:#60646c;margin-top:6px;word-break:break-all}
+.toolchain-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 [data-page]{display:none;flex:1;overflow-y:auto;padding:24px 32px}
 [data-page].active{display:flex;flex-direction:column}
 [data-page].active:not([data-page="chat"]){display:block}
@@ -215,13 +226,13 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
 <div id="sidebar">
   <div class="logo-row">
     <div class="logo">Lux<span>ar</span></div>
-    <div class="sidebar-actions">
-      <button class="sidebar-mini-btn" onclick="openNewProjectModal()" title="New project">+</button>
-      <button class="sidebar-mini-btn" onclick="openOpenProjectModal()" title="Open project">↗</button>
-    </div>
   </div>
   <div class="sidebar-section">
     <div class="label" data-i18n="sidebar.projects">Projects</div>
+    <div class="sidebar-project-actions">
+      <button id="sidebar-new-project" class="sidebar-project-btn primary" onclick="openNewProjectModal()"><span>＋</span><span data-i18n="sidebar.newProject">新建项目</span></button>
+      <button id="sidebar-select-project" class="sidebar-project-btn" onclick="openOpenProjectModal()"><span>▣</span><span data-i18n="sidebar.selectProject">选择项目</span></button>
+    </div>
     <div id="sidebar-projects"><div class="empty-state" data-i18n="sidebar.loading">Loading...</div></div>
   </div>
   <div class="sidebar-nav">
@@ -263,6 +274,11 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
 
 <div id="main">
 
+<div id="toolchain-warning" class="toolchain-warning">
+  <span id="toolchain-warning-text" data-i18n="toolchain.missing">未搜索到可用的 ESP-IDF 环境，创建、构建和烧录功能暂不可用。</span>
+  <button onclick="navigate('dashboard')" data-i18n="toolchain.configure">前往配置</button>
+</div>
+
 <div data-page="chat" id="chat-page" class="active">
   <div id="chat-header" style="padding:8px 0 12px;border-bottom:1px solid #e0e1e6;flex-shrink:0">
     <span style="font-size:12px;color:#60646c" data-i18n="chat.activeProject">Active Project:</span>
@@ -288,15 +304,6 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
           <option value="">串口:未选择</option>
         </select>
         <button type="button" onclick="loadSerialPorts()" title="刷新串口列表" style="flex:0 0 auto;padding:6px 10px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;cursor:pointer;font-size:12px">🔄</button>
-        <select id="chip-select" title="选择目标芯片" style="flex:0 0 auto;padding:6px 10px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;font-size:12px">
-          <option value="">芯片:自动</option>
-          <option value="esp32">esp32</option>
-          <option value="esp32s3">esp32s3</option>
-          <option value="esp32s2">esp32s2</option>
-          <option value="esp32c3">esp32c3</option>
-          <option value="esp32c6">esp32c6</option>
-          <option value="esp32h2">esp32h2</option>
-        </select>
       </div>
       <div style="display:flex;gap:8px;align-items:flex-end">
         <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.inputPlaceholder" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" oninput="autoResize(this)" onkeydown="return handleChatKey(event)"></textarea>
@@ -312,7 +319,22 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
 <div data-page="dashboard">
   <div class="page-header">
     <h1 data-i18n="nav.dashboard">Dashboard</h1>
-    <p style="margin:4px 0 0;color:#60646c;font-size:13px" data-i18n="dashboard.subtitle">STM32-first embedded AI engineering toolkit.</p>
+    <p style="margin:4px 0 0;color:#60646c;font-size:13px" data-i18n="dashboard.subtitle">ESP-IDF embedded AI workspace.</p>
+  </div>
+  <div class="card toolchain-status-card">
+    <div class="toolchain-status-main">
+      <span id="toolchain-status-dot" class="toolchain-status-dot"></span>
+      <div>
+        <div style="font-weight:700;font-size:15px" data-i18n="toolchain.title">ESP-IDF 工具链</div>
+        <div id="toolchain-status-message" style="font-size:13px;color:#60646c;margin-top:4px" data-i18n="toolchain.detecting">正在检测环境...</div>
+        <div id="toolchain-version" style="font-size:12px;color:#166534;margin-top:4px"></div>
+        <div id="toolchain-path" class="toolchain-path"></div>
+      </div>
+    </div>
+    <div class="toolchain-actions">
+      <button id="toolchain-refresh-btn" class="btn-secondary" onclick="refreshEspIdfToolchain()" data-i18n="toolchain.refresh">重新检测</button>
+      <button id="toolchain-select-btn" class="btn-primary" onclick="selectEspIdfToolchain()" data-i18n="toolchain.select">选择工具链位置</button>
+    </div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin:16px 0">
     <div class="card" style="text-align:center;padding:16px"><div style="font-size:28px;font-weight:700;color:#1c2024" id="stat-projects">-</div><div style="font-size:12px;color:#888;margin-top:4px" data-i18n="dashboard.statProjects">Projects</div></div>
@@ -422,39 +444,40 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
 
 </div>
 </div>
-<!-- New Project Modal (Manual + AI tabs) -->
+<!-- New ESP-IDF Project Modal -->
 <div id="new-project-modal" class="modal-shell" onclick="closeNewProjectModal(event)">
   <div class="modal-card" onclick="event.stopPropagation()">
     <div class="modal-head">
-      <div><h3 data-i18n="landing.newProject">New Project</h3><p id="new-project-subtitle">Create a new STM32 project in the workspace.</p></div>
+      <div><h3 data-i18n="sidebar.newProject">新建项目</h3><p data-i18n="project.createSubtitle">在当前项目根目录创建 ESP-IDF 项目。</p></div>
       <button class="modal-close" onclick="closeNewProjectModal()">&times;</button>
     </div>
-    <div class="tab-switch">
-      <button id="tab-manual" class="active" onclick="switchNewProjectTab('manual')" data-i18n="landing.manualTab">Manual Config</button>
-      <button id="tab-ai" onclick="switchNewProjectTab('ai')" data-i18n="landing.aiTab">AI Config</button>
-    </div>
-    <!-- Manual config form -->
-    <div id="new-project-manual" class="modal-grid">
-      <div class="form-group"><label>Project Name</label><input id="npm-name" /></div>
-      <div class="form-group"><label>MCU / Target</label><input id="npm-mcu" placeholder="STM32F103C8T6 or esp32" /></div>
-      <div class="form-group"><label>Platform</label><select id="npm-platform"><option value="stm32cubemx">stm32cubemx (CubeMX)</option><option value="stm32firmware">stm32firmware (bare)</option><option value="espidf">espidf (ESP-IDF)</option></select></div>
-      <div class="form-group"><label>System</label><select id="npm-runtime"><option value="baremetal">baremetal</option><option value="freertos">freertos</option></select></div>
-      <div class="form-group"><label>FW Package</label><select id="npm-fw"><option value="STM32Cube_FW_F1">STM32Cube_FW_F1</option></select></div>
-      <div id="cubemx-platform-hint" style="display:none;font-size:12px;color:#b45309;background:#fffbeb;padding:8px 12px;border-radius:8px;margin-top:4px" data-i18n="cubemx.platformHint">CubeMX platform creates an empty project. Please use STM32CubeMX to generate code afterwards.</div>
-      <div id="espidf-platform-hint" style="display:none;font-size:12px;color:#0369a1;background:#f0f9ff;padding:8px 12px;border-radius:8px;margin-top:4px">ESP-IDF projects use the ESP-IDF FreeRTOS runtime and require ESP-IDF/idf.py to be installed externally.</div>
-    </div>
-    <!-- AI config form -->
-    <div id="new-project-ai" class="form-group" style="display:none">
-      <div class="chat-result-card" style="margin-top:6px">
-        <ul>
-          <li data-i18n="landing.aiHint">Luxar will open a guided chat and send you the project creation template.</li>
-        </ul>
-      </div>
+    <div class="modal-grid">
+      <div class="form-group"><label data-i18n="project.name">项目名称</label><input id="npm-name" maxlength="80" placeholder="blink-controller" /></div>
+      <div class="form-group"><label data-i18n="project.target">目标芯片</label><select id="npm-target"><option value="esp32">esp32</option><option value="esp32s2">esp32s2</option><option value="esp32s3">esp32s3</option><option value="esp32c2">esp32c2</option><option value="esp32c3">esp32c3</option><option value="esp32c6">esp32c6</option><option value="esp32h2">esp32h2</option></select></div>
+      <div class="form-group full"><label data-i18n="project.location">创建位置</label><div id="new-project-root-label" style="padding:9px 12px;border-radius:8px;background:#f6f8fa;font-size:13px;color:#60646c"></div></div>
     </div>
     <div class="modal-status" id="new-project-status"></div>
     <div class="btn-group" style="justify-content:flex-end">
       <button class="btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
       <button class="btn-primary" id="new-project-submit" onclick="submitNewProject()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Existing ESP-IDF Project Selection Modal -->
+<div id="open-project-modal" class="modal-shell" onclick="closeOpenProjectModal(event)">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div><h3 data-i18n="sidebar.selectProject">选择项目</h3><p data-i18n="project.selectSubtitle">选择芯片后，从资源管理器中选择 ESP-IDF 项目文件夹。</p></div>
+      <button class="modal-close" onclick="closeOpenProjectModal()">&times;</button>
+    </div>
+    <div class="modal-grid">
+      <div class="form-group"><label data-i18n="project.target">目标芯片</label><select id="open-project-target"><option value="esp32">esp32</option><option value="esp32s2">esp32s2</option><option value="esp32s3">esp32s3</option><option value="esp32c2">esp32c2</option><option value="esp32c3">esp32c3</option><option value="esp32c6">esp32c6</option><option value="esp32h2">esp32h2</option></select></div>
+    </div>
+    <div class="modal-status" id="open-project-status"></div>
+    <div class="btn-group" style="justify-content:flex-end">
+      <button class="btn-secondary" onclick="closeOpenProjectModal()" data-i18n="common.cancel">取消</button>
+      <button class="btn-primary" id="open-project-submit" onclick="submitProjectSelection()" data-i18n="project.chooseFolder">选择文件夹</button>
     </div>
   </div>
 </div>
@@ -483,25 +506,6 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
   </div>
 </div>
 
-<!-- Open Project Modal -->
-<div id="open-project-modal" class="modal-shell" onclick="closeOpenProjectModal(event)">
-  <div class="modal-card" onclick="event.stopPropagation()">
-    <div class="modal-head">
-      <div><h3 data-i18n="landing.openProject">Open Project</h3><p>Select an existing project folder to open.</p></div>
-      <button class="modal-close" onclick="closeOpenProjectModal()">&times;</button>
-    </div>
-    <div style="max-height:240px;overflow-y:auto" id="open-project-list"></div>
-    <div class="form-group" style="margin-top:12px">
-      <label>Or enter path</label>
-      <input id="open-project-path" placeholder="e.g. C:\Projects\MyBoard or project name" />
-    </div>
-    <div class="modal-status" id="open-project-status"></div>
-    <div class="btn-group" style="justify-content:flex-end">
-      <button class="btn-secondary" onclick="closeOpenProjectModal()">Cancel</button>
-      <button class="btn-primary" onclick="submitOpenProject()">Open</button>
-    </div>
-  </div>
-</div>
 <script>
 
 // ===== i18n =====
@@ -515,12 +519,35 @@ zh['nav.skills']='技能库';
 zh['nav.modelConfig']='模型配置';
 zh['nav.apiConnected']='已连接';
 zh['sidebar.projects']='项目';
+zh['sidebar.newProject']='新建项目';
+zh['sidebar.selectProject']='选择项目';
 zh['sidebar.loading']='加载中...';
 zh['sidebar.noProjects']='暂无项目';
 zh['sidebar.createHint']='使用上方按钮创建项目或打开已有项目';
 zh['sidebar.delete']='删除项目';
-zh['sidebar.deleteConfirm']='确定要删除项目 "{name}" 吗？此操作不可撤销。';
+zh['sidebar.deleteConfirm']='确定删除项目“{name}”吗？整个项目文件夹将从工作区移入 LUXAR 回收区。';
 zh['sidebar.deleteFailed']='删除失败';
+zh['project.createSubtitle']='在当前项目根目录创建 ESP-IDF 项目。';
+zh['project.selectSubtitle']='先指定项目芯片，再从资源管理器选择 ESP-IDF 项目文件夹。';
+zh['project.chooseFolder']='选择文件夹';
+zh['common.cancel']='取消';
+zh['project.name']='项目名称';
+zh['project.target']='目标芯片';
+zh['project.location']='创建位置';
+zh['project.creating']='正在创建项目...';
+zh['project.selecting']='正在打开资源管理器...';
+zh['project.selectFailed']='选择项目失败';
+zh['project.nameRequired']='请输入项目名称。';
+zh['project.createFailed']='项目创建失败';
+zh['toolchain.title']='ESP-IDF 工具链';
+zh['toolchain.detecting']='正在检测环境...';
+zh['toolchain.missing']='未搜索到可用的 ESP-IDF 环境，创建、构建和烧录功能暂不可用。';
+zh['toolchain.configure']='前往配置';
+zh['toolchain.select']='选择工具链位置';
+zh['toolchain.refresh']='重新检测';
+zh['toolchain.available']='ESP-IDF 工具链可用';
+zh['toolchain.selecting']='正在打开资源管理器...';
+zh['toolchain.failed']='工具链配置失败';
 zh['cubemx.guideTitle']='🧰 CubeMX 项目已创建';
 zh['cubemx.guideBody']='项目目录已就绪。请使用 STM32CubeMX 打开该目录并生成代码。';
 zh['cubemx.guideStep1']='打开 STM32CubeMX，选择 MCU 型号并配置外设';
@@ -556,7 +583,7 @@ zh['chat.lastResponseAgo']='最近响应于 {seconds} 秒前';
 zh['chat.noEventSince']='{seconds} 秒未收到新事件';
 zh['chat.toolRunningWithName']='正在调用工具：{tool}';
 zh['chat.toolRunningGeneric']='正在调用工具...';
-zh['dashboard.subtitle']='面向 STM32 的嵌入式 AI 工程工具包。完整的本地闭环：审查、构建、烧录、监控、调试和协议技能演进。';
+zh['dashboard.subtitle']='面向 ESP-IDF 的嵌入式 AI 工程工作台：项目、工具链、构建、烧录与调试。';
 zh['dashboard.statProjects']='项目数';
 zh['dashboard.statDrivers']='驱动数';
 zh['dashboard.statSkills']='技能数';
@@ -628,12 +655,35 @@ en['nav.skills']='Skill Library';
 en['nav.modelConfig']='Model Config';
 en['nav.apiConnected']='Connected';
 en['sidebar.projects']='Projects';
+en['sidebar.newProject']='New project';
+en['sidebar.selectProject']='Select project';
 en['sidebar.loading']='Loading...';
 en['sidebar.noProjects']='No projects';
 en['sidebar.createHint']='Use the buttons above to create or open a project';
 en['sidebar.delete']='Delete project';
-en['sidebar.deleteConfirm']='Delete project "{name}"? This cannot be undone.';
+en['sidebar.deleteConfirm']='Delete project "{name}"? Its entire folder will be moved to the LUXAR recovery area.';
 en['sidebar.deleteFailed']='Delete failed';
+en['project.createSubtitle']='Create an ESP-IDF project in the current project root.';
+en['project.selectSubtitle']='Choose the project chip, then select its ESP-IDF folder.';
+en['project.chooseFolder']='Choose folder';
+en['common.cancel']='Cancel';
+en['project.name']='Project name';
+en['project.target']='Target chip';
+en['project.location']='Location';
+en['project.creating']='Creating project...';
+en['project.selecting']='Opening File Explorer...';
+en['project.selectFailed']='Project selection failed';
+en['project.nameRequired']='Enter a project name.';
+en['project.createFailed']='Project creation failed';
+en['toolchain.title']='ESP-IDF Toolchain';
+en['toolchain.detecting']='Detecting environment...';
+en['toolchain.missing']='No usable ESP-IDF environment was found. Project creation, build, and flash are unavailable.';
+en['toolchain.configure']='Configure';
+en['toolchain.select']='Select toolchain location';
+en['toolchain.refresh']='Detect again';
+en['toolchain.available']='ESP-IDF toolchain is available';
+en['toolchain.selecting']='Opening File Explorer...';
+en['toolchain.failed']='Toolchain configuration failed';
 en['cubemx.guideTitle']='🧰 CubeMX Project Created';
 en['cubemx.guideBody']='Project directory is ready. Use STM32CubeMX to generate code into it.';
 en['cubemx.guideStep1']='Open STM32CubeMX, select MCU model and configure peripherals';
@@ -669,7 +719,7 @@ en['chat.lastResponseAgo']='Last response {seconds}s ago';
 en['chat.noEventSince']='No new events for {seconds}s';
 en['chat.toolRunningWithName']='Running tool: {tool}';
 en['chat.toolRunningGeneric']='Running tool...';
-en['dashboard.subtitle']='STM32-first embedded AI engineering toolkit. Full local loop: review, build, flash, monitor, debug, and protocol skill evolution.';
+en['dashboard.subtitle']='ESP-IDF embedded AI workspace for projects, toolchains, builds, flashing, and debugging.';
 en['dashboard.statProjects']='Projects';
 en['dashboard.statDrivers']='Drivers';
 en['dashboard.statSkills']='Skills';
@@ -743,6 +793,8 @@ let projectModalMode = 'create';
 let newProjectTab = 'manual';
 let pendingProjectSelection = null;
 let projectMetaByName = {};
+let projectRoots = [];
+let espIdfToolchain = null;
 let CHAT_STALL_THRESHOLD_MS = 45000;
 
 function t(key) { return i18n[currentLang]?.[key] || i18n['en']?.[key] || key; }
@@ -939,15 +991,20 @@ function getTaskArtifact(taskResult, key) {
 function renderTaskResultCards(taskResult) {
   if (!taskResult || typeof taskResult !== 'object') return '';
   if (taskResult.status) {
-    var status = escapeHtml(String(taskResult.status));
+    if (taskResult.status === 'needs_clarification') return '';
+    var statusLabels = {
+      completed: '已完成',
+      failed: '执行失败'
+    };
+    var status = escapeHtml(statusLabels[taskResult.status] || String(taskResult.status));
     var attempts = escapeHtml(String(taskResult.attempts || 0));
     var changed = Array.isArray(taskResult.changed_files) ? taskResult.changed_files : [];
     var evidence = taskResult.build_evidence || {};
     var error = taskResult.error || {};
-    var items = [
-      '<li><span>状态：</span> ' + status + '</li>',
-      '<li><span>构建次数：</span> ' + attempts + '</li>'
-    ];
+    var items = ['<li><span>状态：</span> ' + status + '</li>'];
+    if ((taskResult.attempts || 0) > 0) {
+      items.push('<li><span>构建次数：</span> ' + attempts + '</li>');
+    }
     if (typeof evidence.return_code !== 'undefined') {
       items.push('<li><span>构建返回码：</span> ' + escapeHtml(String(evidence.return_code)) + '</li>');
     }
@@ -960,7 +1017,7 @@ function renderTaskResultCards(taskResult) {
     if (changed.length) {
       items.push('<li><span>修改文件：</span> ' + changed.map(escapeHtml).join(', ') + '</li>');
     }
-    return '<div class="chat-result-stack"><div class="chat-result-card"><h4>LangGraph Workflow</h4><ul>' +
+    return '<div class="chat-result-stack"><div class="chat-result-card"><h4>任务结果</h4><ul>' +
       items.join('') + '</ul></div></div>';
   }
   var cards = [];
@@ -1238,8 +1295,11 @@ async function loadSidebarProjects() {
     var data = await apiGet('/api/workspace/projects');
     var roots = data.roots || [];
     var projs = data.projects || [];
+    projectRoots = roots;
     projectMetaByName = {};
-    projs.forEach(function(p) { if (p && p.name) projectMetaByName[p.name] = p; });
+    projs.forEach(function(p) {
+      if (p && p.name) projectMetaByName[p.root_index + ':' + p.name] = p;
+    });
     if (selectedRootIndex >= roots.length) selectedRootIndex = 0;
 
     var html = '';
@@ -1255,10 +1315,11 @@ async function loadSidebarProjects() {
     if (visible.length) {
       html += '<div class="sidebar-section-label" style="padding:6px 0 2px;font-size:10px;color:#b0b4ba;text-transform:uppercase;letter-spacing:.5px">' + t('sidebar.projects') + '</div>';
       html += visible.map(function(p) {
-        var name = p.name.replace(/'/g, "\\'");
+        var encodedName = encodeURIComponent(p.name);
         var activeClass = selectedProject === p.name ? ' active' : '';
-        return '<div class="sidebar-project' + activeClass + '" onclick="selectProject(\'' + name + '\')">' +
+        return '<div class="sidebar-project' + activeClass + '" data-project="' + encodedName + '" onclick="selectProject(decodeURIComponent(this.dataset.project))">' +
           '<span class="dot"></span><span class="proj-name">' + escapeHtml(p.name) + '</span>' +
+          '<button type="button" class="proj-del" title="' + escapeHtml(t('sidebar.delete')) + '" aria-label="' + escapeHtml(t('sidebar.delete')) + '" onclick="event.stopPropagation();deleteProject(decodeURIComponent(this.parentElement.dataset.project))">🗑</button>' +
           '</div>';
       }).join('');
     } else {
@@ -1305,9 +1366,20 @@ async function loadSerialPorts() {
 }
 
 function openNewProjectModal() {
+  if (!espIdfToolchain || !espIdfToolchain.available) {
+    navigate('dashboard');
+    return;
+  }
   document.getElementById('new-project-modal').classList.add('active');
-  switchNewProjectTab(newProjectTab);
+  document.getElementById('npm-name').value = '';
+  var selectedRoot = projectRoots.find(function(root) {
+    return root.index === selectedRootIndex;
+  });
+  document.getElementById('new-project-root-label').textContent = selectedRoot
+    ? selectedRoot.label
+    : ('Root ' + selectedRootIndex);
   document.getElementById('new-project-status').textContent = '';
+  setTimeout(function() { document.getElementById('npm-name').focus(); }, 0);
 }
 
 function closeNewProjectModal(event) {
@@ -1315,19 +1387,10 @@ function closeNewProjectModal(event) {
   document.getElementById('new-project-modal').classList.remove('active');
 }
 
-function switchNewProjectTab(tab) {
-  newProjectTab = tab;
-  document.getElementById('tab-manual').classList.toggle('active', tab === 'manual');
-  document.getElementById('tab-ai').classList.toggle('active', tab === 'ai');
-  document.getElementById('new-project-manual').style.display = tab === 'manual' ? 'grid' : 'none';
-  document.getElementById('new-project-ai').style.display = tab === 'ai' ? 'block' : 'none';
-  updateNewProjectSubmitLabel();
-}
-
 function updateNewProjectSubmitLabel() {
   var submitBtn = document.getElementById('new-project-submit');
   if (!submitBtn) return;
-  submitBtn.textContent = newProjectTab === 'ai' ? t('landing.aiJump') : (currentLang === 'zh' ? '创建项目' : 'Create');
+  submitBtn.textContent = currentLang === 'zh' ? '创建项目' : 'Create';
 }
 
 function updateChatHeader() {
@@ -1338,7 +1401,9 @@ function updateChatHeader() {
   if (selectedProject) {
     header.style.display = '';
     nameEl.textContent = '📁 ' + selectedProject;
-    metaEl.textContent = formatProjectMeta(projectMetaByName[selectedProject]);
+    metaEl.textContent = formatProjectMeta(
+      projectMetaByName[selectedRootIndex + ':' + selectedProject]
+    );
   } else {
     header.style.display = 'none';
     nameEl.textContent = t('chat.startPage');
@@ -1349,6 +1414,7 @@ function updateChatHeader() {
 function formatProjectMeta(project) {
   if (!project) return '';
   var parts = [];
+  if (project.target_chip) parts.push(project.target_chip);
   if (project.mcu) parts.push(project.mcu);
   if (project.platform) parts.push(project.platform);
   if (project.runtime) parts.push(project.runtime);
@@ -1358,52 +1424,70 @@ function formatProjectMeta(project) {
 
 async function submitNewProject() {
   var status = document.getElementById('new-project-status');
-  status.textContent = 'Working...';
-
-  if (newProjectTab === 'ai') {
-    status.textContent = '';
-    document.getElementById('new-project-modal').classList.remove('active');
-    selectProject('');
-    seedNewProjectChat();
-    return;
-  }
-
-  var prevProject = selectedProject;
-  var platform = document.getElementById('npm-platform').value.trim() || 'stm32cubemx';
+  var submitButton = document.getElementById('new-project-submit');
+  var name = document.getElementById('npm-name').value.trim();
+  if (!name) { status.textContent = t('project.nameRequired'); return; }
   var payload = {
-    name: document.getElementById('npm-name').value.trim(),
-    mcu: document.getElementById('npm-mcu').value.trim() || (platform === 'espidf' ? 'esp32' : ''),
-    platform: platform,
-    runtime: platform === 'espidf' ? 'idf-freertos' : (document.getElementById('npm-runtime').value.trim() || 'baremetal'),
-    project_mode: platform === 'espidf' ? 'idf' : (platform === 'stm32firmware' ? 'firmware' : 'cubemx'),
-    firmware_package: document.getElementById('npm-fw').value.trim()
+    name: name,
+    target_chip: document.getElementById('npm-target').value,
+    root_index: selectedRootIndex
   };
-  if (platform === 'espidf') payload.idf_target = payload.mcu || 'esp32';
-  if (!payload.name) { status.textContent = 'Project name is required.'; return; }
+  status.textContent = t('project.creating');
+  submitButton.disabled = true;
   try {
-var res = await fetch('/api/workspace/create-project', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    var res = await fetch('/api/workspace/projects', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
     var data = await res.json();
-if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
-await loadSidebarProjects();
-closeNewProjectModal();
-    if (data.project && data.project.name) {
-if (platform === 'stm32cubemx') {
-        pendingCubemxImport = { source: prevProject, target: data.project.name };
-        document.getElementById('cubemx-guide-project-name').textContent = data.project.name;
-        document.getElementById('cubemx-guide-modal').classList.add('active');
-      } else {
-        if (prevProject) {
-          try { await importConversationToProject(prevProject, data.project.name); } catch(e) {}
-        }
-        selectProject(data.project.name);
-      }
-    }
-  } catch(e) { status.textContent = e.message; }
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    selectedRootIndex = data.root_index;
+    await loadSidebarProjects();
+    closeNewProjectModal();
+    selectProject(data.name);
+  } catch(e) {
+    status.textContent = t('project.createFailed') + ': ' + e.message;
+  } finally {
+    submitButton.disabled = false;
+  }
 }
 
+let projectDirectorySelectionInProgress = false;
+
 function openOpenProjectModal() {
+  document.getElementById('open-project-status').textContent = '';
   document.getElementById('open-project-modal').classList.add('active');
-  loadOpenProjectList();
+}
+
+function closeOpenProjectModal(event) {
+  if (event && event.target && event.target.id !== 'open-project-modal') return;
+  if (projectDirectorySelectionInProgress) return;
+  document.getElementById('open-project-modal').classList.remove('active');
+}
+
+async function submitProjectSelection() {
+  if (projectDirectorySelectionInProgress) return;
+  projectDirectorySelectionInProgress = true;
+  var button = document.getElementById('open-project-submit');
+  var status = document.getElementById('open-project-status');
+  if (button) button.disabled = true;
+  status.textContent = t('project.selecting');
+  try {
+    var res = await fetch('/api/workspace/projects/select-directory', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target_chip: document.getElementById('open-project-target').value})
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    if (!data.project) return;
+    selectedRootIndex = data.project.root_index;
+    await loadSidebarProjects();
+    document.getElementById('open-project-modal').classList.remove('active');
+    selectProject(data.project.name);
+  } catch(e) {
+    status.textContent = t('project.selectFailed') + ': ' + e.message;
+  } finally {
+    projectDirectorySelectionInProgress = false;
+    if (button) button.disabled = false;
+  }
 }
 
 
@@ -1426,66 +1510,22 @@ async function cubemxGuideDone() {
 }
 
 
-function closeOpenProjectModal(event) {
-  if (event && event.target && event.target.id !== 'open-project-modal') return;
-  document.getElementById('open-project-modal').classList.remove('active');
-}
-
-async function loadOpenProjectList() {
-  var list = document.getElementById('open-project-list');
-  list.innerHTML = 'Loading...';
-  try {
-    var data = await apiGet('/api/workspace/projects');
-    var projs = data.projects || [];
-    if (!projs.length) { list.innerHTML = '<div class="empty-state">No projects found</div>'; return; }
-    list.innerHTML = projs.map(function(p) {
-      return '<div class="driver-item" onclick="selectProjectFromList(\'' + p.name.replace(/'/g, "\\'") + '\')" style="cursor:pointer;padding:10px 12px"><span class="item-title">' + escapeHtml(p.name) + '</span></div>';
-    }).join('');
-  } catch(e) { list.innerHTML = 'Failed to load'; }
-}
-
-function selectProjectFromList(name) {
-  document.getElementById('open-project-modal').classList.remove('active');
-  selectProject(name);
-}
-
-async function submitOpenProject() {
-  var path = document.getElementById('open-project-path').value.trim();
-  var status = document.getElementById('open-project-status');
-  if (!path) { status.textContent = 'Enter a project path or name.'; return; }
-  status.textContent = 'Working...';
-  try {
-    var res = await fetch('/api/projects/import', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ source_path: path }) });
-    var data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
-    await loadSidebarProjects();
-    closeOpenProjectModal();
-    if (data.project && data.project.name) selectProject(data.project.name);
-  } catch(e) { status.textContent = e.message; }
-}
-
 async function deleteProject(name) {
   if (!confirm(t('sidebar.deleteConfirm').replace('{name}', name))) return;
   try {
-    var res = await fetch('/api/projects/' + encodeURIComponent(name), { method: 'DELETE' });
+    var res = await fetch('/api/projects/' + encodeURIComponent(name) + '?root_index=' + selectedRootIndex, { method: 'DELETE' });
     var data = await res.json();
     if (!res.ok) { alert(data.detail || t('sidebar.deleteFailed')); return; }
-    if (selectedProject === name) selectProject('');
+    if (selectedProject === name) {
+      selectedProject = null;
+      updateChatHeader();
+      loadChatWelcome();
+    }
     await loadSidebarProjects();
     loadDashboard();
   } catch(e) { alert(t('sidebar.deleteFailed') + ': ' + e.message); }
 }
 
-
-// Show/hide CubeMX platform hint
-document.getElementById('npm-platform').addEventListener('change', function() {
-  var hint = document.getElementById('cubemx-platform-hint');
-  var espHint = document.getElementById('espidf-platform-hint');
-  if (hint) hint.style.display = this.value === 'stm32cubemx' ? 'block' : 'none';
-  if (espHint) espHint.style.display = this.value === 'espidf' ? 'block' : 'none';
-  var runtime = document.getElementById('npm-runtime');
-  if (runtime && this.value === 'espidf') runtime.value = 'freertos';
-});
 
 function selectProject(name) {
 selectedProject = name || null;
@@ -1700,7 +1740,6 @@ async function sendMessage() {
   try {
     var project = selectedProject || '__global__';
     var portSelect = document.getElementById('serial-port-select');
-    var chipSelect = document.getElementById('chip-select');
     var res = await fetch('/api/conversations/' + encodeURIComponent(project), {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
@@ -1710,8 +1749,7 @@ async function sendMessage() {
         max_attempts: 3,
         allow_dependency_downloads: false,
         root_index: selectedRootIndex,
-        serial_port: (portSelect && portSelect.value) ? portSelect.value : null,
-        target_chip: (chipSelect && chipSelect.value) ? chipSelect.value : null
+        serial_port: (portSelect && portSelect.value) ? portSelect.value : null
       }),
       signal: abortController.signal
     });
@@ -1933,14 +1971,77 @@ pendingProjectSelection = pname;
   loadSidebarProjects();
 }
 
+function renderEspIdfToolchain(data) {
+  espIdfToolchain = data;
+  var available = !!data.available;
+  var warning = document.getElementById('toolchain-warning');
+  var warningText = document.getElementById('toolchain-warning-text');
+  warning.classList.toggle('visible', !available);
+  warningText.textContent = available ? '' : (data.message || t('toolchain.missing'));
+
+  var dot = document.getElementById('toolchain-status-dot');
+  dot.classList.toggle('available', available);
+  document.getElementById('toolchain-status-message').textContent = data.message || (available ? t('toolchain.available') : t('toolchain.missing'));
+  document.getElementById('toolchain-version').textContent = available && data.version ? data.version : '';
+  document.getElementById('toolchain-path').textContent = data.idf_path || '';
+  document.getElementById('stat-toolchains').textContent = available ? '1' : '0';
+  document.querySelectorAll('[onclick="openNewProjectModal()"]').forEach(function(button) {
+    button.disabled = !available;
+    button.title = available ? '' : t('toolchain.missing');
+  });
+}
+
+async function loadEspIdfToolchain() {
+  try {
+    var data = await apiGet('/api/toolchains/espidf');
+    renderEspIdfToolchain(data);
+  } catch(e) {
+    renderEspIdfToolchain({available:false, message:t('toolchain.missing'), version:null, idf_path:null});
+  }
+}
+
+async function refreshEspIdfToolchain() {
+  var button = document.getElementById('toolchain-refresh-btn');
+  button.disabled = true;
+  try {
+    var res = await fetch('/api/toolchains/espidf/refresh', {method:'POST'});
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    renderEspIdfToolchain(data);
+  } catch(e) {
+    alert(t('toolchain.failed') + ': ' + e.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function selectEspIdfToolchain() {
+  var button = document.getElementById('toolchain-select-btn');
+  var originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = t('toolchain.selecting');
+  try {
+    var res = await fetch('/api/toolchains/espidf/select-directory', {method:'POST'});
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    renderEspIdfToolchain(data);
+  } catch(e) {
+    alert(t('toolchain.failed') + ': ' + e.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
 async function loadDashboard() {
+  await loadEspIdfToolchain();
   try {
     var pdata = await apiGet('/api/workspace/projects');
     var projList = pdata.projects || [];
     document.getElementById('stat-projects').textContent = projList.length;
     document.getElementById('stat-drivers').textContent = '暂未接入';
     document.getElementById('stat-skills').textContent = '暂未接入';
-    document.getElementById('stat-toolchains').textContent = '服务端管理';
+    document.getElementById('stat-toolchains').textContent = espIdfToolchain && espIdfToolchain.available ? '1' : '0';
     var dashList = document.getElementById('dash-project-list');
     if (!projList.length) { dashList.innerHTML = '<div class="empty-state">' + t('sidebar.noProjects') + '</div>'; }
     else {
@@ -2246,8 +2347,7 @@ async function resetModelConfig() {
 }
 
 // Init
-// 新版只启用已经接入 LangGraph API 的页面和控件；保留原版视觉但不调用旧接口。
-document.querySelectorAll('.sidebar-mini-btn').forEach(function(el) { el.style.display = 'none'; });
+// 新版只隐藏尚未接入 LangGraph API 的旧页面和控件。
 document.querySelectorAll('.landing-actions').forEach(function(el) { el.style.display = 'none'; });
 document.querySelectorAll('.hw-status').forEach(function(el) {
   var row = el.closest('.hw-status-row');
@@ -2264,11 +2364,7 @@ if (stopButton) stopButton.style.display = 'none';
 function showUnavailableFeature() {
   appendChatBubble('system', '该功能尚未接入新版 LUXAR LangGraph。');
 }
-// 即使未来样式变更意外显示旧按钮，这些入口也不会再请求旧后端。
-openNewProjectModal = showUnavailableFeature;
-openOpenProjectModal = showUnavailableFeature;
-submitNewProject = showUnavailableFeature;
-deleteProject = showUnavailableFeature;
+// 尚未迁移的旧入口不会请求旧后端。
 pickChatDocuments = showUnavailableFeature;
 loadDrivers = showUnavailableFeature;
 searchDrivers = showUnavailableFeature;

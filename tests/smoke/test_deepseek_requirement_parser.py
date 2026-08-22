@@ -40,5 +40,6 @@ def test_real_deepseek_parses_one_minimal_requirement() -> None:
 
     # 只检查经过 Pydantic 验证的 Domain 对象，不打印原始响应或密钥。
     assert requirement.target == "esp32"
-    assert requirement.gpio == 2
+    gpio = next(item for item in requirement.peripherals if item.kind == "gpio")
+    assert gpio.parameters["pin"] == 2
     assert requirement.is_complete is True

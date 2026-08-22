@@ -281,7 +281,6 @@ class EspIdfProjectAdapter:
     ) -> ProjectEvidence:
         self._validate_arguments(project_name, target_chip)
         parent_root = self._resolve_parent(parent_dir)
-        validate_espidf_launcher(self.idf_command)
 
         target = parent_root / project_name
         _assert_no_link_components(parent_root, target)
@@ -315,6 +314,7 @@ class EspIdfProjectAdapter:
                 already_existed=True,
             )
 
+        validate_espidf_launcher(self.idf_command)
         return_code, stdout_summary, stderr_summary = self._run_create(
             parent_root,
             project_name,

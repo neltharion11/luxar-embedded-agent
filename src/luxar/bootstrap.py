@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from luxar.adapters.espidf_cli import EspIdfCliAdapter
 from luxar.adapters.espidf_device import EspIdfDeviceAdapter
 from luxar.adapters.espidf_project import EspIdfProjectAdapter
+from luxar.adapters.espidf_examples import LocalEspIdfExampleLibrary
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
 from luxar.adapters.deepseek.client import (
     DeepSeekJsonClient,
@@ -18,6 +19,8 @@ from luxar.adapters.deepseek.client import (
 )
 from luxar.adapters.deepseek.log_analyst import DeepSeekLogAnalyst
 from luxar.adapters.deepseek.planner import DeepSeekPlanner
+from luxar.adapters.deepseek.project_analyzer import DeepSeekProjectAnalyzer
+from luxar.adapters.deepseek.firmware_editor import DeepSeekFirmwareEditor
 from luxar.adapters.deepseek.repair_planner import DeepSeekRepairPlanner
 from luxar.adapters.deepseek.requirement_parser import (
     DeepSeekRequirementParser,
@@ -25,6 +28,9 @@ from luxar.adapters.deepseek.requirement_parser import (
 from luxar.adapters.deepseek.settings import DeepSeekSettings
 from luxar.application.context import RuntimeContext
 from luxar.domain.devices import SerialPortInfo
+from luxar.database.persistence import PersistencePort
+from luxar.knowledge import KnowledgeService, ProjectContextProvider
+from luxar.sdk_knowledge import SdkExampleKnowledgeBase
 from luxar.ports.espidf import EspIdfPort
 from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
 from luxar.ports.espidf_project import EspIdfProjectPort
@@ -87,6 +93,11 @@ def build_deepseek_runtime_context(
     client: JsonCompletionClient | None = None,
     allow_dependency_downloads: bool = False,
     idf_command: Sequence[str] | None = None,
+    idf_path: Path | None = None,
+    persistence: PersistencePort | None = None,
+    project_key: str | None = None,
+    knowledge_service: KnowledgeService | None = None,
+    sdk_example_knowledge: SdkExampleKnowledgeBase | None = None,
 ) -> RuntimeContext:
     # 正式运行时自动读取环境变量；测试可以传入无真实密钥的 Settings。
     if settings is None:
@@ -129,13 +140,22 @@ def build_deepseek_runtime_context(
             monitor = device_adapter
 
     if checkpointer is None:
-        # 进程内持久化：足以支持 interrupt() 与同进程恢复；
-        # 跨进程的 SQLite 持久化属于后续切片。
+        # 测试/显式无存储调用的进程内回退；正式 Web/CLI 运行会注入
+        # SqliteSaver，以支持重启后的 interrupt() 恢复。
         checkpointer = InMemorySaver()
+
+    context_provider = None
+    if persistence is not None:
+        context_provider = ProjectContextProvider(
+            persistence,
+            project_key or project_path.name,
+            knowledge_service,
+        )
 
     requirement_parser = DeepSeekRequirementParser(
         client=client,
         model=settings.fast_model,
+        context_provider=context_provider,
     )
     planner = DeepSeekPlanner(
         client=client,
@@ -144,6 +164,33 @@ def build_deepseek_runtime_context(
     repair_planner = DeepSeekRepairPlanner(
         client=client,
         model=settings.repair_model,
+    )
+    project_analyzer = DeepSeekProjectAnalyzer(
+        client=client,
+        model=settings.repair_model,
+    )
+    firmware_editor = DeepSeekFirmwareEditor(
+        client=client,
+        model=settings.repair_model,
+    )
+    import os
+
+    raw_idf_path = idf_path or (
+        Path(value) if (value := os.environ.get("IDF_PATH")) else None
+    )
+    resolved_idf_path = (
+        raw_idf_path.expanduser().resolve()
+        if raw_idf_path is not None
+        else None
+    )
+    example_library = (
+        LocalEspIdfExampleLibrary(
+            resolved_idf_path,
+            knowledge=sdk_example_knowledge,
+        )
+        if resolved_idf_path is not None
+        and (resolved_idf_path / "examples").is_dir()
+        else None
     )
     if log_analyst is None:
         # 日志分析复用修复级模型，避免低能力模型漏报设备故障。
@@ -167,4 +214,9 @@ def build_deepseek_runtime_context(
         serial_port=serial_port,
         monitor_timeout_seconds=monitor_timeout_seconds,
         checkpointer=checkpointer,
+        project_analyzer=project_analyzer,
+        firmware_editor=firmware_editor,
+        example_library=example_library,
+        persistence=persistence,
+        project_key=project_key or project_path.name,
     )

@@ -6,6 +6,7 @@ from typing import Protocol
 
 from luxar.domain.plans import ExecutionPlan
 from luxar.domain.requirements import FirmwareRequirement
+from luxar.domain.project_analysis import ProjectAnalysis
 
 
 class Planner(Protocol):
@@ -13,5 +14,6 @@ class Planner(Protocol):
     def create_plan(
         self,
         requirement: FirmwareRequirement,
+        project_analysis: ProjectAnalysis | None = None,
     ) -> ExecutionPlan:
         ...

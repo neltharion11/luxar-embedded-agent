@@ -11,6 +11,7 @@ class PlanStep(BaseModel):
     # 当前动作词表是封闭的；LLM 不能凭空发明 Graph 不支持的动作。
     kind: Literal[
         "create_project",
+        "implement_change",
         "build_project",
         "flash_project",
         "monitor_project",
@@ -43,6 +44,26 @@ class ExecutionPlan(BaseModel):
             raise ValueError(
                 "create_project must be the first step"
             )
+
+        implement_positions = [
+            index
+            for index, kind in enumerate(kinds)
+            if kind == "implement_change"
+        ]
+        if len(implement_positions) > 1:
+            raise ValueError("plan cannot implement the change more than once")
+        if (
+            implement_positions
+            and create_positions
+            and implement_positions[0] < create_positions[0]
+        ):
+            raise ValueError("implement_change must follow create_project")
+        if (
+            implement_positions
+            and "build_project" in kinds
+            and implement_positions[0] > kinds.index("build_project")
+        ):
+            raise ValueError("implement_change must precede build_project")
 
         # 烧录前必须已经构建过固件，否则没有可烧录的产物。
         if "flash_project" in kinds:

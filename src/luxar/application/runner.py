@@ -7,6 +7,7 @@ resume_workflow 用 Command(resume=...) 在同一 checkpoint 上继续执行。
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -101,10 +102,14 @@ ESPIDF_ERROR_SUGGESTIONS = {
 
 ProgressStage = Literal[
     "requirement",
+    "analysis",
     "planning",
+    "project",
+    "implementation",
     "build",
     "flash",
     "monitor",
+    "diagnosis",
     "repair",
     "clarification",
     "completed",
@@ -114,11 +119,12 @@ ProgressStage = Literal[
 
 @dataclass(frozen=True)
 class WorkflowProgress:
-    """只向展示层报告固定阶段文字和构建次数，不暴露完整 State。"""
+    """Report safe progress plus user-facing narration for incremental UI."""
 
     stage: ProgressStage
     message: str
     attempts: int
+    narrative: str = ""
 
 
 ProgressReporter = Callable[[WorkflowProgress], None]
@@ -129,13 +135,173 @@ _PROGRESS_BY_NODE: dict[
     tuple[ProgressStage, str],
 ] = {
     "analyze_requirement": ("requirement", "需求分析完成"),
+    "analyze_project": ("analysis", "当前项目代码分析完成"),
+    "report_project": ("completed", "项目检查完成"),
     "create_plan": ("planning", "执行计划已生成"),
+    "create_project": ("project", "项目框架已创建"),
+    "find_idf_examples": ("analysis", "ESP-IDF 官方例程检索完成"),
+    "implement_change": ("implementation", "已根据代码现状实现需求"),
     "repair_project": ("repair", "已应用受限制的源码修复"),
     "monitor_project": ("monitor", "已采集设备运行日志"),
+    "analyze_device_logs": ("diagnosis", "设备日志分析完成"),
     "request_clarification": ("clarification", "需要补充需求信息"),
     "completed": ("completed", "工作流执行成功"),
     "failed": ("failed", "工作流执行失败"),
 }
+
+
+_STEP_LABELS = {
+    "create_project": "创建项目框架",
+    "implement_change": "根据现有代码实现需求",
+    "build_project": "构建并验证固件",
+    "flash_project": "烧录固件",
+    "monitor_project": "采集并分析设备日志",
+}
+
+
+def _safe_identifier(value: str, fallback: str) -> str:
+    normalized = value.strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,24}", normalized):
+        return normalized
+    return fallback
+
+
+def _changed_file_text(state: WorkflowState) -> str:
+    paths = list(dict.fromkeys(state.get("changed_files", [])))
+    if not paths:
+        return "没有记录到文件写入"
+    shown = "、".join(paths[:8])
+    if len(paths) > 8:
+        shown += f" 等 {len(paths)} 个文件"
+    return shown
+
+
+def _narrative_from_state(state: WorkflowState, node: str) -> str:
+    """Build bounded prose from validated state without exposing raw logs."""
+
+    if node == "analyze_requirement":
+        requirement = state.get("requirement")
+        if requirement is None:
+            return "需求信息已完成结构化整理，下一步核对项目实际代码。\n\n"
+        target = _safe_identifier(requirement.target, "已选择的芯片")
+        if requirement.project_type == "empty":
+            return (
+                f"需求目标：为 {target} 准备一个可构建的基础空项目；"
+                "不添加 GPIO、网络或其他业务功能。\n\n"
+            )
+        peripheral_names = [
+            _safe_identifier(item.kind, "自定义外设").upper()
+            for item in requirement.peripherals[:4]
+        ]
+        peripheral_text = (
+            "，涉及 " + "、".join(peripheral_names)
+            if peripheral_names
+            else "，目前不需要预设任何外设"
+        )
+        return (
+            f"需求目标：目标芯片为 {target}{peripheral_text}。"
+            "接下来将与当前源码逐项对照。\n\n"
+        )
+
+    if node == "create_plan":
+        plan = state.get("plan")
+        labels = [
+            _STEP_LABELS[step.kind]
+            for step in plan.steps
+            if step.kind in _STEP_LABELS
+        ] if plan is not None else []
+        if labels:
+            prefix = "处理方案"
+            if "implement_change" not in [step.kind for step in plan.steps]:
+                prefix += "（本次不写入源码）"
+            return prefix + "：" + " → ".join(labels) + "。\n\n"
+        return "处理方案已生成，将按依赖顺序执行。\n\n"
+
+    if node == "analyze_project":
+        analysis = state.get("project_analysis")
+        if analysis is None:
+            return "正在读取当前项目代码并建立可验证的项目快照。\n\n"
+        if not analysis.project_exists:
+            return "项目现状：目录尚不存在，需要先创建基础工程并重新分析。\n\n"
+        cache_note = "（源码未变化，复用已有分析）" if analysis.cache_hit else ""
+        return f"项目现状{cache_note}：{analysis.summary}\n\n"
+
+    if node == "create_project":
+        created = state.get("created_project")
+        if created is not None and created.success:
+            return "项目写入：基础工程结构已创建，随后将重新读取源码并生成计划。\n\n"
+        return "项目框架创建没有成功，我正在整理可操作的失败原因。\n\n"
+
+    if node == "implement_change":
+        return (
+            f"代码写入：{_changed_file_text(state)}。"
+            "写入后的项目快照已刷新，下一步执行构建验证。\n\n"
+        )
+
+    if node == "find_idf_examples":
+        references = state.get("reference_examples", [])
+        if references:
+            paths = "、".join(item.path for item in references)
+            retrieval = (
+                "SDK 知识库召回并经本地文件确认"
+                if any("sdk-rag" in item.matched_terms for item in references)
+                else "本地关键词检索确认"
+            )
+            return (
+                f"例程复用：通过{retrieval}，找到与需求匹配的 "
+                f"ESP-IDF 官方例程 {paths}。"
+                "实现时将优先沿用其中兼容的 API 和初始化方式。\n\n"
+            )
+        return (
+            "例程复用：当前 ESP-IDF 安装中没有找到足够匹配的官方例程，"
+            "本次将根据现有项目结构实现，并由构建结果验证。\n\n"
+        )
+
+    if node == "report_project":
+        return ""
+
+    if node == "build_project":
+        attempts = state.get("attempts", 0)
+        evidence = state.get("build_evidence")
+        if evidence is not None and evidence.success:
+            return (
+                f"构建验证：第 {attempts} 次构建通过，"
+                f"工具返回码为 {evidence.return_code}，固件产物已生成。\n\n"
+            )
+        return (
+            f"第 {attempts} 次构建发现了问题。"
+            "我会根据受控的编译诊断判断是否可以自动修复。\n\n"
+        )
+
+    if node == "repair_project":
+        return (
+            f"构建修复：已更新 {_changed_file_text(state)}。"
+            "接下来重新构建，以工具结果判断修复是否有效。\n\n"
+        )
+
+    if node == "flash_project":
+        evidence = state.get("flash_evidence")
+        if evidence is not None and evidence.success:
+            return "固件已经成功写入开发板，接下来可以检查设备实际运行状态。\n\n"
+        return "本次烧录没有成功，我正在判断是否可以安全重试。\n\n"
+
+    if node == "monitor_project":
+        return "设备运行日志已经采集完成，我正在检查启动、异常和循环重启等信号。\n\n"
+
+    if node == "analyze_device_logs":
+        diagnosis = state.get("device_diagnosis")
+        if diagnosis is not None and diagnosis.healthy:
+            return "日志分析完成，没有发现需要修复的运行故障。\n\n"
+        findings = len(diagnosis.findings) if diagnosis is not None else 0
+        return f"日志分析发现 {findings} 项运行问题，我会按诊断结果继续处理。\n\n"
+
+    if node == "request_clarification":
+        return "当前需求还缺少会直接影响实现的关键信息，我需要先向你确认。\n\n"
+    if node == "completed":
+        return ""
+    if node == "failed":
+        return ""
+    return ""
 
 
 def _progress_from_state(state: WorkflowState) -> WorkflowProgress | None:
@@ -150,6 +316,7 @@ def _progress_from_state(state: WorkflowState) -> WorkflowProgress | None:
             stage="build",
             message=f"已完成第 {attempts} 次构建",
             attempts=attempts,
+            narrative=_narrative_from_state(state, node),
         )
 
     if node == "flash_project":
@@ -158,6 +325,7 @@ def _progress_from_state(state: WorkflowState) -> WorkflowProgress | None:
             stage="flash",
             message=f"已完成第 {flash_attempts} 次烧录",
             attempts=attempts,
+            narrative=_narrative_from_state(state, node),
         )
 
     configured = _PROGRESS_BY_NODE.get(node)
@@ -169,6 +337,7 @@ def _progress_from_state(state: WorkflowState) -> WorkflowProgress | None:
         stage=stage,
         message=message,
         attempts=attempts,
+        narrative=_narrative_from_state(state, node),
     )
 
 
@@ -177,10 +346,16 @@ def capability_error_to_workflow_error(
     state: WorkflowState,
 ) -> WorkflowError:
     # 根据已经成功写入 State 的数据，判断失败发生在哪个模型阶段。
-    if "requirement" not in state:
+    if state.get("task_mode") == "inspection":
+        stage = "project_analysis"
+    elif "requirement" not in state:
         stage = "requirement_analysis"
+    elif "project_analysis" not in state:
+        stage = "project_analysis"
     elif "plan" not in state:
         stage = "planning"
+    elif state.get("pending_step_kind") == "implement_change":
+        stage = "implementation"
     else:
         stage = "repair"
 
@@ -200,10 +375,16 @@ def capability_error_to_workflow_error(
 
 def workspace_error_to_workflow_error(
     error: WorkspaceError,
+    state: WorkflowState | None = None,
 ) -> WorkflowError:
+    stage = (
+        "project_analysis"
+        if state is not None and "project_analysis" not in state
+        else "repair"
+    )
     return WorkflowError.model_validate(
         {
-            "stage": "repair",
+            "stage": stage,
             "category": "workspace",
             "message": WORKSPACE_ERROR_MESSAGES[
                 error.category
@@ -271,7 +452,7 @@ def _normalize_capability_failure(
     if isinstance(error, CapabilityError):
         return capability_error_to_workflow_error(error, latest_state)
     if isinstance(error, WorkspaceError):
-        return workspace_error_to_workflow_error(error)
+        return workspace_error_to_workflow_error(error, latest_state)
     return espidf_error_to_workflow_error(error, latest_state)
 
 
@@ -297,7 +478,8 @@ def _drive_graph(
     latest_state: WorkflowState,
 ) -> WorkflowRunResult:
     # interrupt() 需要带 checkpointer 编译的 Graph；context.checkpointer
-    # 由 Bootstrap 注入（生产默认 InMemorySaver）。
+    # 由 Bootstrap 注入（正式运行使用 SqliteSaver，测试可回退
+    # InMemorySaver）。
     graph = build_graph(checkpointer=context.checkpointer)
     config = {"configurable": {"thread_id": thread_id}}
 

@@ -12,10 +12,10 @@ Write-Host '== LUXAR 环境准备 ==' -ForegroundColor Cyan
 $venvPython = Join-Path $root '.venv\Scripts\python.exe'
 $venvCfg = Join-Path $root '.venv\pyvenv.cfg'
 
-# 0. 就绪检查:完整 .venv + luxar 可导入 = 无需补装
+# 0. 就绪检查:完整 .venv + 方案 2 的全部运行依赖可导入 = 无需补装
 $ready = $false
 if (-not $Force -and (Test-Path $venvPython) -and (Test-Path $venvCfg)) {
-    & $venvPython -c "import luxar" 2>$null
+    & $venvPython -c "import luxar; from langgraph.checkpoint.sqlite import SqliteSaver; import lancedb" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { $ready = $true }
 }
 
@@ -82,6 +82,10 @@ LUXAR_PROJECTS_ROOT=$projects
 # LUXAR_TARGET_CHIP=esp32
 # 可选: Web 端口
 # LUXAR_WEB_PORT=8000
+# 可选: SQLite + LanceDB 本地持久化目录
+# LUXAR_STORAGE_DIRECTORY=.luxar-data
+# 可选: 独立 embedding 服务（启用 LanceDB 知识库/RAG）
+# LUXAR_EMBEDDING_API_KEY=
 "@ | Set-Content $envFile -Encoding UTF8
     Write-Host '[4/4] 已生成 .env'
 } else {
@@ -106,16 +110,33 @@ if (-not $NoPathEdit) {
     }
 }
 
-# 6. 检测 ESP-IDF
-$idfPath = $env:IDF_PATH
-if (-not $idfPath -and (Test-Path 'F:\esp\v6.0.2\esp-idf')) {
-    $idfPath = 'F:\esp\v6.0.2\esp-idf'
-}
-if ($idfPath -and (Test-Path (Join-Path $idfPath 'tools\idf.py'))) {
-    Write-Host "检测到 ESP-IDF: $idfPath" -ForegroundColor Green
+# 6. 用与 Web 网关相同的探测器检查 ESP-IDF，不依赖固定盘符或版本。
+$toolchainConfig = Join-Path $root 'projects\.luxar\toolchain.json'
+$toolchainProbe = @'
+import json
+import sys
+from pathlib import Path
+from luxar.toolchain import EspIdfToolchainManager
+
+manager = EspIdfToolchainManager(config_path=Path(sys.argv[1]))
+status = manager.status
+print(json.dumps({
+    "available": status.available,
+    "version": status.version,
+    "idf_path": status.idf_path,
+}, ensure_ascii=True))
+'@
+$toolchainJson = & $venvPython -c $toolchainProbe $toolchainConfig
+
+if ($LASTEXITCODE -eq 0 -and $toolchainJson) {
+    $toolchain = $toolchainJson | ConvertFrom-Json
+    if ($toolchain.available) {
+        Write-Host "[6/6] 检测到 ESP-IDF: $($toolchain.version)  $($toolchain.idf_path)" -ForegroundColor Green
+    } else {
+        Write-Host '[6/6] 未检测到可用的 ESP-IDF;启动后可在仪表盘选择工具链位置。' -ForegroundColor Yellow
+    }
 } else {
-    Write-Host '未检测到 ESP-IDF:构建/烧录任务会报"环境不可用"。' -ForegroundColor Yellow
-    Write-Host '安装指引: https://docs.espressif.com/projects/esp-idf/zh_CN/latest/esp32/get-started/windows-setup.html'
+    Write-Host '[6/6] ESP-IDF 检测未完成;启动后可在仪表盘重新检测。' -ForegroundColor Yellow
 }
 
 Write-Host ''

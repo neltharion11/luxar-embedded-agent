@@ -14,6 +14,7 @@ from luxar.domain.devices import ApprovalRequest
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.requirements import FirmwareRequirement
+from luxar.sdk_knowledge import SdkExampleKnowledgeBase
 
 
 def _run_result(state: WorkflowState) -> WorkflowRunResult:
@@ -322,12 +323,20 @@ def test_ordinary_mode_prompts_for_missing_task_and_builds_initial_state(
     )
 
     assert result == 0
-    assert calls["bootstrap"] == {
-        "project_path": tmp_path,
-        "target_chip": None,
-        "serial_port": None,
-        "allow_dependency_downloads": False,
-    }
+    bootstrap = calls["bootstrap"]
+    assert isinstance(bootstrap, dict)
+    assert bootstrap["project_path"] == tmp_path
+    assert bootstrap["target_chip"] is None
+    assert bootstrap["serial_port"] is None
+    assert bootstrap["allow_dependency_downloads"] is False
+    assert bootstrap["project_key"] == tmp_path.name
+    assert bootstrap["persistence"].durable is True
+    assert bootstrap["checkpointer"] is not None
+    assert bootstrap["knowledge_service"] is None
+    assert isinstance(
+        bootstrap["sdk_example_knowledge"],
+        SdkExampleKnowledgeBase,
+    )
     runner_call = calls["runner"]
     assert isinstance(runner_call, dict)
     assert runner_call["context"] is context
@@ -431,13 +440,18 @@ def test_keyboard_interrupt_returns_130(
                 status="needs_clarification",
                 requirement=FirmwareRequirement(
                     target="esp32",
-                    feature="gpio_blink",
-                    missing_fields=["gpio"],
+                    goal="gpio_blink",
+                    peripherals=[
+                        {
+                            "kind": "gpio",
+                            "missing_fields": ["pin"],
+                        }
+                    ],
                 ),
                 trace=[],
             ),
             3,
-            ["LUXAR 需要更多信息", "缺少字段", "gpio"],
+            ["LUXAR 需要更多信息", "缺少字段", "peripherals[0].pin"],
         ),
         (
             WorkflowState(
@@ -538,10 +552,16 @@ def test_json_mode_emits_one_stable_document_without_progress(
     assert captured.err == ""
     assert document == {
         "status": "completed",
+        "message": (
+            "处理完成。\n\n验证结果\n"
+            "- 构建通过：共执行 1 次，最终返回码 0。"
+        ),
         "exit_code": 0,
         "attempts": 1,
         "requirement": None,
-        "plan": None,
+            "project_analysis": None,
+            "reference_examples": [],
+            "plan": None,
         "created_project": None,
         "build_evidence": evidence.model_dump(mode="json"),
         "flash_evidence": None,
@@ -549,6 +569,7 @@ def test_json_mode_emits_one_stable_document_without_progress(
         "device_diagnosis": None,
         "approval_status": "not_requested",
         "repair_plan": None,
+        "implementation_plan": None,
         "changed_files": [],
         "error": None,
         "trace": ["analyze_requirement", "completed"],

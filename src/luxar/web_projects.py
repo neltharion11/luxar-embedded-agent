@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path, PurePath
 
 from luxar.web_contracts import WebProject
 
 
 _MAX_ROOT_CMAKE_BYTES = 64 * 1024
+_MAX_TARGET_CONFIG_BYTES = 64 * 1024
+_TARGET_LINE_PREFIX = "CONFIG_IDF_TARGET="
 
 
 class WebProjectError(ValueError):
@@ -52,6 +55,12 @@ class WebProjectCatalog:
         if not self._root.is_dir():
             raise WebProjectError("项目根目录无效")
 
+    @property
+    def root(self) -> Path:
+        """返回已经规范化并验证过的项目根目录。"""
+
+        return self._root
+
     def resolve(self, name: str) -> Path:
         """把一个不含路径语法的名称解析为现有 ESP-IDF 项目。"""
 
@@ -84,6 +93,37 @@ class WebProjectCatalog:
             raise WebProjectError("目录不是有效的 ESP-IDF 项目")
         return resolved
 
+    def target_chip(self, name: str) -> str | None:
+        """Read the immutable target written during create/select."""
+
+        project = self.resolve(name)
+        config = project / "sdkconfig.defaults"
+        if not config.exists():
+            return None
+        if _is_link_or_junction(config):
+            raise WebProjectError("项目目标配置无效")
+        try:
+            if config.stat().st_size > _MAX_TARGET_CONFIG_BYTES:
+                raise WebProjectError("项目目标配置无效")
+            content = config.read_text(encoding="utf-8", errors="strict")
+        except WebProjectError:
+            raise
+        except (OSError, UnicodeError) as error:
+            raise WebProjectError("项目目标配置无效") from error
+
+        targets = [
+            line.removeprefix(_TARGET_LINE_PREFIX).strip()
+            for line in content.splitlines()
+            if line.startswith(_TARGET_LINE_PREFIX)
+        ]
+        if not targets:
+            return None
+        if len(set(targets)) != 1 or not re.fullmatch(
+            r"[a-z][a-z0-9_]*", targets[0]
+        ):
+            raise WebProjectError("项目目标配置无效")
+        return targets[0]
+
     def list_projects(self) -> list[WebProject]:
         """跳过不安全/无效条目，只返回确定排序的安全描述。"""
 
@@ -98,5 +138,11 @@ class WebProjectCatalog:
                 self.resolve(entry.name)
             except WebProjectError:
                 continue
-            projects.append(WebProject(name=entry.name))
+            try:
+                target_chip = self.target_chip(entry.name)
+            except WebProjectError:
+                continue
+            projects.append(
+                WebProject(name=entry.name, target_chip=target_chip)
+            )
         return projects

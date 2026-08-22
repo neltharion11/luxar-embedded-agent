@@ -13,8 +13,8 @@ _TARGET_CHIP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 class WebTaskRequest(BaseModel):
     """浏览器启动一次工作流时允许提交的数据。
 
-    项目根、串口与芯片都由页面选择后随任务提交；服务器按白名单
-    与正则严格校验，任意值永远不会到达 idf.py。
+    项目根与串口随任务提交；芯片通常从不可变项目配置读取。
+    保留 target_chip 仅用于兼容旧客户端，服务端会拒绝与项目冲突的值。
     """
 
     # strict=True 防止 1、"true" 等值被悄悄转换成下载授权。
@@ -28,7 +28,7 @@ class WebTaskRequest(BaseModel):
     root_index: int = Field(default=0, ge=0)
     # 页面选择的串口：服务器仍会校验平台模式与发现列表成员资格。
     serial_port: str | None = None
-    # 页面选择的芯片：仅接受小写标识符。
+    # 旧客户端兼容字段：仅接受小写标识符，且不得改变项目固定芯片。
     target_chip: str | None = None
 
     @field_validator("message")
@@ -68,6 +68,10 @@ class WebProject(BaseModel):
     name: str
     platform: Literal["espidf"] = "espidf"
     root_index: int = Field(default=0, ge=0)
+    target_chip: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
 
 
 class WebProjectRoot(BaseModel):
@@ -80,6 +84,43 @@ class WebProjectRoot(BaseModel):
 class WebProjectList(BaseModel):
     roots: list[WebProjectRoot]
     projects: list[WebProject]
+
+
+class WebProjectSelection(BaseModel):
+    """本机目录选择器的结果；取消选择时 project 为 None。"""
+
+    project: WebProject | None = None
+
+
+class WebProjectSelectionRequest(BaseModel):
+    """Select an existing project and bind its immutable target chip."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    target_chip: str = Field(
+        min_length=1,
+        max_length=40,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+
+
+class WebProjectCreateRequest(BaseModel):
+    """在服务器已配置根目录中创建一个 ESP-IDF 项目。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    target_chip: str = Field(
+        default="esp32",
+        min_length=1,
+        max_length=40,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+    root_index: int = Field(default=0, ge=0)
 
 
 class WebSerialPort(BaseModel):
@@ -99,10 +140,61 @@ class WebHealth(BaseModel):
     service: Literal["luxar-langgraph"] = "luxar-langgraph"
 
 
+class WebEspIdfToolchain(BaseModel):
+    """启动时探测到的 ESP-IDF 工具链状态。"""
+
+    available: bool
+    source: Literal[
+        "none",
+        "environment",
+        "configured",
+        "installer",
+        "path",
+        "search",
+    ]
+    version: str | None = None
+    idf_path: str | None = None
+    message: str
+
+
 class WebApprovalDecision(BaseModel):
     """浏览器对烧录审批请求的唯一合法回复。"""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
     decision: Literal["approve", "reject"]
+    root_index: int = Field(default=0, ge=0)
+
+
+class WebMemoryUpsert(BaseModel):
+    """Explicit structured project memory; arbitrary SQL/query text is absent."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    key: str = Field(min_length=1, max_length=120, pattern=r"^[a-z0-9_.-]+$")
+    memory_type: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9_.-]+$",
+    )
+    value: dict[str, object]
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    root_index: int = Field(default=0, ge=0)
+
+
+class WebKnowledgeIngest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source_uri: str = Field(min_length=1, max_length=1000)
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1, max_length=2 * 1024 * 1024)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    root_index: int = Field(default=0, ge=0)
+
+
+class WebKnowledgeSearch(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=6, ge=1, le=20)
     root_index: int = Field(default=0, ge=0)

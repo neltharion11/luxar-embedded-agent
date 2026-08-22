@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -34,6 +35,7 @@ from luxar.domain.devices import (
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan, PlanStep
 from luxar.domain.projects import ProjectEvidence
+from luxar.domain.project_analysis import ProjectAnalysis
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
 
@@ -105,6 +107,24 @@ def test_analyze_requirement_uses_runtime_parser_and_updates_state() -> None:
     assert parser.calls == ["create an ESP32 GPIO blink project"]
     assert state["trace"] == []
 
+    parser.requirement = FirmwareRequirement(
+        target="",
+        feature="empty_project",
+        missing_fields=["target"],
+    )
+    project_context = replace(context, target_chip="esp32s3")
+
+    project_update = analyze_requirement(
+        {"task_text": "搭建一个空项目", "trace": []},
+        Runtime(context=project_context),
+    )
+
+    assert project_update["requirement"] == FirmwareRequirement(
+        target="esp32s3",
+        feature="empty_project",
+        missing_fields=[],
+    )
+
 
 def test_create_plan_passes_structured_requirement_to_runtime_planner() -> None:
     requirement = FirmwareRequirement(
@@ -147,16 +167,33 @@ def test_create_plan_passes_structured_requirement_to_runtime_planner() -> None:
     )
 
     update = create_plan(
-        {"requirement": requirement, "trace": ["analyze_requirement"]},
+        {
+            "requirement": requirement,
+            "project_analysis": ProjectAnalysis(
+                project_exists=True,
+                has_source_code=True,
+                fingerprint="current",
+                summary="blink source",
+            ),
+            "trace": ["analyze_requirement", "analyze_project"],
+        },
         Runtime(context=context),
     )
 
     assert update == {
         "plan": plan,
         "status": "planned",
-        "trace": ["analyze_requirement", "create_plan"],
+        "trace": ["analyze_requirement", "analyze_project", "create_plan"],
     }
     assert planner.calls == [requirement]
+    assert planner.project_analyses == [
+        ProjectAnalysis(
+            project_exists=True,
+            has_source_code=True,
+            fingerprint="current",
+            summary="blink source",
+        )
+    ]
 
 
 def test_build_project_records_tool_evidence_attempt_and_path() -> None:
@@ -306,7 +343,7 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
 
     update = repair_project(state, Runtime(context=context))
 
-    assert workspace.read_calls == [project_path]
+    assert workspace.read_calls == [project_path, project_path]
     assert repair_planner.calls == [
         (requirement, plan, evidence, files, None)
     ]
@@ -314,6 +351,7 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
     assert update == {
         "repair_plan": repair,
         "changed_files": ["main/main.c"],
+        "project_analysis": update["project_analysis"],
         "repair_origin": "build",
         "status": "repaired",
         "trace": [
