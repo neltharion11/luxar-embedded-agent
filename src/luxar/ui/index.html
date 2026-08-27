@@ -66,6 +66,66 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .toolchain-status-dot.available{background:#22c55e}
 .toolchain-path{font-family:'JetBrains Mono',monospace;font-size:11px;color:#60646c;margin-top:6px;word-break:break-all}
 .toolchain-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.model-config-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.model-config-title{display:flex;align-items:flex-start;gap:12px}
+.model-config-icon{width:32px;height:32px;border-radius:8px;background:#f0f0f3;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.model-config-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e0e1e6;border-radius:10px;overflow:hidden}
+.model-config-section{padding:16px 18px;background:#fff;min-width:0}
+.model-config-section+.model-config-section{border-left:1px solid #e0e1e6}
+.model-config-section.embedding{grid-column:1/-1;border-left:0;border-top:1px solid #e0e1e6}
+.model-config-section-title{font-size:13px;font-weight:700;color:#1c2024;margin-bottom:3px}
+.model-config-section-note{font-size:11px;color:#888;margin-bottom:13px;line-height:1.45}
+.model-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.model-field-wide{grid-column:1/-1}
+.form-label{display:block;font-size:11px;font-weight:600;color:#60646c;margin-bottom:5px}
+.form-input{display:block;width:100%;height:36px;padding:0 10px;border:1px solid #d8dbe0;border-radius:7px;background:#fff;color:#1c2024;font:12px 'Inter',system-ui,sans-serif;outline:none;transition:border-color .15s,box-shadow .15s}
+.form-input:focus{border-color:#8e949c;box-shadow:0 0 0 3px rgba(28,32,36,.06)}
+.model-key-status,.model-route-note{font-size:10px;color:#888;margin-top:4px;line-height:1.4}
+.model-config-footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px}
+@media(max-width:900px){.model-config-grid{grid-template-columns:1fr}.model-config-section+.model-config-section{border-left:0;border-top:1px solid #e0e1e6}}
+.agent-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.agent-toolbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.agent-project-label{font-size:12px;color:#60646c}
+.agent-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;margin-bottom:16px}
+.agent-summary{background:#fff;border:1px solid #e0e1e6;border-radius:12px;padding:14px 16px}
+.agent-summary-label{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#888;margin-bottom:6px}
+.agent-summary-value{font-size:18px;font-weight:750;color:#1c2024;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-layout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:14px;align-items:start}
+.agent-column{display:flex;flex-direction:column;gap:14px;min-width:0}
+.agent-card{background:#fff;border:1px solid #e0e1e6;border-radius:12px;padding:16px}
+.agent-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.agent-card-title{font-size:13px;font-weight:750;color:#1c2024}
+.agent-card-count{font-size:10px;color:#888;background:#f0f0f3;border-radius:999px;padding:3px 8px}
+.agent-objective-title{font-size:18px;font-weight:750;letter-spacing:-.3px;margin-bottom:6px}
+.agent-objective-desc{font-size:13px;line-height:1.6;color:#60646c;white-space:pre-wrap}
+.agent-meta-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.agent-pill{display:inline-flex;align-items:center;padding:3px 8px;border:1px solid #e0e1e6;border-radius:999px;background:#f6f8fa;color:#60646c;font-size:10px;font-weight:650}
+.agent-pill.passed,.agent-pill.completed,.agent-pill.verified{color:#166534;background:#f0fdf4;border-color:#bbf7d0}
+.agent-pill.running,.agent-pill.ready,.agent-pill.active{color:#175cd3;background:#eff8ff;border-color:#b2ddff}
+.agent-pill.blocked,.agent-pill.failed{color:#b42318;background:#fef2f2;border-color:#fecaca}
+.agent-pill.pending,.agent-pill.inferred{color:#9a6700;background:#fffbeb;border-color:#fde68a}
+.agent-task-list,.agent-list{display:flex;flex-direction:column;gap:8px}
+.agent-task{border:1px solid #e7e9ed;border-radius:10px;padding:10px 12px;background:#fbfcfd}
+.agent-task.current{border-color:#84adff;box-shadow:0 0 0 2px rgba(21,112,239,.08)}
+.agent-task-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.agent-task-title{font-size:12px;font-weight:700;color:#1c2024}
+.agent-task-desc{font-size:11px;color:#60646c;line-height:1.45;margin-top:3px}
+.agent-task-deps{font:10px 'JetBrains Mono',monospace;color:#888;margin-top:7px;word-break:break-all}
+.agent-capability,.agent-evidence,.agent-recovery,.agent-interaction{border-bottom:1px solid #eef0f3;padding:8px 0}
+.agent-capability:last-child,.agent-evidence:last-child,.agent-recovery:last-child,.agent-interaction:last-child{border-bottom:0;padding-bottom:0}
+.agent-item-title{font-size:11px;font-weight:700;color:#1c2024;word-break:break-word}
+.agent-item-sub{font-size:10px;line-height:1.5;color:#888;margin-top:3px;word-break:break-word}
+.agent-blocked{margin-bottom:14px;padding:10px 12px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;color:#b42318;font-size:12px;line-height:1.5}
+.agent-empty{padding:42px 20px;text-align:center;color:#888;background:#fff;border:1px dashed #d8dbe0;border-radius:12px}
+.agent-empty strong{display:block;color:#60646c;margin-bottom:5px;font-size:14px}
+.agent-interaction-form{display:grid;gap:8px}
+.agent-interaction-form select,.agent-interaction-form input,.agent-interaction-form textarea{width:100%;border:1px solid #d8dbe0;border-radius:8px;background:#fff;padding:8px 10px;color:#1c2024;font:12px 'Inter',sans-serif;outline:none}
+.agent-interaction-form textarea{resize:vertical;min-height:74px}
+.agent-interaction-form select:focus,.agent-interaction-form input:focus,.agent-interaction-form textarea:focus{border-color:#0d74ce}
+.agent-form-footer{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.agent-form-status{font-size:10px;color:#60646c;min-height:15px}
+@media(max-width:1050px){.agent-layout{grid-template-columns:1fr}.agent-summary-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}}
+@media(max-width:640px){.agent-toolbar{flex-direction:column}.agent-summary-grid{grid-template-columns:1fr 1fr}}
 [data-page]{display:none;flex:1;overflow-y:auto;padding:24px 32px}
 [data-page].active{display:flex;flex-direction:column}
 [data-page].active:not([data-page="chat"]){display:block}
@@ -170,6 +230,24 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .chat-typing-bar::before{content:'';width:7px;height:7px;border-radius:999px;background:#98a2b3;box-shadow:0 0 0 0 rgba(152,162,179,.45);animation:pulseDot 1.5s ease-in-out infinite}
 .chat-typing-bar.stalled{color:#b42318}
 .chat-typing-bar.stalled::before{background:#f97316;box-shadow:0 0 0 0 rgba(249,115,22,.45);animation:pulseDotWarn 1.2s ease-in-out infinite}
+.task-progress{display:none;margin-top:10px;padding:10px 12px;border:1px solid #d7e6f5;border-radius:10px;background:#f7fbff}
+.task-progress.visible{display:block}
+.task-progress-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px;font-size:12px;color:#3b5268}
+.task-progress-label{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-progress-count{flex:none;font-variant-numeric:tabular-nums;color:#52677b}
+.task-progress-track{height:8px;overflow:hidden;border-radius:999px;background:#dce9f5}
+.task-progress-fill{width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,#0d74ce,#3e9bff);transition:width .25s ease}
+.task-progress.completed .task-progress-fill{background:#2e7d32}
+.reasoning-summary{display:none;margin-top:10px;border:1px solid #e0e1e6;border-radius:10px;background:#fbfcfd;overflow:hidden}
+.reasoning-summary.visible{display:block}
+.reasoning-summary > summary{cursor:pointer;padding:9px 12px;font-size:12px;font-weight:650;color:#4b5563;list-style-position:inside;user-select:none}
+.reasoning-summary-count{margin-left:6px;color:#8a919b;font-weight:500}
+.reasoning-summary-note{padding:0 12px 9px;color:#8a919b;font-size:11px;line-height:1.45}
+.reasoning-summary-list{margin:0;padding:0 12px 10px 34px;border-top:1px solid #eef0f4;max-height:320px;overflow:auto}
+.reasoning-summary-item{padding:8px 0 7px 2px;color:#3f4752;font-size:12px;line-height:1.5;border-bottom:1px solid #f0f1f3}
+.reasoning-summary-item:last-child{border-bottom:none}
+.reasoning-summary-tools{display:block;margin-top:3px;color:#737b86;font-size:11px}
+.reasoning-summary-detail{display:block;margin-top:3px;color:#606975;font-size:11px}
 @keyframes pulseDot{0%,100%{transform:scale(.9);box-shadow:0 0 0 0 rgba(152,162,179,.12)}50%{transform:scale(1.15);box-shadow:0 0 0 6px rgba(152,162,179,0)}}
 @keyframes pulseDotWarn{0%,100%{transform:scale(.95);box-shadow:0 0 0 0 rgba(249,115,22,.18)}50%{transform:scale(1.2);box-shadow:0 0 0 8px rgba(249,115,22,0)}}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
@@ -237,6 +315,7 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
   </div>
   <div class="sidebar-nav">
     <div class="nav-item active" data-page-link="chat" onclick="navigate('chat')"><span class="nav-icon">&#x1F4AC;</span><span data-i18n="nav.chat">Chat</span></div>
+    <div class="nav-item" data-page-link="agent" onclick="navigate('agent')"><span class="nav-icon">&#x1F9ED;</span><span data-i18n="nav.agent">Agent 工作台</span></div>
     <div class="nav-item" data-page-link="dashboard" onclick="navigate('dashboard')"><span class="nav-icon">&#x1F4CA;</span><span data-i18n="nav.dashboard">Dashboard</span></div>
     <div class="nav-item" data-page-link="drivers" onclick="navigate('drivers')"><span class="nav-icon">&#x1F50C;</span><span data-i18n="nav.drivers">Driver Library</span></div>
     <div class="nav-item" data-page-link="skills" onclick="navigate('skills')"><span class="nav-icon">&#x1F9E0;</span><span data-i18n="nav.skills">Skill Library</span></div>
@@ -315,6 +394,23 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
   </div>
 </div>
 
+<!-- Project Agent Workspace -->
+<div data-page="agent" id="agent-page">
+  <div class="agent-toolbar">
+    <div class="page-header" style="margin-bottom:0">
+      <h1 data-i18n="agent.title">Agent 工作台</h1>
+      <p data-i18n="agent.subtitle">查看项目目标、任务依赖、能力和验收证据。</p>
+    </div>
+    <div class="agent-toolbar-actions">
+      <span id="agent-project-label" class="agent-project-label"></span>
+      <button class="btn-secondary" id="agent-refresh-btn" onclick="loadAgentWorkspace(true)" data-i18n="agent.refresh">刷新</button>
+    </div>
+  </div>
+  <div id="agent-workspace">
+    <div class="agent-empty"><strong data-i18n="agent.selectProject">请先选择项目</strong><span data-i18n="agent.selectProjectHint">从左侧项目列表选择要查看的工程。</span></div>
+  </div>
+</div>
+
 <!-- Dashboard Page -->
 <div data-page="dashboard">
   <div class="page-header">
@@ -335,6 +431,57 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
       <button id="toolchain-refresh-btn" class="btn-secondary" onclick="refreshEspIdfToolchain()" data-i18n="toolchain.refresh">重新检测</button>
       <button id="toolchain-select-btn" class="btn-primary" onclick="selectEspIdfToolchain()" data-i18n="toolchain.select">选择工具链位置</button>
     </div>
+  </div>
+  <div class="card">
+    <div class="model-config-header">
+      <div class="model-config-title">
+        <span class="model-config-icon">AI</span>
+        <div><div style="font-weight:700;font-size:15px">模型服务</div><div style="font-size:12px;color:#60646c;margin-top:4px">统一管理对话与 PDF 图片理解，保存后从下一次调用生效。</div></div>
+      </div>
+      <span id="dash-model-status" style="font-size:11px;color:#60646c"></span>
+    </div>
+    <div class="model-config-grid">
+      <section class="model-config-section">
+        <div class="model-config-section-title">对话模型</div>
+        <div class="model-config-section-note">理解需求、规划、分析代码和生成修改统一使用这个模型。</div>
+        <div class="model-field-grid">
+          <div><label class="form-label">厂商</label><select id="dash-chat-provider" class="form-input" onchange="onDashboardProviderChange('chat', true)"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="local">本地 / OpenAI 兼容</option></select></div>
+          <div><label class="form-label">模型</label><input id="dash-chat-model" class="form-input" type="text" /></div>
+          <div class="model-field-wide"><label class="form-label">上下文窗口（tokens）</label><input id="dash-chat-context-window" class="form-input" type="number" min="4096" max="2000000" step="1024" /><div class="model-route-note">达到窗口的 95% 时自动压缩早期对话；DeepSeek V4 默认 1,048,576。</div></div>
+          <div class="model-field-wide"><label class="form-label">Base URL</label><input id="dash-chat-url" class="form-input" type="text" /></div>
+          <div class="model-field-wide"><label class="form-label">API Key</label><input id="dash-chat-key" class="form-input" type="password" autocomplete="new-password" placeholder="留空表示保留已保存的 Key" /><div id="dash-chat-key-status" class="model-key-status"></div></div>
+        </div>
+      </section>
+      <section class="model-config-section">
+        <div class="model-config-section-title">PDF 图片理解</div>
+        <div class="model-config-section-note">只分析图片、原理图和时序图；PDF 文本始终由 Python 分批提取。</div>
+        <label class="form-label">路由方式</label>
+        <select id="dash-vision-mode" class="form-input" onchange="updateDashboardVisionMode()"><option value="inherit">跟随对话模型</option><option value="separate">单独配置多模态模型</option><option value="python">仅使用 PyMuPDF</option></select>
+        <div id="dash-vision-fields" class="model-field-grid" style="margin-top:10px">
+          <div><label class="form-label">厂商</label><select id="dash-vision-provider" class="form-input" onchange="onDashboardProviderChange('vision', true)"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="local">本地 / OpenAI 兼容</option></select></div>
+          <div><label class="form-label">模型</label><input id="dash-vision-model" class="form-input" type="text" placeholder="例如 Qwen3-VL-8B-Instruct" /></div>
+          <div class="model-field-wide"><label class="form-label">Base URL</label><input id="dash-vision-url" class="form-input" type="text" /></div>
+          <div class="model-field-wide"><label class="form-label">API Key</label><input id="dash-vision-key" class="form-input" type="password" autocomplete="new-password" placeholder="留空表示保留已保存的 Key" /><div id="dash-vision-key-status" class="model-key-status"></div></div>
+        </div>
+        <div id="dash-vision-route-note" class="model-route-note"></div>
+      </section>
+      <section class="model-config-section embedding">
+        <div class="model-config-section-title">项目知识库 Embedding</div>
+        <div class="model-config-section-note">与对话模型独立配置。用于把 PDF 和知识文档转换成向量，以便 RAG 检索。</div>
+        <div class="model-field-grid">
+          <div><label class="form-label">方案</label><select id="dash-embedding-mode" class="form-input" onchange="updateDashboardEmbeddingMode()"><option value="local_hash">本地 Hash（离线）</option><option value="api">独立 Embedding API</option></select></div>
+          <div><label class="form-label">向量维度</label><input id="dash-embedding-dimensions" class="form-input" type="number" min="32" max="4096" value="384" /></div>
+        </div>
+        <div id="dash-embedding-api-fields" class="model-field-grid" style="margin-top:10px">
+          <div><label class="form-label">厂商</label><select id="dash-embedding-provider" class="form-input" onchange="onDashboardEmbeddingProviderChange(true)"><option value="openai">OpenAI</option><option value="local">本地 / OpenAI 兼容</option></select></div>
+          <div><label class="form-label">模型</label><input id="dash-embedding-model" class="form-input" type="text" placeholder="例如 text-embedding-3-small" /></div>
+          <div class="model-field-wide"><label class="form-label">Base URL</label><input id="dash-embedding-url" class="form-input" type="text" /></div>
+          <div class="model-field-wide"><label class="form-label">API Key</label><input id="dash-embedding-key" class="form-input" type="password" autocomplete="new-password" placeholder="留空表示保留已保存的 Key" /><div id="dash-embedding-key-status" class="model-key-status"></div></div>
+        </div>
+        <div id="dash-embedding-note" class="model-route-note"></div>
+      </section>
+    </div>
+    <div class="model-config-footer"><button class="btn-primary" onclick="saveDashboardModelConfig()">保存模型配置</button></div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin:16px 0">
     <div class="card" style="text-align:center;padding:16px"><div style="font-size:28px;font-weight:700;color:#1c2024" id="stat-projects">-</div><div style="font-size:12px;color:#888;margin-top:4px" data-i18n="dashboard.statProjects">Projects</div></div>
@@ -513,6 +660,7 @@ const i18n = {zh:{},en:{}};
 const zh=i18n.zh, en=i18n.en;
 
 zh['nav.chat']='聊天';
+zh['nav.agent']='Agent 工作台';
 zh['nav.dashboard']='仪表盘';
 zh['nav.drivers']='驱动库';
 zh['nav.skills']='技能库';
@@ -583,6 +731,53 @@ zh['chat.lastResponseAgo']='最近响应于 {seconds} 秒前';
 zh['chat.noEventSince']='{seconds} 秒未收到新事件';
 zh['chat.toolRunningWithName']='正在调用工具：{tool}';
 zh['chat.toolRunningGeneric']='正在调用工具...';
+zh['chat.reasoningSummary']='推理摘要';
+zh['chat.reasoningSummaryNote']='展示可审计的判断、步骤、工具与证据；不包含模型私密逐字思维链。';
+zh['chat.reasoningStep']='步骤';
+zh['agent.title']='Agent 工作台';
+zh['agent.subtitle']='查看项目目标、任务依赖、能力和验收证据。';
+zh['agent.refresh']='刷新';
+zh['agent.selectProject']='请先选择项目';
+zh['agent.selectProjectHint']='从左侧项目列表选择要查看的工程。';
+zh['agent.noSnapshot']='该项目尚无工作台快照';
+zh['agent.noSnapshotHint']='运行固件或知识任务后，这里会显示目标、步骤和证据。';
+zh['agent.loadFailed']='Agent 状态加载失败';
+zh['agent.objective']='总体目标';
+zh['agent.tasks']='任务图';
+zh['agent.capabilities']='项目能力';
+zh['agent.acceptance']='验收条件';
+zh['agent.evidence']='证据';
+zh['agent.recovery']='自动纠错';
+zh['agent.trace']='执行轨迹';
+zh['agent.interactions']='交互记录';
+zh['agent.newInteraction']='追加交互';
+zh['agent.question']='提问';
+zh['agent.changeObjective']='修改目标';
+zh['agent.changePlan']='修改计划';
+zh['agent.messagePlaceholder']='输入问题或修改说明';
+zh['agent.targetPlaceholder']='目标任务 ID（可选）';
+zh['agent.submit']='提交';
+zh['agent.queued']='已加入 Agent 交互队列';
+zh['agent.submitFailed']='提交失败';
+zh['agent.status']='状态';
+zh['agent.progress']='任务进度';
+zh['agent.revision']='目标版本';
+zh['agent.taskType']='任务类型';
+zh['agent.firmwareTask']='固件工程';
+zh['agent.knowledgeTask']='知识任务';
+zh['agent.knowledgeDetails']='知识任务详情';
+zh['agent.knowledgeAction']='操作';
+zh['agent.knowledgeSummary']='说明';
+zh['agent.knowledgeQuery']='查询';
+zh['agent.knowledgeSource']='来源';
+zh['agent.knowledgeTitle']='标题';
+zh['agent.knowledgeResult']='执行结果';
+zh['agent.readOnlyHint']='知识任务请在原对话或审批卡中继续处理。';
+zh['agent.evidenceCount']='证据数量';
+zh['agent.dependencies']='依赖';
+zh['agent.noDependencies']='无';
+zh['agent.blocked']='阻塞原因';
+zh['agent.none']='暂无记录';
 zh['dashboard.subtitle']='面向 ESP-IDF 的嵌入式 AI 工程工作台：项目、工具链、构建、烧录与调试。';
 zh['dashboard.statProjects']='项目数';
 zh['dashboard.statDrivers']='驱动数';
@@ -649,6 +844,7 @@ zh['modelConfig.saved']='配置已保存';
 zh['modelConfig.saveError']='保存失败';
 zh['modelConfig.loaded']='配置已加载';
 en['nav.chat']='Chat';
+en['nav.agent']='Agent Workspace';
 en['nav.dashboard']='Dashboard';
 en['nav.drivers']='Driver Library';
 en['nav.skills']='Skill Library';
@@ -719,6 +915,53 @@ en['chat.lastResponseAgo']='Last response {seconds}s ago';
 en['chat.noEventSince']='No new events for {seconds}s';
 en['chat.toolRunningWithName']='Running tool: {tool}';
 en['chat.toolRunningGeneric']='Running tool...';
+en['chat.reasoningSummary']='Reasoning summary';
+en['chat.reasoningSummaryNote']='Shows auditable decisions, steps, tools, and evidence—not private chain-of-thought.';
+en['chat.reasoningStep']='Step';
+en['agent.title']='Agent Workspace';
+en['agent.subtitle']='Inspect project goals, task dependencies, capabilities, and acceptance evidence.';
+en['agent.refresh']='Refresh';
+en['agent.selectProject']='Select a project';
+en['agent.selectProjectHint']='Choose a project from the sidebar to inspect its Agent state.';
+en['agent.noSnapshot']='No workbench snapshot yet';
+en['agent.noSnapshotHint']='Run a firmware or knowledge task to populate goals, steps, and evidence.';
+en['agent.loadFailed']='Failed to load Agent state';
+en['agent.objective']='Objective';
+en['agent.tasks']='Task Graph';
+en['agent.capabilities']='Capabilities';
+en['agent.acceptance']='Acceptance';
+en['agent.evidence']='Evidence';
+en['agent.recovery']='Automatic Recovery';
+en['agent.trace']='Execution Trace';
+en['agent.interactions']='Interactions';
+en['agent.newInteraction']='Add Interaction';
+en['agent.question']='Question';
+en['agent.changeObjective']='Change Objective';
+en['agent.changePlan']='Change Plan';
+en['agent.messagePlaceholder']='Enter a question or change request';
+en['agent.targetPlaceholder']='Target task ID (optional)';
+en['agent.submit']='Submit';
+en['agent.queued']='Added to the Agent interaction queue';
+en['agent.submitFailed']='Submission failed';
+en['agent.status']='Status';
+en['agent.progress']='Task Progress';
+en['agent.revision']='Objective Revision';
+en['agent.taskType']='Task Type';
+en['agent.firmwareTask']='Firmware';
+en['agent.knowledgeTask']='Knowledge';
+en['agent.knowledgeDetails']='Knowledge Task Details';
+en['agent.knowledgeAction']='Action';
+en['agent.knowledgeSummary']='Summary';
+en['agent.knowledgeQuery']='Query';
+en['agent.knowledgeSource']='Source';
+en['agent.knowledgeTitle']='Title';
+en['agent.knowledgeResult']='Result';
+en['agent.readOnlyHint']='Continue knowledge tasks from the original chat or approval card.';
+en['agent.evidenceCount']='Evidence';
+en['agent.dependencies']='Depends on';
+en['agent.noDependencies']='None';
+en['agent.blocked']='Blocked';
+en['agent.none']='No records';
 en['dashboard.subtitle']='ESP-IDF embedded AI workspace for projects, toolchains, builds, flashing, and debugging.';
 en['dashboard.statProjects']='Projects';
 en['dashboard.statDrivers']='Drivers';
@@ -795,7 +1038,39 @@ let pendingProjectSelection = null;
 let projectMetaByName = {};
 let projectRoots = [];
 let espIdfToolchain = null;
+let agentSnapshotRequest = 0;
+let agentSnapshotLoading = false;
+let agentSnapshotPoll = null;
 let CHAT_STALL_THRESHOLD_MS = 45000;
+let abortController = null;
+let activeConversationRuns = {};
+let recoveryControllers = {};
+let activeAgentSessions = {};
+let continuousAgentV2Enabled = false;
+
+function conversationRunKey(project, rootIndex) {
+  return String(rootIndex) + ':' + String(project || '__global__');
+}
+
+function createClientTurnId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return 'turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+function setChatBusy(busy) {
+  var sendBtn = document.getElementById('chat-send-btn');
+  var stopBtn = document.getElementById('chat-stop-btn');
+  var project = selectedProject || '__global__';
+  var runKey = conversationRunKey(project, selectedRootIndex);
+  var canControl = !!(continuousAgentV2Enabled && activeAgentSessions[runKey]);
+  if (sendBtn) sendBtn.disabled = !!busy && !canControl;
+  if (stopBtn) {
+    stopBtn.style.display = busy && canControl ? '' : 'none';
+    stopBtn.disabled = false;
+  }
+}
 
 function t(key) { return i18n[currentLang]?.[key] || i18n['en']?.[key] || key; }
 
@@ -891,6 +1166,7 @@ function applyI18n() {
   document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
   updateNewProjectSubmitLabel();
   updateChatHeader();
+  if (document.querySelector('[data-page="agent"].active')) loadAgentWorkspace();
   if (document.getElementById('mc-provider')) updateThinkingUi();
 }
 
@@ -901,6 +1177,10 @@ function toggleLang() {
 }
 
 function navigate(page) {
+  if (agentSnapshotPoll !== null) {
+    clearInterval(agentSnapshotPoll);
+    agentSnapshotPoll = null;
+  }
   document.querySelectorAll('[data-page]').forEach(function(el) { el.classList.remove('active'); });
   var target = document.querySelector('[data-page="' + page + '"]');
   if (target) target.classList.add('active');
@@ -908,6 +1188,13 @@ function navigate(page) {
   var navItem = document.querySelector('[data-page-link="' + page + '"]');
   if (navItem) navItem.classList.add('active');
   if (page === 'dashboard') loadDashboard();
+  else if (page === 'agent') {
+    loadAgentWorkspace();
+    agentSnapshotPoll = setInterval(function() {
+      var active = document.querySelector('[data-page="agent"].active');
+      if (active && selectedProject) loadAgentWorkspace(false, true);
+    }, 2000);
+  }
   else if (page === 'drivers') loadDrivers();
   else if (page === 'skills') loadSkills();
   else if (page === 'model-config') loadModelConfig();
@@ -930,54 +1217,145 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function toolDisplayName(tool) {
+  var labels = {
+    'project.session.load': '恢复项目会话',
+    'workspace.read': '读取工程文件',
+    'workspace.read_project_files': '读取工程文件',
+    'project.inspect': '分析项目结构与已有能力',
+    'project.plan': '规划项目变更边界',
+    'agent.plan_tasks': '生成任务计划',
+    'agent.revise_plan': '修订任务计划',
+    'hardware.validate': '校验硬件资源约束',
+    'workspace.patch': '修改允许范围内的工程文件',
+    'source.validate': '校验源码和非回归约束',
+    'code_engineer.create_bundle': '生成受限代码变更',
+    'code_executor.apply': '事务式应用代码变更',
+    'source.assert': '检查源码断言',
+    'acceptance.verify': '核对验收条件',
+    'verification.run': '执行验证计划',
+    'component.test': '运行组件测试',
+    'espidf.build': '构建 ESP-IDF 工程',
+    'device.flash': '烧录开发板固件',
+    'firmware.inspect': '检查固件资源',
+    'device.monitor': '采集设备日志',
+    'protocol.probe': '执行协议探测',
+    'runtime.scenario': '执行运行时场景'
+  };
+  var name = String(tool || '');
+  return (labels[name] || '调用受控工具') + (name ? '（' + name + '）' : '');
+}
+
+function approvalList(title, values, ordered, formatter) {
+  if (!Array.isArray(values) || !values.length) return '';
+  var tag = ordered ? 'ol' : 'ul';
+  var renderValue = formatter || function (value) { return String(value); };
+  return '<div style="margin-top:10px;font-weight:600;">' + escapeHtml(title) + '</div>' +
+    '<' + tag + ' style="margin:5px 0 0 22px;padding:0;">' +
+    values.map(function (value) {
+      return '<li style="margin:3px 0;">' + escapeHtml(renderValue(value)) + '</li>';
+    }).join('') + '</' + tag + '>';
+}
+
 function renderApprovalCard(bubbleDiv, request, project) {
-  // S5 新增：烧录审批卡。只展示后端白名单字段,决定回传审批端点。
+  // 所有可恢复的人机交互共用一张卡，避免不同节点各自扮演一个“员工”。
   request = request || {};
+  var isFlash = !request.kind;
   var chip = escapeHtml(String(request.target_chip || ''));
   var rows = [
-    '<div style="font-weight:600;margin-bottom:6px;">🔏 烧录审批</div>',
-    '<div>项目：' + escapeHtml(String(request.project_name || '')) + '</div>',
-    '<div>串口：' + escapeHtml(String(request.port || '')) + '</div>'
+    '<div style="font-weight:600;margin-bottom:6px;">🔏 ' +
+      escapeHtml(String(request.title || '烧录审批')) + '</div>'
   ];
+  if (isFlash) {
+    rows.push('<div>项目：' + escapeHtml(String(request.project_name || '')) + '</div>');
+    rows.push('<div>串口：' + escapeHtml(String(request.port || '')) + '</div>');
+  }
   if (chip) rows.push('<div>芯片：' + chip + '</div>');
   rows.push('<div>说明：' + escapeHtml(String(request.summary || '')) + '</div>');
+  if (!isFlash && request.task_description) {
+    rows.push('<div style="margin-top:8px;"><strong>任务内容：</strong>' +
+      escapeHtml(String(request.task_description)) + '</div>');
+  }
+  if (!isFlash && request.operation) {
+    rows.push('<div style="margin-top:6px;"><strong>本次授权操作：</strong>' +
+      escapeHtml(toolDisplayName(request.operation)) + '</div>');
+  }
+  rows.push(approvalList('批准后将依次执行', request.planned_actions, true));
+  rows.push(approvalList('将调用的工具', request.tools, false, toolDisplayName));
+  rows.push(approvalList('影响范围', request.affected_targets, false));
+  rows.push(approvalList('完成前必须通过', request.acceptance_criteria, false));
+  rows.push(approvalList('执行中必须保持', request.preserve_conditions, false));
+  rows.push(approvalList('主要风险', request.risks, false));
+  if (request.plan && Array.isArray(request.plan.steps)) {
+    rows.push('<ol style="margin:8px 0 4px 20px;padding:0;">' +
+      request.plan.steps.map(function (step) {
+        return '<li><strong>' + escapeHtml(String(step.kind || '')) +
+          '</strong>：' + escapeHtml(String(step.description || '')) + '</li>';
+      }).join('') + '</ol>');
+  }
+  if (Array.isArray(request.questions) && request.questions.length) {
+    rows.push('<div style="margin-top:8px;">' + request.questions.map(function (q) {
+      return '<div>• ' + escapeHtml(String(q)) + '</div>';
+    }).join('') + '</div>');
+  }
+  var feedbackInput = request.allow_feedback === false ? '' :
+    '<textarea class="approval-feedback" rows="3" placeholder="可补充配置或提出计划修改意见" ' +
+    'style="box-sizing:border-box;width:100%;margin-top:8px;padding:7px;border:1px solid #d0c08c;border-radius:6px;"></textarea>';
 
   var card = document.createElement('div');
   card.className = 'approval-card';
   card.style.cssText = 'margin:8px 0;padding:10px 12px;border:1px solid #e0b84c;border-radius:8px;background:#fff8e8;';
   card.innerHTML =
-    rows.join('') +
+    rows.join('') + feedbackInput +
     '<div style="margin-top:8px;display:flex;gap:8px;">' +
-    '<button class="approval-approve-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#2e7d32;color:#fff;cursor:pointer;">批准烧录</button>' +
+    '<button class="approval-approve-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#2e7d32;color:#fff;cursor:pointer;">' +
+      (isFlash ? '批准烧录' : '批准该任务并继续') + '</button>' +
+    (isFlash ? '' : '<button class="approval-feedback-btn" style="padding:6px 14px;border:1px solid #9a7b20;border-radius:6px;background:#fff;color:#705500;cursor:pointer;">提交意见并重新规划</button>') +
     '<button class="approval-reject-btn" style="padding:6px 14px;border:none;border-radius:6px;background:#c62828;color:#fff;cursor:pointer;">拒绝</button>' +
     '</div>';
   bubbleDiv.appendChild(card);
 
   var approveBtn = card.querySelector('.approval-approve-btn');
   var rejectBtn = card.querySelector('.approval-reject-btn');
+  var feedbackBtn = card.querySelector('.approval-feedback-btn');
+  var feedbackBox = card.querySelector('.approval-feedback');
   var decided = false;
-  function decide(decision) {
+  function decide(decision, withFeedback) {
     if (decided) return;
     decided = true;
     approveBtn.disabled = true;
     rejectBtn.disabled = true;
+    if (feedbackBtn) feedbackBtn.disabled = true;
+    var feedback = withFeedback && feedbackBox ? feedbackBox.value.trim() : '';
     fetch('/api/conversations/' + encodeURIComponent(project) + '/approval', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({decision: decision, root_index: selectedRootIndex})
+      body: JSON.stringify({decision: decision, feedback: feedback, root_index: selectedRootIndex})
     }).then(function (res) {
       if (!res.ok) {
         card.innerHTML = '<div style="color:#c62828;">审批请求失败 (' + escapeHtml(String(res.status)) + ')</div>';
-        return;
+        return null;
       }
+      return res.json().catch(function () { return {}; });
+    }).then(function (payload) {
+      if (!payload) return;
       card.innerHTML = '<div style="color:#2e7d32;font-weight:600;">已' +
-        (decision === 'approve' ? '批准' : '拒绝') + '烧录,工作流继续执行…</div>';
+        (feedback ? '提交修改意见，正在重新规划' : (decision === 'approve' ? '批准，工作流继续执行…' : '取消任务')) + '</div>';
+      if (payload.status === 'resuming' && payload.turn_id) {
+        // 审批恢复在后台继续写入同一个 Turn；重新加载后复用持久化 SSE
+        // 游标接收进度和最终 token，不轮询也不重复执行工具。
+        loadConversation(project);
+      }
     }).catch(function () {
       card.innerHTML = '<div style="color:#c62828;">审批请求失败</div>';
     });
   }
   approveBtn.addEventListener('click', function () { decide('approve'); });
   rejectBtn.addEventListener('click', function () { decide('reject'); });
+  if (feedbackBtn) feedbackBtn.addEventListener('click', function () {
+    if (!feedbackBox || !feedbackBox.value.trim()) return;
+    decide('reject', true);
+  });
 }
 
 function getTaskArtifact(taskResult, key) {
@@ -994,7 +1372,10 @@ function renderTaskResultCards(taskResult) {
     if (taskResult.status === 'needs_clarification') return '';
     var statusLabels = {
       completed: '已完成',
-      failed: '执行失败'
+      failed: '执行失败',
+      waiting_input: '等待输入',
+      waiting_approval: '等待审批',
+      cancelled: '已取消'
     };
     var status = escapeHtml(statusLabels[taskResult.status] || String(taskResult.status));
     var attempts = escapeHtml(String(taskResult.attempts || 0));
@@ -1016,6 +1397,30 @@ function renderTaskResultCards(taskResult) {
     }
     if (changed.length) {
       items.push('<li><span>修改文件：</span> ' + changed.map(escapeHtml).join(', ') + '</li>');
+    }
+    var continuousTools = taskResult.tool_calls && typeof taskResult.tool_calls === 'object'
+      ? Object.values(taskResult.tool_calls) : [];
+    if (continuousTools.length) {
+      items.push('<li><span>工具调用：</span> ' + continuousTools.map(function(call) {
+        return escapeHtml(String(call.tool_name || call.call_id || 'tool')) +
+          ' · ' + escapeHtml(String(call.status || 'unknown'));
+      }).join('；') + '</li>');
+    }
+    var domainCalls = taskResult.domain_calls && typeof taskResult.domain_calls === 'object'
+      ? Object.values(taskResult.domain_calls) : [];
+    if (domainCalls.length) {
+      items.push('<li><span>领域任务：</span> ' + domainCalls.map(function(call) {
+        return escapeHtml(String(call.workflow_name || call.call_id || 'workflow')) +
+          ' · ' + escapeHtml(String(call.status || 'unknown'));
+      }).join('；') + '</li>');
+    }
+    var evidenceIds = Array.isArray(taskResult.evidence_ids) ? taskResult.evidence_ids : [];
+    if (evidenceIds.length) {
+      items.push('<li><span>证据：</span> ' + evidenceIds.map(escapeHtml).join('、') + '</li>');
+    }
+    var continuousFailure = taskResult.failure || {};
+    if (continuousFailure.message) {
+      items.push('<li><span>失败原因：</span> ' + escapeHtml(String(continuousFailure.message)) + '</li>');
     }
     return '<div class="chat-result-stack"><div class="chat-result-card"><h4>任务结果</h4><ul>' +
       items.join('') + '</ul></div></div>';
@@ -1286,6 +1691,203 @@ function renderToolOutputRefine(eventData) {
     } else {
       body.innerHTML = '';
     }
+  }
+}
+
+function agentStatusPill(value) {
+  var normalized = String(value || 'pending').toLowerCase();
+  var safeClass = ['passed','completed','verified','running','ready','active','blocked','failed','pending','inferred'].indexOf(normalized) >= 0 ? normalized : '';
+  return '<span class="agent-pill ' + safeClass + '">' + escapeHtml(normalized) + '</span>';
+}
+
+function agentSection(title, count, body) {
+  return '<section class="agent-card"><div class="agent-card-head"><div class="agent-card-title">' +
+    escapeHtml(title) + '</div><span class="agent-card-count">' + count + '</span></div>' + body + '</section>';
+}
+
+function renderAgentWorkspace(data) {
+  var container = document.getElementById('agent-workspace');
+  var label = document.getElementById('agent-project-label');
+  if (!container) return;
+  var taskType = data.task_mode === 'knowledge' ? t('agent.knowledgeTask') : t('agent.firmwareTask');
+  if (label) label.textContent = data.project + ' · ' + taskType + ' · r' + data.revision;
+  var tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  var capabilities = Array.isArray(data.capabilities) ? data.capabilities : [];
+  var acceptance = Array.isArray(data.acceptance) ? data.acceptance : [];
+  var evidence = Array.isArray(data.evidence) ? data.evidence : [];
+  var recovery = Array.isArray(data.recovery) ? data.recovery : [];
+  var interactions = Array.isArray(data.interactions) ? data.interactions : [];
+  var trace = Array.isArray(data.trace) ? data.trace : [];
+  var passedTasks = tasks.filter(function(task) { return task.status === 'passed'; }).length;
+  var blocked = data.blocked_reason
+    ? '<div class="agent-blocked"><strong>' + escapeHtml(t('agent.blocked')) + '：</strong> ' + escapeHtml(data.blocked_reason) + '</div>'
+    : '';
+  var objective = data.objective || {};
+  var objectiveBody = '<div class="agent-objective-title">' + escapeHtml(objective.title || '-') + '</div>' +
+    '<div class="agent-objective-desc">' + escapeHtml(objective.description || '') + '</div>' +
+    '<div class="agent-meta-row">' + agentStatusPill(objective.status) +
+    '<span class="agent-pill">priority ' + escapeHtml(String(objective.priority || '-')) + '</span>' +
+    ((objective.constraints || []).map(function(item) { return '<span class="agent-pill">' + escapeHtml(item) + '</span>'; }).join('')) + '</div>';
+  var taskBody = tasks.length ? '<div class="agent-task-list">' + tasks.map(function(task) {
+    var current = task.task_id === data.current_task_id ? ' current' : '';
+    var deps = task.depends_on && task.depends_on.length ? task.depends_on.join(', ') : t('agent.noDependencies');
+    return '<article class="agent-task' + current + '"><div class="agent-task-top"><div><div class="agent-task-title">' +
+      escapeHtml(task.title) + '</div><div class="agent-task-desc">' + escapeHtml(task.description) +
+      '</div></div>' + agentStatusPill(task.status) + '</div><div class="agent-task-deps">' +
+      escapeHtml(t('agent.dependencies')) + ': ' + escapeHtml(deps) + ' · ' + escapeHtml(String(task.attempts)) + '/' + escapeHtml(String(task.max_attempts)) + '</div></article>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var capabilityBody = capabilities.length ? '<div class="agent-list">' + capabilities.map(function(item) {
+    return '<div class="agent-capability"><div style="display:flex;justify-content:space-between;gap:8px"><div class="agent-item-title">' +
+      escapeHtml(item.capability_id) + '</div>' + agentStatusPill(item.status) + '</div><div class="agent-item-sub">' +
+      escapeHtml(item.kind) + ' · ' + escapeHtml(item.source_kind) + ' · confidence ' + escapeHtml(String(item.confidence)) +
+      '</div></div>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var acceptanceBody = acceptance.length ? '<div class="agent-list">' + acceptance.map(function(item) {
+    return '<div class="agent-evidence"><div style="display:flex;justify-content:space-between;gap:8px"><div class="agent-item-title">' +
+      escapeHtml(item.description) + '</div>' + agentStatusPill(item.status) + '</div><div class="agent-item-sub">' +
+      escapeHtml(item.verification_kind) + ' · ' + escapeHtml((item.evidence_ids || []).join(', ') || t('agent.none')) + '</div></div>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var evidenceBody = evidence.length ? '<div class="agent-list">' + evidence.map(function(item) {
+    return '<div class="agent-evidence"><div class="agent-item-title mono">' + escapeHtml(item.evidence_id) +
+      '</div><div class="agent-item-sub">' + escapeHtml(item.kind) + ' · ' + escapeHtml((item.accepted_by || []).join(', ') || t('agent.none')) + '</div></div>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var recoveryBody = recovery.length ? '<div class="agent-list">' + recovery.map(function(item) {
+    return '<div class="agent-recovery"><div style="display:flex;justify-content:space-between;gap:8px"><div class="agent-item-title">' +
+      escapeHtml(item.category) + ' · attempt ' + escapeHtml(String(item.attempt)) + '</div>' + (item.repeated ? agentStatusPill('blocked') : '') +
+      '</div><div class="agent-item-sub">' + escapeHtml(item.message) + '</div></div>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var interactionBody = interactions.length ? '<div class="agent-list">' + interactions.slice().reverse().map(function(item) {
+    return '<div class="agent-interaction"><div class="agent-item-title">' + escapeHtml(item.kind) +
+      '</div><div class="agent-item-sub">' + escapeHtml(String((item.payload || {}).message || '')) + '</div></div>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var traceLabels = {
+    load_project_session: '恢复项目会话', supervisor: 'Supervisor 决策',
+    project_inspector: '检查工程结构和已有能力', hardware_validator: '验证硬件资源约束',
+    architecture_planner: '生成执行计划', task_executor: '执行任务',
+    acceptance_verifier: '核对验收条件', answer_user: '等待用户补充信息',
+    complete_objective: '完成项目目标', degrade_capability: '能力降级',
+    fail_objective: '项目目标失败', runner_error: '运行边界终止'
+  };
+  var traceBody = trace.length ? '<div class="agent-list">' + trace.map(function(node, index) {
+    var label = traceLabels[node] || node;
+    return '<div class="agent-evidence"><div class="agent-item-title">第 ' + (index + 1) + ' 步 · ' +
+      escapeHtml(label) + '</div><div class="agent-item-sub mono">' + escapeHtml(node) + '</div></div>';
+  }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+  var knowledgeBody = '';
+  if (data.task_mode === 'knowledge') {
+    var knowledgeTask = data.knowledge_task || {};
+    var knowledgeResult = data.knowledge_result || {};
+    var detailRows = [
+      [t('agent.knowledgeAction'), knowledgeTask.action],
+      [t('agent.knowledgeSummary'), knowledgeTask.summary],
+      [t('agent.knowledgeQuery'), knowledgeTask.query],
+      [t('agent.knowledgeSource'), knowledgeTask.source_uri || knowledgeTask.relative_path || knowledgeTask.file_path],
+      [t('agent.knowledgeTitle'), knowledgeTask.title]
+    ].filter(function(row) { return row[1] !== undefined && row[1] !== null && String(row[1]).trim(); });
+    var resultRows = Object.keys(knowledgeResult).map(function(key) {
+      var value = knowledgeResult[key];
+      if (Array.isArray(value)) value = value.join('、');
+      return [key, value];
+    }).filter(function(row) { return row[1] !== undefined && row[1] !== null && String(row[1]).trim(); });
+    var renderRows = function(rows) {
+      return rows.length ? '<div class="agent-list">' + rows.map(function(row) {
+        return '<div class="agent-evidence"><div class="agent-item-title">' + escapeHtml(row[0]) +
+          '</div><div class="agent-item-sub">' + escapeHtml(String(row[1])) + '</div></div>';
+      }).join('') + '</div>' : '<div class="agent-item-sub">' + escapeHtml(t('agent.none')) + '</div>';
+    };
+    knowledgeBody = agentSection(t('agent.knowledgeDetails'), detailRows.length, renderRows(detailRows)) +
+      agentSection(t('agent.knowledgeResult'), resultRows.length, renderRows(resultRows));
+  }
+  var form = data.supports_interactions === false
+    ? '<section class="agent-card"><div class="agent-item-sub">' + escapeHtml(t('agent.readOnlyHint')) + '</div></section>'
+    : '<section class="agent-card"><div class="agent-card-head"><div class="agent-card-title">' + escapeHtml(t('agent.newInteraction')) +
+    '</div></div><div class="agent-interaction-form"><select id="agent-interaction-kind"><option value="question">' + escapeHtml(t('agent.question')) +
+    '</option><option value="change_objective">' + escapeHtml(t('agent.changeObjective')) + '</option><option value="change_plan">' +
+    escapeHtml(t('agent.changePlan')) + '</option></select><textarea id="agent-interaction-message" maxlength="8000" placeholder="' +
+    escapeHtml(t('agent.messagePlaceholder')) + '"></textarea><input id="agent-interaction-target" maxlength="240" placeholder="' +
+    escapeHtml(t('agent.targetPlaceholder')) + '"/><div class="agent-form-footer"><span id="agent-interaction-status" class="agent-form-status"></span>' +
+    '<button id="agent-interaction-submit" class="btn-primary" onclick="submitAgentInteraction()">' + escapeHtml(t('agent.submit')) + '</button></div></div></section>';
+  container.innerHTML = blocked + '<div class="agent-summary-grid">' +
+    '<div class="agent-summary"><div class="agent-summary-label">' + escapeHtml(t('agent.status')) + '</div><div class="agent-summary-value">' + escapeHtml(data.status) + '</div></div>' +
+    '<div class="agent-summary"><div class="agent-summary-label">' + escapeHtml(t('agent.progress')) + '</div><div class="agent-summary-value">' + passedTasks + ' / ' + tasks.length + '</div></div>' +
+    '<div class="agent-summary"><div class="agent-summary-label">' + escapeHtml(t('agent.taskType')) + '</div><div class="agent-summary-value">' + escapeHtml(taskType) + '</div></div>' +
+    '<div class="agent-summary"><div class="agent-summary-label">' + escapeHtml(t('agent.evidenceCount')) + '</div><div class="agent-summary-value">' + evidence.length + '</div></div></div>' +
+    '<div class="agent-layout"><div class="agent-column">' + agentSection(t('agent.objective'), 1, objectiveBody) +
+    agentSection(t('agent.tasks'), tasks.length, taskBody) + agentSection(t('agent.trace'), trace.length, traceBody) + agentSection(t('agent.acceptance'), acceptance.length, acceptanceBody) +
+    agentSection(t('agent.recovery'), recovery.length, recoveryBody) + '</div><div class="agent-column">' +
+    knowledgeBody + agentSection(t('agent.capabilities'), capabilities.length, capabilityBody) + agentSection(t('agent.evidence'), evidence.length, evidenceBody) +
+    agentSection(t('agent.interactions'), interactions.length, interactionBody) + form + '</div></div>';
+}
+
+async function loadAgentWorkspace(force, quiet) {
+  var container = document.getElementById('agent-workspace');
+  var label = document.getElementById('agent-project-label');
+  var button = document.getElementById('agent-refresh-btn');
+  if (!container) return;
+  if (!selectedProject) {
+    if (label) label.textContent = '';
+    container.innerHTML = '<div class="agent-empty"><strong>' + escapeHtml(t('agent.selectProject')) + '</strong><span>' + escapeHtml(t('agent.selectProjectHint')) + '</span></div>';
+    return;
+  }
+  if (agentSnapshotLoading && !force) return;
+  var requestId = ++agentSnapshotRequest;
+  var project = selectedProject;
+  var rootIndex = selectedRootIndex;
+  agentSnapshotLoading = true;
+  if (button && !quiet) button.disabled = true;
+  if (label) label.textContent = project;
+  if (!quiet) container.innerHTML = '<div class="agent-empty"><strong>' + escapeHtml(t('sidebar.loading')) + '</strong></div>';
+  try {
+    var response = await fetch('/api/projects/' + encodeURIComponent(project) + '/agent?root_index=' + rootIndex);
+    if (requestId !== agentSnapshotRequest || project !== selectedProject || rootIndex !== selectedRootIndex) return;
+    if (response.status === 404) {
+      container.innerHTML = '<div class="agent-empty"><strong>' + escapeHtml(t('agent.noSnapshot')) + '</strong><span>' + escapeHtml(t('agent.noSnapshotHint')) + '</span></div>';
+      return;
+    }
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
+    renderAgentWorkspace(data);
+  } catch(error) {
+    if (requestId === agentSnapshotRequest) {
+      container.innerHTML = '<div class="agent-empty"><strong>' + escapeHtml(t('agent.loadFailed')) + '</strong><span>' + escapeHtml(error.message || '') + '</span></div>';
+    }
+  } finally {
+    if (requestId === agentSnapshotRequest) agentSnapshotLoading = false;
+    if (button && !quiet) button.disabled = false;
+  }
+}
+
+async function submitAgentInteraction() {
+  if (!selectedProject) return;
+  var kind = document.getElementById('agent-interaction-kind');
+  var message = document.getElementById('agent-interaction-message');
+  var target = document.getElementById('agent-interaction-target');
+  var status = document.getElementById('agent-interaction-status');
+  var button = document.getElementById('agent-interaction-submit');
+  var text = message ? message.value.trim() : '';
+  if (!text) {
+    if (status) status.textContent = t('agent.messagePlaceholder');
+    return;
+  }
+  var payload = {kind: kind.value, message: text, root_index: selectedRootIndex};
+  if (target && target.value.trim()) payload.target_id = target.value.trim();
+  if (button) button.disabled = true;
+  if (status) status.textContent = t('sidebar.loading');
+  try {
+    var response = await fetch('/api/projects/' + encodeURIComponent(selectedProject) + '/agent/interactions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
+    if (status) status.textContent = t('agent.queued');
+    if (message) message.value = '';
+    await loadAgentWorkspace(true);
+  } catch(error) {
+    if (status) status.textContent = t('agent.submitFailed') + ': ' + error.message;
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -1574,8 +2176,17 @@ var res = await fetch('/api/conversations/' + encodeURIComponent(targetProject) 
 async function clearConversation() {
   var project = selectedProject || '__global__';
   try {
-    await fetch('/api/conversations/' + encodeURIComponent(project) + '/reset?root_index=' + selectedRootIndex, { method: 'POST' });
-  } catch(e) {}
+    var response = await fetch('/api/conversations/' + encodeURIComponent(project) + '/reset?root_index=' + selectedRootIndex, { method: 'POST' });
+    if (!response.ok) {
+      var payload = await response.json().catch(function() { return {}; });
+      alert(payload.detail || '当前任务仍在运行，无法清空对话');
+      return;
+    }
+    var resetPayload = await response.json().catch(function() { return {}; });
+    var runKey = conversationRunKey(project, selectedRootIndex);
+    if (resetPayload.session_id) activeAgentSessions[runKey] = resetPayload.session_id;
+    else delete activeAgentSessions[runKey];
+  } catch(e) { return; }
   var container = document.getElementById('chat-messages');
   if (!selectedProject) {
     loadChatWelcome();
@@ -1586,24 +2197,56 @@ async function clearConversation() {
 
 async function loadConversation(project) {
   var container = document.getElementById('chat-messages');
+  var rootIndex = selectedRootIndex;
+  var runKey = conversationRunKey(project, rootIndex);
   container.innerHTML = '<div class="empty-state">' + t('sidebar.loading') + '</div>';
   try {
-    var data = await apiGet('/api/conversations/' + encodeURIComponent(project) + '?root_index=' + selectedRootIndex);
+    var data = await apiGet('/api/conversations/' + encodeURIComponent(project) + '?root_index=' + rootIndex);
+    if (selectedProject !== project || selectedRootIndex !== rootIndex) return;
+    continuousAgentV2Enabled = !!data.continuous_agent_v2;
+    if (data.session_id) activeAgentSessions[runKey] = data.session_id;
+    else if (data.continuous_agent_v2) delete activeAgentSessions[runKey];
     var msgs = data.messages || [];
     container.innerHTML = '';
-    if (!msgs.length) {
+    if (!msgs.length && !data.active_run) {
       container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
     } else {
       msgs.forEach(function(m) {
         if (shouldRenderChatMessage(m)) appendChatBubble(m.role, m.content);
       });
-      if (!container.children.length) {
+      if (!container.children.length && !data.active_run) {
         container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
       }
     }
+    if (data.active_run) {
+      var activeRun = data.active_run;
+      appendChatBubble('user', activeRun.user_message || '');
+      var view = createStreamingConversationView(container, activeRun.assistant_content || '');
+      view.statusController.setState(
+        activeRun.status === 'pending_approval' ? 'thinking' : 'tool_running',
+        {toolName: activeRun.live ? '恢复任务输出' : '连接任务输出'}
+      );
+      if (activeRun.pending_approval) {
+        renderApprovalCard(view.bubbleDiv, activeRun.pending_approval, project);
+      }
+      if (activeRun.progress) {
+        view.progressController.update(activeRun.progress);
+        view.reasoningController.update(activeRun.progress);
+      }
+      recoverConversationRun(project, rootIndex, activeRun, view);
+    } else {
+      delete activeConversationRuns[runKey];
+      if (recoveryControllers[runKey]) {
+        recoveryControllers[runKey].abort();
+        delete recoveryControllers[runKey];
+      }
+      setChatBusy(false);
+    }
     container.scrollTop = container.scrollHeight;
   } catch(e) {
-    container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
+    if (selectedProject === project && selectedRootIndex === rootIndex) {
+      container.innerHTML = '<div class="chat-welcome"><h2>' + t('chat.welcomeTitle') + '</h2><p>' + t('chat.welcomeDesc') + '</p></div>';
+    }
   }
 }
 
@@ -1639,7 +2282,333 @@ function appendChatBubble(role, content, isHtml) {
   return div;
 }
 
-function stopGeneration() {
+function createTaskProgressController(bubbleDiv, beforeNode) {
+  var wrapper = document.createElement('div');
+  wrapper.className = 'task-progress';
+  wrapper.innerHTML = '<div class="task-progress-head"><span class="task-progress-label"></span>' +
+    '<span class="task-progress-count"></span></div><div class="task-progress-track" role="progressbar" ' +
+    'aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="task-progress-fill"></div></div>';
+  bubbleDiv.insertBefore(wrapper, beforeNode || null);
+  var label = wrapper.querySelector('.task-progress-label');
+  var count = wrapper.querySelector('.task-progress-count');
+  var track = wrapper.querySelector('.task-progress-track');
+  var fill = wrapper.querySelector('.task-progress-fill');
+
+  function update(data) {
+    if (!data || data.progress_type !== 'pdf') return;
+    var current = Math.max(0, Number(data.current || 0));
+    var total = Math.max(0, Number(data.total || 0));
+    var percent = total > 0 ? Math.min(100, Math.round(current * 100 / total)) : 0;
+    wrapper.classList.add('visible');
+    wrapper.classList.toggle('completed', data.phase === 'completed' || (total > 0 && current >= total));
+    label.textContent = String(data.message || '正在读取 PDF');
+    count.textContent = total > 0 ? (current + ' / ' + total + ' 页 · ' + percent + '%') : '正在打开 PDF';
+    fill.style.width = percent + '%';
+    track.setAttribute('aria-valuenow', String(percent));
+    track.setAttribute('aria-label', label.textContent);
+  }
+
+  function reset() {
+    wrapper.className = 'task-progress';
+    fill.style.width = '0%';
+    track.setAttribute('aria-valuenow', '0');
+  }
+
+  return {update: update, reset: reset};
+}
+
+function createReasoningSummaryController(bubbleDiv, beforeNode) {
+  var wrapper = document.createElement('details');
+  wrapper.className = 'reasoning-summary';
+  var summary = document.createElement('summary');
+  var title = document.createElement('span');
+  title.textContent = t('chat.reasoningSummary');
+  var count = document.createElement('span');
+  count.className = 'reasoning-summary-count';
+  summary.appendChild(title);
+  summary.appendChild(count);
+  var note = document.createElement('div');
+  note.className = 'reasoning-summary-note';
+  note.textContent = t('chat.reasoningSummaryNote');
+  var list = document.createElement('ol');
+  list.className = 'reasoning-summary-list';
+  wrapper.appendChild(summary);
+  wrapper.appendChild(note);
+  wrapper.appendChild(list);
+  bubbleDiv.insertBefore(wrapper, beforeNode || null);
+  var entries = [];
+
+  function renderEntry(entry, index, existingNode) {
+    var item = existingNode || document.createElement('li');
+    item.className = 'reasoning-summary-item';
+    item.textContent = t('chat.reasoningStep') + ' ' + (index + 1) + ' · ' + entry.label;
+    if (entry.detail) {
+      var detail = document.createElement('span');
+      detail.className = 'reasoning-summary-detail';
+      detail.textContent = entry.detail;
+      item.appendChild(detail);
+    }
+    if (entry.tools.length) {
+      var tools = document.createElement('span');
+      tools.className = 'reasoning-summary-tools';
+      tools.textContent = entry.tools.map(toolDisplayName).join('、');
+      item.appendChild(tools);
+    }
+    return item;
+  }
+
+  function update(data) {
+    if (!data || data.phase === 'heartbeat') return;
+    var label = String(data.message || data.stage || '').trim();
+    if (!label) return;
+    var tools = Array.isArray(data.tools) ? data.tools.map(String) : [];
+    var detail = String(data.detail || '').trim();
+    var replaceable = data.progress_type === 'pdf'
+      ? 'pdf:' + String(data.stage || '') + ':' + String(data.phase || '')
+      : '';
+    var entry = {label: label, detail: detail, tools: tools, replaceable: replaceable};
+    if (replaceable && entries.length && entries[entries.length - 1].replaceable === replaceable) {
+      entries[entries.length - 1] = entry;
+      var last = list.lastElementChild;
+      if (last) renderEntry(entry, entries.length - 1, last);
+    } else {
+      var signature = [data.stage, data.phase, data.attempts, label, detail, tools.join('|')].join('::');
+      if (entries.some(function(item) { return item.signature === signature; })) return;
+      entry.signature = signature;
+      entries.push(entry);
+      list.appendChild(renderEntry(entry, entries.length - 1));
+      if (entries.length > 80) {
+        entries.shift();
+        if (list.firstElementChild) list.removeChild(list.firstElementChild);
+        Array.prototype.forEach.call(list.children, function(node, index) {
+          renderEntry(entries[index], index, node);
+        });
+      }
+    }
+    wrapper.classList.add('visible');
+    count.textContent = '(' + entries.length + ')';
+  }
+
+  function reset() {
+    entries = [];
+    list.innerHTML = '';
+    count.textContent = '';
+    wrapper.className = 'reasoning-summary';
+    wrapper.open = false;
+  }
+
+  return {update: update, reset: reset};
+}
+
+function createStreamingConversationView(container, initialContent) {
+  var bubbleDiv = document.createElement('div');
+  bubbleDiv.className = 'chat-bubble assistant';
+  var mdDiv = document.createElement('div');
+  mdDiv.className = 'md';
+  bubbleDiv.appendChild(mdDiv);
+  var resultDiv = document.createElement('div');
+  bubbleDiv.appendChild(resultDiv);
+  var typingDiv = document.createElement('div');
+  typingDiv.className = 'chat-typing-bar';
+  bubbleDiv.appendChild(typingDiv);
+  container.appendChild(bubbleDiv);
+  var view = {
+    bubbleDiv: bubbleDiv,
+    mdDiv: mdDiv,
+    resultDiv: resultDiv,
+    typingDiv: typingDiv,
+    container: container,
+    streamContent: String(initialContent || ''),
+    statusController: createChatStatusController(typingDiv),
+    editedFilesController: null,
+    progressController: null,
+    reasoningController: null
+  };
+  view.editedFilesController = createEditedFilesController(bubbleDiv, container);
+  view.progressController = createTaskProgressController(bubbleDiv, typingDiv);
+  view.reasoningController = createReasoningSummaryController(bubbleDiv, typingDiv);
+  if (view.streamContent) renderStreamMarkdown(mdDiv, view.streamContent, container);
+  return view;
+}
+
+function setToolRunningFromProgress(statusController, data) {
+  var tools = data && Array.isArray(data.tools) ? data.tools : [];
+  if (tools.length) {
+    statusController.setState('tool_running', {toolName: tools.map(toolDisplayName).join('、')});
+    return;
+  }
+  // 旧服务或已持久化的心跳可能没有 tools。心跳只表示调用仍然活跃，
+  // 不应使用通用等待文案覆盖上一条已知的工具名称。
+  if (data && data.phase === 'heartbeat') {
+    statusController.setState('tool_running');
+    return;
+  }
+  statusController.setState(
+    'tool_running',
+    {toolName: ((data && (data.message || data.stage)) || '')}
+  );
+}
+
+function parseConversationEventData(dataText) {
+  if (dataText === '[DONE]') return dataText;
+  try { return JSON.parse(dataText); } catch (e) { return dataText; }
+}
+
+function applyConversationStreamEvent(view, eventName, dataText, project) {
+  var data = parseConversationEventData(dataText);
+  view.statusController.markEvent();
+  if (eventName === 'turn_status') {
+    var turnState = data && data.status;
+    if (turnState === 'running') {
+      view.statusController.setState('thinking');
+    }
+  } else if (eventName === 'token') {
+    var token = data && typeof data === 'object' ? (data.token || data.content || '') : '';
+    if (token) {
+      view.statusController.setState('streaming');
+      view.streamContent += token;
+      renderStreamMarkdown(view.mdDiv, view.streamContent, view.container);
+    }
+  } else if (eventName === 'progress') {
+    view.progressController.update(data);
+    view.reasoningController.update(data);
+    setToolRunningFromProgress(view.statusController, data);
+  } else if (eventName === 'approval') {
+    renderApprovalCard(view.bubbleDiv, (data && data.request) || {}, project);
+  } else if (eventName === 'result') {
+    view.resultDiv.innerHTML = renderTaskResultCards(data);
+  } else if (eventName === 'tool_output') {
+    if (isEditableToolOutput(data)) view.editedFilesController.add(data);
+    else if (shouldRenderVerboseToolOutput(data)) renderToolOutput(view.bubbleDiv, data, view.container);
+  } else if (eventName === 'tool_output_refine') {
+    if (!view.editedFilesController.refine(data)) renderToolOutputRefine(data);
+  } else if (eventName === 'tool_result') {
+    view.statusController.setState('tool_running', {toolName: (data && (data.tool_name || data.workflow_name || data.call_id)) || ''});
+  } else if (eventName === 'tool_call' || eventName === 'tool_running' || eventName === 'phase_changed' || eventName === 'skill_loaded') {
+    view.statusController.setState('tool_running', {toolName: (data && (data.tool_call || data.tool || data.phase || data.name)) || ''});
+  } else if (eventName === 'warning' || eventName === 'escalation_triggered') {
+    var warning = data && (data.warning || data.reason || data.message);
+    if (warning) {
+      view.streamContent += '\n\n_' + warning + '_\n\n';
+      renderStreamMarkdown(view.mdDiv, view.streamContent, view.container);
+    }
+  } else if (eventName === 'log' && data && data.message && data.success === false) {
+    view.streamContent += '\n\n❌ ' + data.message + '\n\n';
+    renderStreamMarkdown(view.mdDiv, view.streamContent, view.container);
+  } else if (eventName === 'reset_output') {
+    view.streamContent = '';
+    view.mdDiv.innerHTML = '';
+    view.resultDiv.innerHTML = '';
+    view.editedFilesController.reset();
+    view.progressController.reset();
+    view.reasoningController.reset();
+  } else if (eventName === 'error') {
+    var message = data && (data.message || data.error) || 'unknown';
+    view.streamContent += '\n\n_' + t('chat.error') + ': ' + message + '_\n\n';
+    renderStreamMarkdown(view.mdDiv, view.streamContent, view.container);
+    view.statusController.finish('error');
+  }
+  view.container.scrollTop = view.container.scrollHeight;
+}
+
+async function recoverConversationRun(project, rootIndex, activeRun, view) {
+  var runKey = conversationRunKey(project, rootIndex);
+  var existing = activeConversationRuns[runKey];
+  if (existing && existing.mode === 'primary' && existing.threadId === activeRun.thread_id && abortController) {
+    abortController.abort();
+  }
+  if (recoveryControllers[runKey]) recoveryControllers[runKey].abort();
+  var controller = new AbortController();
+  recoveryControllers[runKey] = controller;
+  activeConversationRuns[runKey] = {threadId: activeRun.thread_id, mode: 'recovery'};
+  if (selectedProject === project && selectedRootIndex === rootIndex) setChatBusy(true);
+  var cursor = Number(activeRun.last_sequence || 0);
+  var completed = false;
+  try {
+    while (!controller.signal.aborted && !completed) {
+      try {
+        var url = '/api/conversations/' + encodeURIComponent(project) + '/streams/' + encodeURIComponent(activeRun.thread_id) +
+          '?root_index=' + rootIndex + '&after_sequence=' + cursor;
+        var response = await fetch(url, {headers: {'Accept': 'text/event-stream'}, signal: controller.signal});
+        if (response.status === 404) {
+          completed = true;
+          break;
+        }
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var eventName = '';
+        var eventId = '';
+        while (!completed) {
+          var part = await reader.read();
+          buffer += decoder.decode(part.value || new Uint8Array(), {stream: !part.done});
+          var boundary;
+          while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+            var frame = buffer.slice(0, boundary).replace(/\r/g, '');
+            buffer = buffer.slice(boundary + 2);
+            var dataLines = [];
+            eventName = '';
+            eventId = '';
+            frame.split('\n').forEach(function(line) {
+              if (line.startsWith('id:')) eventId = line.slice(3).trim();
+              else if (line.startsWith('event:')) eventName = line.slice(6).trim();
+              else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+            });
+            if (eventId) cursor = Math.max(cursor, Number(eventId) || cursor);
+            var dataText = dataLines.join('\n');
+            if (eventName === 'done') {
+              completed = true;
+              view.statusController.finish('done');
+              break;
+            }
+            if (eventName) applyConversationStreamEvent(view, eventName, dataText, project);
+          }
+          if (part.done) break;
+        }
+        if (!completed) await new Promise(function(resolve) { setTimeout(resolve, 750); });
+      } catch (e) {
+        if (e.name === 'AbortError') break;
+        view.statusController.setState('tool_running', {toolName: '正在重新连接任务输出'});
+        await new Promise(function(resolve) { setTimeout(resolve, 1000); });
+      }
+    }
+  } finally {
+    if (completed && activeConversationRuns[runKey] && activeConversationRuns[runKey].threadId === activeRun.thread_id) {
+      delete activeConversationRuns[runKey];
+      delete recoveryControllers[runKey];
+      if (selectedProject === project && selectedRootIndex === rootIndex) {
+        setChatBusy(false);
+        loadConversation(project);
+      }
+    }
+  }
+}
+
+async function stopGeneration() {
+  var project = selectedProject || '__global__';
+  var rootIndex = selectedRootIndex;
+  var runKey = conversationRunKey(project, rootIndex);
+  var sessionId = activeAgentSessions[runKey];
+  if (continuousAgentV2Enabled && activeConversationRuns[runKey] && sessionId) {
+    var stopBtn = document.getElementById('chat-stop-btn');
+    if (stopBtn) stopBtn.disabled = true;
+    try {
+      var response = await fetch('/api/conversations/' + encodeURIComponent(project) + '/cancel', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: sessionId, root_index: rootIndex})
+      });
+      if (!response.ok) {
+        var payload = await response.json().catch(function() { return {}; });
+        throw new Error(payload.detail || ('HTTP ' + response.status));
+      }
+    } catch (error) {
+      alert(t('chat.error') + ' ' + error.message);
+      if (stopBtn) stopBtn.disabled = false;
+    }
+    return;
+  }
   if (abortController) {
     abortController.abort();
     abortController = null;
@@ -1695,6 +2664,39 @@ async function sendMessage() {
   var input = document.getElementById('chat-input');
   var text = input.value.trim();
   if (!text) return;
+  var project = selectedProject || '__global__';
+  var rootIndex = selectedRootIndex;
+  var runKey = conversationRunKey(project, rootIndex);
+
+  if (activeConversationRuns[runKey]) {
+    var runningSessionId = activeAgentSessions[runKey];
+    if (!continuousAgentV2Enabled || !runningSessionId) return;
+    input.value = '';
+    input.style.height = 'auto';
+    appendChatBubble('user', text);
+    try {
+      var steeringResponse = await fetch(
+        '/api/conversations/' + encodeURIComponent(project) + '/steer',
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            message: text,
+            client_steering_id: createClientTurnId(),
+            session_id: runningSessionId,
+            root_index: rootIndex
+          })
+        }
+      );
+      if (!steeringResponse.ok) {
+        var steeringError = await steeringResponse.json().catch(function() { return {}; });
+        throw new Error(steeringError.detail || ('HTTP ' + steeringResponse.status));
+      }
+    } catch (error) {
+      appendChatBubble('assistant', t('chat.error') + ' ' + error.message);
+    }
+    return;
+  }
 
   // Handle /clear command
   if (text === '/clear') {
@@ -1712,9 +2714,8 @@ async function sendMessage() {
 
   var sendBtn = document.getElementById('chat-send-btn');
   var stopBtn = document.getElementById('chat-stop-btn');
-  sendBtn.disabled = true;
-  // 当前 Web 合同没有真正的后台取消能力，不能把断开请求冒充为取消构建。
-  stopBtn.style.display = 'none';
+  activeConversationRuns[runKey] = {threadId: null, mode: 'primary'};
+  setChatBusy(true);
 
   // Create assistant bubble for streaming
   var container = document.getElementById('chat-messages');
@@ -1734,11 +2735,13 @@ async function sendMessage() {
   var streamContent = '';
   var statusController = createChatStatusController(typingDiv);
   var editedFilesController = createEditedFilesController(bubbleDiv, container);
+  var progressController = createTaskProgressController(bubbleDiv, typingDiv);
+  var reasoningController = createReasoningSummaryController(bubbleDiv, typingDiv);
   statusController.setState('thinking');
 
-  abortController = new AbortController();
+  var requestController = new AbortController();
+  abortController = requestController;
   try {
-    var project = selectedProject || '__global__';
     var portSelect = document.getElementById('serial-port-select');
     var res = await fetch('/api/conversations/' + encodeURIComponent(project), {
       method: 'POST',
@@ -1746,18 +2749,28 @@ async function sendMessage() {
       body: JSON.stringify({
         message: text,
         stream: true,
+        session_id: activeAgentSessions[runKey] || null,
+        client_turn_id: createClientTurnId(),
         max_attempts: 3,
         allow_dependency_downloads: false,
-        root_index: selectedRootIndex,
+        root_index: rootIndex,
         serial_port: (portSelect && portSelect.value) ? portSelect.value : null
       }),
-      signal: abortController.signal
+      signal: requestController.signal
     });
     if (!res.ok) {
       var errText = await res.text();
       mdDiv.innerHTML = '<p>' + t('chat.error') + ' ' + res.status + ': ' + errText + '</p>';
       statusController.finish('error');
+      delete activeConversationRuns[runKey];
+      setChatBusy(false);
       return;
+    }
+    var responseThreadId = res.headers.get('X-LUXAR-Thread-ID');
+    var responseSessionId = res.headers.get('X-LUXAR-Session-ID');
+    if (responseSessionId) activeAgentSessions[runKey] = responseSessionId;
+    if (responseThreadId) {
+      activeConversationRuns[runKey] = {threadId: responseThreadId, mode: 'primary'};
     }
     var reader = res.body.getReader();
     var decoder = new TextDecoder();
@@ -1795,10 +2808,17 @@ async function sendMessage() {
         } else if (line.startsWith('data: ')) {
           var dataStr = line.slice(6).trim();
           statusController.markEvent();
-          if (currentEvent === 'progress') {
+          if (currentEvent === 'turn_status') {
+            try {
+              var turnStatusChunk = JSON.parse(dataStr);
+              if (turnStatusChunk.status === 'running') statusController.setState('thinking');
+            } catch(e) {}
+          } else if (currentEvent === 'progress') {
             try {
               var progressChunk = JSON.parse(dataStr);
-              statusController.setState('tool_running', {toolName: progressChunk.message || progressChunk.stage || ''});
+              progressController.update(progressChunk);
+              reasoningController.update(progressChunk);
+              setToolRunningFromProgress(statusController, progressChunk);
             } catch(e) {}
           } else if (currentEvent === 'approval') {
             try {
@@ -1824,6 +2844,7 @@ async function sendMessage() {
           } else if (currentEvent === 'tool_result') {
             try {
               var toolChunk = JSON.parse(dataStr);
+              statusController.setState('tool_running', {toolName: toolChunk.tool_name || toolChunk.workflow_name || toolChunk.call_id || ''});
               var createdProjectName = extractProjectNameFromToolResult(toolChunk.tool, toolChunk.result);
               if (createdProjectName) pendingProjectSelection = createdProjectName;
             } catch(e) {}
@@ -1930,6 +2951,8 @@ pendingProjectSelection = pname;
             mdDiv.innerHTML = '';
             resultDiv.innerHTML = '';
             editedFilesController.reset();
+            progressController.reset();
+            reasoningController.reset();
           } else if (currentEvent === 'error') {
             try {
               var chunk = JSON.parse(dataStr);
@@ -1939,6 +2962,9 @@ pendingProjectSelection = pname;
             statusController.finish('error');
           } else if (currentEvent === 'done') {
             statusController.finish('done');
+            if (activeConversationRuns[runKey] && activeConversationRuns[runKey].mode === 'primary') {
+              delete activeConversationRuns[runKey];
+            }
             if (pendingProjectSelection) {
               var projectToOpen = pendingProjectSelection;
               pendingProjectSelection = null;
@@ -1955,19 +2981,24 @@ pendingProjectSelection = pname;
   } catch(e) {
     if (e.name === 'AbortError') {
       statusController.finish('stopped');
-      if (streamContent) {
+      if (streamContent && (!activeConversationRuns[runKey] || activeConversationRuns[runKey].mode !== 'recovery')) {
         streamContent += '\n\n_(' + t('chat.stop') + ')_';
         mdDiv.innerHTML = marked.parse(streamContent);
       }
+    } else if (activeConversationRuns[runKey]) {
+      statusController.setState('tool_running', {toolName: '正在重新连接任务输出'});
     } else {
       statusController.finish('error');
       mdDiv.innerHTML = '<p>' + t('chat.error') + ' ' + e.message + '</p>';
     }
   }
-  sendBtn.disabled = false;
-  stopBtn.style.display = 'none';
+  if (activeConversationRuns[runKey] && activeConversationRuns[runKey].mode === 'primary' &&
+      selectedProject === project && selectedRootIndex === rootIndex) {
+    loadConversation(project);
+  }
+  setChatBusy(!!activeConversationRuns[runKey]);
   statusController.finish('done');
-  abortController = null;
+  if (abortController === requestController) abortController = null;
   loadSidebarProjects();
 }
 
@@ -2034,7 +3065,7 @@ async function selectEspIdfToolchain() {
 }
 
 async function loadDashboard() {
-  await loadEspIdfToolchain();
+  await Promise.all([loadEspIdfToolchain(), loadDashboardModelConfig()]);
   try {
     var pdata = await apiGet('/api/workspace/projects');
     var projList = pdata.projects || [];
@@ -2091,6 +3122,147 @@ function searchDrivers() {
     }
   }, 300);
 }
+
+var dashboardProviderDefaults = {
+  deepseek: {url:'https://api.deepseek.com', model:'deepseek-v4-flash', context:1048576},
+  openai: {url:'https://api.openai.com/v1', model:'gpt-4.1-mini', context:1047576},
+  local: {url:'http://127.0.0.1:8000/v1', model:'', context:32768}
+};
+
+function onDashboardProviderChange(scope, force) {
+  var provider = document.getElementById('dash-' + scope + '-provider').value;
+  var defaults = dashboardProviderDefaults[provider];
+  var url = document.getElementById('dash-' + scope + '-url');
+  var model = document.getElementById('dash-' + scope + '-model');
+  var contextInput = document.getElementById('dash-' + scope + '-context-window');
+  if (force || !url.value) url.value = defaults.url;
+  if (force) model.value = defaults.model;
+  else if (!model.value && defaults.model) model.value = defaults.model;
+  if (force && contextInput) contextInput.value = defaults.context;
+}
+
+function updateDashboardVisionMode() {
+  var mode = document.getElementById('dash-vision-mode').value;
+  document.getElementById('dash-vision-fields').style.display = mode === 'separate' ? 'block' : 'none';
+  document.getElementById('dash-vision-route-note').textContent = mode === 'inherit'
+    ? 'PDF 中含图片或工程图的页面会复用对话模型；纯文本仍由 Python 分页提取。'
+    : mode === 'python'
+    ? '不发送图片到模型，仅使用 PyMuPDF 分批提取文本和视觉元素数量。'
+    : '图片页使用独立多模态 API；纯文本提取仍由 Python 完成。';
+}
+
+var dashboardEmbeddingDefaults = {
+  openai: {url:'https://api.openai.com/v1', model:'text-embedding-3-small', dimensions:1536},
+  local: {url:'http://127.0.0.1:8082/v1', model:'', dimensions:384}
+};
+
+function onDashboardEmbeddingProviderChange(force) {
+  var provider = document.getElementById('dash-embedding-provider').value;
+  var defaults = dashboardEmbeddingDefaults[provider];
+  var url = document.getElementById('dash-embedding-url');
+  var model = document.getElementById('dash-embedding-model');
+  var dimensions = document.getElementById('dash-embedding-dimensions');
+  if (force || !url.value) url.value = defaults.url;
+  if (force) {
+    model.value = defaults.model;
+    dimensions.value = defaults.dimensions;
+  }
+}
+
+function updateDashboardEmbeddingMode() {
+  var mode = document.getElementById('dash-embedding-mode').value;
+  document.getElementById('dash-embedding-api-fields').style.display = mode === 'api' ? 'grid' : 'none';
+  document.getElementById('dash-embedding-note').textContent = mode === 'local_hash'
+    ? '完全离线，无需下载模型；适合启用和验证 RAG，但语义召回质量低于专用 Embedding 模型。'
+    : '文档分块会发送到这个独立接口；它不会复用对话或图片模型。';
+}
+
+function fillDashboardEmbedding(embedding) {
+  embedding = embedding || {mode:'local_hash', provider:'local', dimensions:384};
+  document.getElementById('dash-embedding-mode').value = embedding.mode || 'local_hash';
+  document.getElementById('dash-embedding-provider').value = embedding.provider || 'local';
+  document.getElementById('dash-embedding-url').value = embedding.base_url || '';
+  document.getElementById('dash-embedding-model').value = embedding.model || '';
+  document.getElementById('dash-embedding-dimensions').value = embedding.dimensions || 384;
+  document.getElementById('dash-embedding-key').value = '';
+  document.getElementById('dash-embedding-key-status').textContent = embedding.api_key_configured ? '已保存（不会回传密钥原文）' : '尚未配置';
+  updateDashboardEmbeddingMode();
+}
+
+function fillDashboardEndpoint(scope, endpoint) {
+  if (!endpoint) return;
+  document.getElementById('dash-' + scope + '-provider').value = endpoint.provider || (scope === 'chat' ? 'deepseek' : 'openai');
+  document.getElementById('dash-' + scope + '-url').value = endpoint.base_url || '';
+  document.getElementById('dash-' + scope + '-model').value = endpoint.model || '';
+  var contextInput = document.getElementById('dash-' + scope + '-context-window');
+  if (contextInput) contextInput.value = endpoint.context_window_tokens || 128000;
+  document.getElementById('dash-' + scope + '-key').value = '';
+  document.getElementById('dash-' + scope + '-key-status').textContent = endpoint.api_key_configured ? '已保存（不会回传密钥原文）' : '尚未配置';
+}
+
+async function loadDashboardModelConfig() {
+  var status = document.getElementById('dash-model-status');
+  if (!status) return;
+  try {
+    var config = await apiGet('/api/config/models');
+    fillDashboardEndpoint('chat', config.conversation);
+    fillDashboardEndpoint('vision', config.vision || {provider:'openai', base_url:'https://api.openai.com/v1', model:'', api_key_configured:false});
+    document.getElementById('dash-vision-mode').value = config.vision_mode || 'python';
+    updateDashboardVisionMode();
+    fillDashboardEmbedding(config.embedding);
+    status.textContent = '配置已载入';
+  } catch(e) {
+    status.textContent = '配置读取失败：' + e.message;
+  }
+}
+
+function dashboardEndpointBody(scope) {
+  var body = {
+    provider: document.getElementById('dash-' + scope + '-provider').value,
+    base_url: document.getElementById('dash-' + scope + '-url').value.trim(),
+    model: document.getElementById('dash-' + scope + '-model').value.trim(),
+    timeout_seconds: 90
+  };
+  var contextInput = document.getElementById('dash-' + scope + '-context-window');
+  if (contextInput) body.context_window_tokens = parseInt(contextInput.value || '128000');
+  var key = document.getElementById('dash-' + scope + '-key').value.trim();
+  if (key) body.api_key = key;
+  return body;
+}
+
+function dashboardEmbeddingBody() {
+  var body = {
+    mode: document.getElementById('dash-embedding-mode').value,
+    provider: document.getElementById('dash-embedding-provider').value,
+    base_url: document.getElementById('dash-embedding-url').value.trim(),
+    model: document.getElementById('dash-embedding-model').value.trim(),
+    dimensions: parseInt(document.getElementById('dash-embedding-dimensions').value || '384'),
+    timeout_seconds: 30
+  };
+  var key = document.getElementById('dash-embedding-key').value.trim();
+  if (key) body.api_key = key;
+  return body;
+}
+
+async function saveDashboardModelConfig() {
+  var status = document.getElementById('dash-model-status');
+  var mode = document.getElementById('dash-vision-mode').value;
+  var body = {conversation: dashboardEndpointBody('chat'), vision_mode: mode, embedding: dashboardEmbeddingBody()};
+  if (mode === 'separate') body.vision = dashboardEndpointBody('vision');
+  status.textContent = '正在保存...';
+  try {
+    var response = await fetch('/api/config/models', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.detail || ('HTTP ' + response.status));
+    fillDashboardEndpoint('chat', data.conversation);
+    if (data.vision) fillDashboardEndpoint('vision', data.vision);
+    fillDashboardEmbedding(data.embedding);
+    status.textContent = '已保存；下一次模型调用生效';
+  } catch(e) {
+    status.textContent = '保存失败：' + e.message;
+  }
+}
+function loadDrivers() { searchDrivers(); }
 
 async function loadSkills() {
   var list = document.getElementById('skill-list');

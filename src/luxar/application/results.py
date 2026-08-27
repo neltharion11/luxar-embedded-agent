@@ -63,6 +63,44 @@ def _join_chinese_sentences(items: list[str]) -> str:
 def _completed_message(state: WorkflowState) -> str:
     """Build one self-contained engineering report for the completed run."""
 
+    knowledge_result = state.get("knowledge_result")
+    if knowledge_result is not None:
+        grounded_answer = str(knowledge_result.get("answer", "")).strip()
+        if grounded_answer and not knowledge_result.get("read_pdf"):
+            return grounded_answer
+        if knowledge_result.get("read_pdf"):
+            preview = str(knowledge_result.get("preview", "")).strip()
+            answer = str(knowledge_result.get("answer", "")).strip()
+            message = (
+                f"PDF 已完整分批读取：共 {knowledge_result.get('total_pages', 0)} 页，"
+                f"划分为 {knowledge_result.get('sections', knowledge_result.get('batches', 0))} 个章节单元，"
+                f"提取约 {knowledge_result.get('characters', 0)} 个字符。"
+            )
+            warning = str(knowledge_result.get("analysis_warning", "")).strip()
+            if warning:
+                message += "\n\n" + warning
+            if answer:
+                return message + "\n\n" + answer
+            return message + ("\n\n读取内容预览\n\n" + preview if preview else "")
+        if "documents" in knowledge_result:
+            count = len(knowledge_result.get("documents", []))
+            return f"知识库查询完成，当前共有 {count} 份文档。"
+        if "matches" in knowledge_result:
+            matches = knowledge_result.get("matches", [])
+            titles = [str(item.get("title", "")) for item in matches[:6] if isinstance(item, dict)]
+            return "知识检索完成，共找到 {} 条匹配{}。".format(
+                len(matches), "：" + "、".join(titles) if titles else ""
+            )
+        if "deleted" in knowledge_result:
+            return "知识文档已删除。" if knowledge_result["deleted"] else "未找到要删除的知识文档。"
+        if "total_pages" in knowledge_result:
+            return (
+                f"PDF 已完整分批读取并写入知识库：共 {knowledge_result['total_pages']} 页，"
+                f"划分为 {knowledge_result.get('sections', knowledge_result.get('batches', 0))} 个章节单元，"
+                f"抽取并写入 {knowledge_result.get('knowledge_units', 0)} 条具体知识。"
+            )
+        return f"知识文档已写入，共生成 {knowledge_result.get('chunks', 0)} 个检索分块。"
+
     lines = ["处理完成。"]
     analysis = state.get("project_analysis")
     requirement = state.get("requirement")
@@ -182,6 +220,12 @@ def live_message_for_state(state: WorkflowState) -> str:
     if state.get("status") != "completed" or state.get("inspection_response"):
         return user_message_for_state(state)
 
+    # Knowledge operations do not emit the firmware workflow's incremental
+    # analysis/code/build narrative.  Their final result is therefore the
+    # actual user-visible content, not a generic "no source changed" summary.
+    if state.get("knowledge_result") is not None:
+        return user_message_for_state(state)
+
     changed_files = list(dict.fromkeys(state.get("changed_files", [])))
     created = state.get("created_project")
     requirement = state.get("requirement")
@@ -219,7 +263,7 @@ def state_to_result(state: WorkflowState) -> dict[str, object]:
     approval_request、task_text 与原始日志永远不进入本白名单。
     """
 
-    return {
+    result: dict[str, object] = {
         "status": state.get("status", "failed"),
         "message": user_message_for_state(state),
         "exit_code": exit_code_for_state(state),
@@ -261,3 +305,8 @@ def state_to_result(state: WorkflowState) -> dict[str, object]:
         "error": _serialize_model(state.get("error")),
         "trace": list(state.get("trace", [])),
     }
+    if "knowledge_task" in state:
+        result["knowledge_task"] = _serialize_model(state.get("knowledge_task"))
+    if "knowledge_result" in state:
+        result["knowledge_result"] = state.get("knowledge_result")
+    return result

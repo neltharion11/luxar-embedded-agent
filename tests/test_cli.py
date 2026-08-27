@@ -6,19 +6,27 @@ import os
 from pathlib import Path
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar import cli
+from luxar.application.agent_runner import AgentWorkflowRunResult
 from luxar.application.runner import WorkflowRunResult
 from luxar.application.state import WorkflowState
 from luxar.domain.devices import ApprovalRequest
+from luxar.domain.agent.approvals import AgentApprovalRequest
 from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.requirements import FirmwareRequirement
+from luxar.database import SQLitePersistence
 from luxar.sdk_knowledge import SdkExampleKnowledgeBase
 
 
 def _run_result(state: WorkflowState) -> WorkflowRunResult:
     return WorkflowRunResult(state=state, thread_id="test-thread")
+
+
+def _agent_run_result(state: dict[str, object]) -> AgentWorkflowRunResult:
+    return AgentWorkflowRunResult(state=state, thread_id="agent-test-thread")
 
 
 @pytest.mark.parametrize(
@@ -43,6 +51,56 @@ def test_parser_allows_bare_invocation() -> None:
     assert args.command is None
 
 
+def test_storage_parser_exposes_runtime_audit_and_dry_run_plan() -> None:
+    audit = cli.build_parser().parse_args(["storage", "runtime-audit"])
+    plan = cli.build_parser().parse_args(
+        ["storage", "runtime-migration-plan"]
+    )
+
+    assert audit.storage_command == "runtime-audit"
+    assert plan.storage_command == "runtime-migration-plan"
+
+
+def test_storage_runtime_commands_are_read_only_and_json_serializable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    _clear_luxar_env(monkeypatch)
+    storage = tmp_path / "storage"
+    monkeypatch.setenv("LUXAR_STORAGE_DIRECTORY", str(storage))
+    repository = SQLitePersistence(storage / "luxar.sqlite3")
+    repository.start_run(
+        thread_id="old-supervisor",
+        task_key="0:blink",
+        project_name="blink",
+        root_index=0,
+        task_text="private task",
+        runtime_config={"agent_runtime": "supervisor"},
+    )
+    before = repository.list_runtime_observations(
+        since=repository.get_runtime_observation_baseline()
+    )
+
+    assert cli.main(["storage", "runtime-audit"]) == 0
+    audit = json.loads(capsys.readouterr().out)
+    assert audit["durable"] is True
+    assert audit["supervisor_firmware_runs"] == 1
+    assert not (storage / "checkpoints.sqlite3").exists()
+
+    assert cli.main(["storage", "runtime-migration-plan"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["mode"] == "dry_run"
+    assert plan["deterministic_candidates"] == 1
+    assert plan["writes_performed"] == 0
+    after = repository.list_runtime_observations(
+        since=repository.get_runtime_observation_baseline()
+    )
+    assert after == before
+
+
 def _clear_luxar_env(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -61,6 +119,14 @@ def _clear_luxar_env(
         "LUXAR_PYTHON",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LUXAR_AGENT_RUNTIME", "legacy")
+
+
+@pytest.fixture(autouse=True)
+def _legacy_runtime_for_legacy_cli_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LUXAR_AGENT_RUNTIME", "legacy")
 
 
 def test_bare_luxar_starts_web_with_defaults(
@@ -576,6 +642,261 @@ def test_json_mode_emits_one_stable_document_without_progress(
     }
     assert "SECRET_TASK_MUST_NOT_SERIALIZE" not in captured.out
     assert captured.out.count("{") >= 1
+
+
+def test_cli_qualified_default_uses_supervisor_agent_entrypoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    _clear_luxar_env(monkeypatch)
+    monkeypatch.delenv("LUXAR_AGENT_RUNTIME", raising=False)
+    storage_path = tmp_path / "runtime-observation-storage"
+    monkeypatch.setenv("LUXAR_STORAGE_DIRECTORY", str(storage_path))
+    received: dict[str, object] = {}
+    context = object()
+
+    def fake_bootstrap(**kwargs: object) -> object:
+        received["bootstrap"] = kwargs
+        return context
+
+    def fake_runner(**kwargs: object) -> AgentWorkflowRunResult:
+        received["runner"] = kwargs
+        return _agent_run_result(
+            {
+                "status": "completed",
+                "evidence_ids": ["build:agent-test"],
+                "build_verified": True,
+                "acceptance_passed": True,
+                "trace": ["complete_objective"],
+            }
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "build_deepseek_agent_runtime_context",
+        fake_bootstrap,
+    )
+    monkeypatch.setattr(cli, "run_agent_workflow", fake_runner)
+
+    result = cli.main(
+        [
+            "run",
+            "--project",
+            str(tmp_path),
+            "--task",
+            "构建工程",
+            "--target",
+            "esp32",
+            "--json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert output["status"] == "completed"
+    assert output["build_verified"] is True
+    assert received["bootstrap"]["project_path"] == tmp_path
+    assert received["runner"]["context"] is context
+    assert received["runner"]["initial_state"]["target_chip"] == "esp32"
+    repository = SQLitePersistence(storage_path / "luxar.sqlite3")
+    observations = repository.list_runtime_observations(
+        since=repository.get_runtime_observation_baseline()
+    )
+    recorded = next(
+        item
+        for item in observations
+        if item.thread_id == received["runner"]["thread_id"]
+    )
+    assert recorded.workflow_family == "supervisor_firmware"
+    assert recorded.firmware_runtime == "supervisor"
+    assert recorded.status == "completed"
+
+
+def test_cli_supervisor_json_flash_preapproval_resumes_only_device_flash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _clear_luxar_env(monkeypatch)
+    monkeypatch.setenv("LUXAR_AGENT_RUNTIME", "supervisor")
+    saver = InMemorySaver()
+    request = AgentApprovalRequest(
+        task_id="cli-agent:flash",
+        title="审批烧录",
+        summary="烧录会修改外部设备状态",
+        operation="device.flash",
+        risks=["会覆盖设备固件"],
+    )
+    resume_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli,
+        "build_deepseek_agent_runtime_context",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_agent_workflow",
+        lambda **_: AgentWorkflowRunResult(
+            state={"status": "awaiting_user", "trace": []},
+            thread_id="cli-agent-flash",
+            pending_approval=request,
+            checkpointer=saver,
+        ),
+    )
+
+    def fake_resume(**kwargs: object) -> AgentWorkflowRunResult:
+        resume_calls.append(kwargs)
+        return _agent_run_result(
+            {
+                "status": "completed",
+                "approval_status": "approved",
+                "evidence_ids": ["flash:cli-agent:flash"],
+                "acceptance_passed": True,
+                "trace": [],
+            }
+        )
+
+    monkeypatch.setattr(cli, "resume_agent_workflow", fake_resume)
+
+    result = cli.main(
+        [
+            "run",
+            "--project",
+            str(tmp_path),
+            "--task",
+            "烧录固件",
+            "--json",
+            "--approve-flash",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.err == ""
+    assert resume_calls[0]["approved"] is True
+    assert resume_calls[0]["checkpointer"] is saver
+
+
+def test_cli_supervisor_interactive_approval_resumes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _clear_luxar_env(monkeypatch)
+    monkeypatch.setenv("LUXAR_AGENT_RUNTIME", "supervisor")
+    saver = InMemorySaver()
+    request = AgentApprovalRequest(
+        task_id="cli-agent:task",
+        title="审批高风险任务",
+        summary="需要明确批准",
+        operation="project.write",
+        risks=["可能修改工程状态"],
+        task_description="修改受控工程文件并执行验证",
+        planned_actions=["读取工程基线", "应用受限变更"],
+        tools=["workspace.read", "workspace.patch"],
+        affected_targets=["main/main.c"],
+        acceptance_criteria=["组件测试通过"],
+        preserve_conditions=["保留现有 GPIO 能力"],
+    )
+    resume_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli,
+        "build_deepseek_agent_runtime_context",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_agent_workflow",
+        lambda **_: AgentWorkflowRunResult(
+            state={"status": "awaiting_user", "trace": []},
+            thread_id="cli-agent-thread",
+            pending_approval=request,
+            checkpointer=saver,
+        ),
+    )
+
+    def fake_resume(**kwargs: object) -> AgentWorkflowRunResult:
+        resume_calls.append(kwargs)
+        return _agent_run_result(
+            {
+                "status": "completed",
+                "approval_status": "approved",
+                "acceptance_passed": True,
+                "trace": [],
+            }
+        )
+
+    monkeypatch.setattr(cli, "resume_agent_workflow", fake_resume)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+
+    result = cli.main(
+        ["run", "--project", str(tmp_path), "--task", "执行高风险任务"]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "审批高风险任务" in captured.err
+    assert "任务内容：修改受控工程文件并执行验证" in captured.err
+    assert "批准后将执行：" in captured.err
+    assert "调用工具：" in captured.err
+    assert "main/main.c" in captured.err
+    assert "验收条件：" in captured.err
+    assert "组件测试通过" in captured.err
+    assert "必须保持：" in captured.err
+    assert "可能修改工程状态" in captured.err
+    assert resume_calls[0]["approved"] is True
+    assert resume_calls[0]["checkpointer"] is saver
+    assert "项目目标已完成" in captured.out
+
+
+def test_cli_supervisor_json_pauses_without_implicit_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _clear_luxar_env(monkeypatch)
+    monkeypatch.setenv("LUXAR_AGENT_RUNTIME", "supervisor")
+    request = AgentApprovalRequest(
+        task_id="cli-agent:task",
+        title="审批高风险任务",
+        summary="需要明确批准",
+        operation="project.write",
+        risks=["可能修改工程状态"],
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_deepseek_agent_runtime_context",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_agent_workflow",
+        lambda **_: AgentWorkflowRunResult(
+            state={"status": "awaiting_user", "trace": []},
+            thread_id="cli-agent-thread",
+            pending_approval=request,
+            checkpointer=InMemorySaver(),
+        ),
+    )
+
+    result = cli.main(
+        [
+            "run",
+            "--project",
+            str(tmp_path),
+            "--task",
+            "执行高风险任务",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 4
+    assert captured.out == ""
+    assert "JSON 模式无法交互审批" in captured.err
 
 
 def test_json_failed_state_is_stdout_business_result(

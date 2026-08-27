@@ -19,6 +19,12 @@ from luxar.ports.requirement_parser import RequirementParser
 from luxar.ports.repair_planner import RepairPlanner
 from luxar.ports.workspace import WorkspacePort
 from luxar.database.persistence import PersistencePort
+from luxar.knowledge import KnowledgeService
+from luxar.ports.knowledge_tasks import KnowledgeTaskParser
+from luxar.document_reader import PdfDocumentReader, PdfProgressReporter
+from luxar.ports.document_analysis import PdfTechnicalAnalyzer
+from luxar.ports.knowledge_extraction import KnowledgeAtomExtractor
+from luxar.ports.knowledge_answering import KnowledgeAnswerer
 
 
 @dataclass(frozen=True)
@@ -50,3 +56,12 @@ class RuntimeContext:
     example_library: EspIdfExampleLibrary | None = None
     persistence: PersistencePort | None = None
     project_key: str | None = None
+    knowledge_service: KnowledgeService | None = None
+    knowledge_task_parser: KnowledgeTaskParser | None = None
+    document_reader: PdfDocumentReader | None = None
+    pdf_progress_reporter: PdfProgressReporter | None = None
+    document_analyzer: PdfTechnicalAnalyzer | None = None
+    knowledge_extractor: KnowledgeAtomExtractor | None = None
+    knowledge_answerer: KnowledgeAnswerer | None = None
+    # 正式 Web/CLI 开启；底层批处理或旧测试夹具可显式关闭中断。
+    interactive_workflow: bool = False

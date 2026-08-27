@@ -248,3 +248,49 @@ def test_device_loop_healthy_on_first_monitor_completes_directly() -> None:
     assert run_result.state["device_cycles"] == 1
     assert "repair_plan" not in run_result.state
     assert context.flasher.flash_calls == [(Path("workspace/blink"), "COM3")]
+
+
+def test_device_loop_uses_combined_flash_monitor_without_reopening_serial() -> None:
+    class CoordinatedFlasher(FakeFlasher):
+        def __init__(self) -> None:
+            super().__init__([flash_ok()])
+            self.combined_calls: list[tuple[Path, str, int]] = []
+
+        def flash_and_monitor(
+            self,
+            project_path: Path,
+            port: str,
+            timeout_seconds: int,
+        ) -> tuple[FlashEvidence, MonitorEvidence]:
+            self.combined_calls.append((project_path, port, timeout_seconds))
+            return flash_ok(), monitor_with("boot ok")
+
+    flasher = CoordinatedFlasher()
+    monitor = FakeMonitor([])
+    context = make_context(
+        espidf=FakeEspIdf([build_ok()]),
+        flasher=flasher,
+        monitor=monitor,
+        log_analyst=FakeLogAnalyst(
+            [
+                DeviceDiagnosis(
+                    healthy=True,
+                    repair_needed=False,
+                    summary="运行正常",
+                )
+            ]
+        ),
+        repair_planner=FakeRepairPlanner(repair_plan()),
+    )
+
+    result = run_workflow(
+        initial_state=initial_state(),
+        context=context,
+        approval_handler=lambda request: True,
+    )
+
+    assert result.state["status"] == "completed"
+    assert flasher.combined_calls == [(Path("workspace/blink"), "COM3", 10)]
+    assert monitor.calls == []
+    assert "monitor_project" not in result.state["trace"]
+    assert "analyze_device_logs" in result.state["trace"]

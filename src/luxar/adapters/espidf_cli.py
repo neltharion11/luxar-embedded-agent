@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil  # 保留导入：测试通过本模块路径 monkeypatch shutil.which
 import subprocess
@@ -303,11 +304,43 @@ def _parse_diagnostics(text: str, root: Path) -> list[BuildDiagnostic]:
     return diagnostics
 
 
+_IDF_VERSION_RE = re.compile(r"IDF_VERSION_(MAJOR|MINOR|PATCH)\s+([0-9]+)")
+
+
+def _derive_idf_path(command: tuple[str, ...]) -> str | None:
+    """从 idf.py 启动器（绝对路径）或环境 IDF_PATH 推导本次构建的 IDF 根目录。"""
+
+    if len(command) >= 2:
+        candidate = Path(command[1])
+        if candidate.is_absolute() and candidate.name == "idf.py":
+            return str(candidate.parent.parent)
+    return os.environ.get("IDF_PATH")
+
+
+def _read_idf_version(idf_path: str | None) -> str | None:
+    """从 version.cmake 读取 MAJOR.MINOR.PATCH，无子进程、无网络。"""
+
+    if not idf_path:
+        return None
+    try:
+        content = (
+            Path(idf_path) / "tools" / "cmake" / "version.cmake"
+        ).read_text(encoding="utf-8", errors="replace")[:3000]
+    except OSError:
+        return None
+    values = {name: value for name, value in _IDF_VERSION_RE.findall(content)}
+    if {"MAJOR", "MINOR", "PATCH"} <= values.keys():
+        return ".".join(values[name] for name in ("MAJOR", "MINOR", "PATCH"))
+    return None
+
+
 class EspIdfCliAdapter:
     def __init__(
         self,
         *,
         idf_command: Sequence[str] = ("idf.py",),
+        idf_path: Path | None = None,
+        idf_version: str | None = None,
         allow_dependency_downloads: bool = False,
         reconfigure_timeout_seconds: int = 120,
         build_timeout_seconds: int = 600,
@@ -343,6 +376,9 @@ class EspIdfCliAdapter:
         self.max_summary_chars = max_summary_chars
         self.max_manifest_bytes = max_manifest_bytes
         self.max_manifest_total_bytes = max_manifest_total_bytes
+        derived_path = _derive_idf_path(command)
+        self.idf_path = str(idf_path) if idf_path is not None else derived_path
+        self.idf_version = idf_version or _read_idf_version(self.idf_path)
 
     def _validate_command(self) -> None:
         # 委托给共享校验器，保证三个硬件 Adapter 使用完全相同的规则。
@@ -476,6 +512,8 @@ class EspIdfCliAdapter:
                     self.max_summary_chars,
                 ),
                 error_category="timeout",
+                idf_path=self.idf_path,
+                idf_version=self.idf_version,
             )
         except OSError as error:
             raise EspIdfError(
@@ -502,6 +540,8 @@ class EspIdfCliAdapter:
                 return_code=0,
                 stdout_summary=stdout_summary,
                 stderr_summary=stderr_summary,
+                idf_path=self.idf_path,
+                idf_version=self.idf_version,
             )
 
         return BuildEvidence(
@@ -519,6 +559,8 @@ class EspIdfCliAdapter:
                 f"{result.stdout}\n{result.stderr}",
                 root,
             ),
+            idf_path=self.idf_path,
+            idf_version=self.idf_version,
         )
 
     def build(self, project_path: Path) -> BuildEvidence:

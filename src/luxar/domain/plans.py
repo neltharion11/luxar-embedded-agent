@@ -19,9 +19,19 @@ class PlanStep(BaseModel):
     description: str
 
 
+class PlanClarification(BaseModel):
+    """不阻塞需求解析、但值得让用户选择的实现配置。"""
+
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(default_factory=list, max_length=8)
+    default: str = Field(default="", max_length=300)
+    rationale: str = Field(default="", max_length=500)
+
+
 class ExecutionPlan(BaseModel):
     # min_length=1 保证计划至少包含一个实际动作。
     steps: list[PlanStep] = Field(min_length=1)
+    clarifications: list[PlanClarification] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_step_ordering(self) -> ExecutionPlan:

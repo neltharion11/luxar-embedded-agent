@@ -43,7 +43,6 @@ _SERIAL_SIGNALS = (
     "no serial data received",
     "failed to connect",
 )
-
 _MAX_DESCRIPTION_CHARS = 200
 
 # 每种日志模式的单次采集内最多保留数量，防止 State 无限膨胀。
@@ -107,7 +106,7 @@ def _parse_device_diagnostics(
     reset_indices = [
         index
         for index, line in enumerate(lines)
-        if "rst:0x" in line.casefold()
+        if "rst:0x" in line.casefold() and "\ufffd" not in line
     ]
     if len(reset_indices) >= 2:
         add(
@@ -128,7 +127,16 @@ def _parse_device_diagnostics(
             add("abort", "abort() 被调用", index, 4)
         elif "assert failed" in lowered:
             add("assert", "断言失败", index, 4)
-        elif "watchdog" in lowered or "task_wdt" in lowered:
+        elif any(
+            signal in lowered
+            for signal in (
+                "task_wdt",
+                "watchdog got triggered",
+                "watchdog timeout",
+                "watchdog reset",
+                "wdt timeout",
+            )
+        ):
             add("watchdog", "看门狗触发", index, 4)
         elif lowered.startswith("e ("):
             add("error", "ESP-IDF 错误日志", index, 2)
@@ -308,6 +316,43 @@ class EspIdfDeviceAdapter:
             return "environment"
 
         return "unknown"
+
+    def flash_and_monitor(
+        self,
+        project_path: Path,
+        port: str,
+        timeout_seconds: int,
+    ) -> tuple[FlashEvidence, MonitorEvidence]:
+        """先完成有界 flash，再在独立的短窗口内 monitor。
+
+        两个进程严格串行，因此不会同时抢占串口。不能用
+        ``flash_timeout + monitor_timeout`` 包住 ``flash monitor``：该命令
+        进入 monitor 后不会自行退出，会把 10 秒采集窗口错误放大到数分钟，
+        且超时杀进程时容易丢失前段烧录成功输出。
+        """
+
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, int)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a positive integer")
+
+        flash_evidence = self.flash(project_path, port)
+        if not flash_evidence.success:
+            return flash_evidence, MonitorEvidence(
+                command=_logical_monitor_command(port),
+                port=port,
+                capture_timeout_seconds=timeout_seconds,
+                captured_log="",
+                terminated_by_timeout=False,
+                diagnostics=[],
+            )
+        return flash_evidence, self.monitor(
+            project_path,
+            port,
+            timeout_seconds,
+        )
 
     def _terminate_process_tree(self, process: subprocess.Popen[str]) -> None:
         # 尽力清理：idf.py monitor 会派生自己的监控子进程，

@@ -14,9 +14,11 @@ from luxar.domain.errors import WorkflowError
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.idf_examples import EspIdfExampleReference
 from luxar.domain.plans import ExecutionPlan
+from luxar.domain.interactions import WorkflowInteraction
 from luxar.domain.project_analysis import ProjectAnalysis
 from luxar.domain.projects import ProjectEvidence
 from luxar.domain.requirements import FirmwareRequirement
+from luxar.domain.knowledge_tasks import KnowledgeTask
 from luxar.domain.repairs import RepairPlan
 
 
@@ -26,6 +28,7 @@ WorkflowStatus = Literal[
     "project_analyzed",
     "needs_clarification",
     "planned",
+    "awaiting_user",
     "project_created",
     "implemented",
     "building",
@@ -53,11 +56,20 @@ class WorkflowState(TypedDict, total=False):
     # TypedDict 只描述字典应有哪些键和值类型，运行时仍是普通 dict。
     # total=False 表示节点可以逐步补充字段，不要求初始 State 一次提供全部键。
     task_text: str
-    task_mode: Literal["firmware", "inspection"]
+    task_mode: Literal["firmware", "inspection", "knowledge"]
+    knowledge_task: KnowledgeTask
+    knowledge_result: dict[str, object]
+    learning_result: dict[str, object]
     requirement: FirmwareRequirement
     project_analysis: ProjectAnalysis
     inspection_response: str
     plan: ExecutionPlan
+    interaction: WorkflowInteraction
+    interaction_action: Literal["continue", "replan", "failed"]
+    plan_revision_count: int
+    plan_approved: bool
+    interactive_workflow: bool
+    knowledge_available: bool
     build_evidence: BuildEvidence
     error: WorkflowError
     attempts: int
@@ -90,5 +102,8 @@ class WorkflowState(TypedDict, total=False):
     approval_request: ApprovalRequest
     # S4：串口监控证据、设备诊断与设备修复回路预算。
     monitor_evidence: MonitorEvidence
+    # True 表示本次 flash 已由协调式 flash→monitor 流程采集日志，
+    # 路由可直接进入日志分析，避免再次启动 monitor。
+    flash_monitor_combined: bool
     device_diagnosis: DeviceDiagnosis
     device_cycles: int

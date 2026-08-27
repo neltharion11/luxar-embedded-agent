@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from luxar.database.persistence import (
     KnowledgeMatch,
     TransientPersistence,
 )
-from luxar.knowledge import KnowledgeService, ProjectContextProvider
+from luxar.knowledge import (
+    KnowledgeService,
+    KnowledgeSettings,
+    OpenAIEmbeddingAdapter,
+    ProjectContextProvider,
+)
+from luxar.document_reader import PdfBatch
+from luxar.knowledge_extraction import SemanticKnowledgeAtomExtractor
 
 
 class FakeEmbeddings:
@@ -12,6 +23,22 @@ class FakeEmbeddings:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [[float(len(text))] + [0.0] * 1535 for text in texts]
+
+
+def test_openai_embedding_adapter_rejects_provider_dimension_mismatch() -> None:
+    class StubEmbeddings:
+        def create(self, **_: object) -> object:
+            return SimpleNamespace(
+                data=[SimpleNamespace(index=0, embedding=[0.0] * 5)]
+            )
+
+    adapter = OpenAIEmbeddingAdapter(
+        KnowledgeSettings(api_key="test", model="embedding-test", dimensions=3),
+        client=SimpleNamespace(embeddings=StubEmbeddings()),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="期望 3，实际 5"):
+        adapter.embed(["dimension probe"])
 
 
 class KnowledgePersistence(TransientPersistence):
@@ -36,6 +63,13 @@ class KnowledgePersistence(TransientPersistence):
             )
         ]
 
+    def list_knowledge_documents(self, project_key: str) -> list[dict[str, object]]:
+        del project_key
+        return []
+
+    def delete_knowledge_document(self, **_: object) -> bool:
+        return False
+
 
 def test_ingest_chunks_embeds_and_persists_document() -> None:
     persistence = KnowledgePersistence()
@@ -55,7 +89,53 @@ def test_ingest_chunks_embeds_and_persists_document() -> None:
     assert persistence.document is not None
     chunks = persistence.document["chunks"]
     assert isinstance(chunks, list)
-    assert all(len(item[2]) == 1536 for item in chunks)
+    assert all(len(item.embedding) == 1536 for item in chunks)
+    assert all(item.metadata["unit_type"] == "document_chunk" for item in chunks)
+
+
+def test_pdf_import_indexes_specific_knowledge_not_page_batches() -> None:
+    class Reader:
+        def iter_batches(self, path):
+            del path
+            yield PdfBatch(
+                1,
+                2,
+                2,
+                "## 第 1 页\n### GPIO34\nGPIO34 只能作为数字输入使用。\n\n"
+                "## 第 2 页\n### ADC2\nWi-Fi 工作时 ADC2 可能被占用。",
+                False,
+            )
+
+    persistence = KnowledgePersistence()
+    service = KnowledgeService(persistence, FakeEmbeddings())
+    progress = []
+    imported = service.ingest_pdf(
+        project_key="0:blink",
+        source_uri="docs/esp32.pdf",
+        title="ESP32 数据手册",
+        path=__import__("pathlib").Path("unused.pdf"),
+        reader=Reader(),
+        extractor=SemanticKnowledgeAtomExtractor(),
+        progress_reporter=progress.append,
+    )
+
+    assert imported.batches == 1
+    assert imported.knowledge_units == 2
+    assert len(imported.documents) == 1
+    assert persistence.document is not None
+    assert persistence.document["title"] == "ESP32 数据手册"
+    chunks = persistence.document["chunks"]
+    assert [item.content for item in chunks] == [
+        "GPIO34 只能作为数字输入使用。",
+        "Wi-Fi 工作时 ADC2 可能被占用。",
+    ]
+    assert chunks[0].metadata["source_pages"] == [1]
+    assert chunks[0].metadata["subject"] == "GPIO34"
+    assert [item.phase for item in progress] == [
+        "analyzing",
+        "indexing",
+        "completed",
+    ]
 
 
 def test_project_context_combines_structured_memory_and_cited_knowledge() -> None:
@@ -128,3 +208,38 @@ def test_project_context_includes_bounded_previous_completed_run() -> None:
     }
     assert "stdout_summary" not in str(previous)
     assert context["recent_conversation"][-1]["content"] == "构建通过。"
+
+
+def test_project_context_carries_analyzed_pdf_facts_into_next_firmware_turn() -> None:
+    persistence = KnowledgePersistence()
+    persistence.start_run(
+        thread_id="pdf-run",
+        task_key="0:blink",
+        project_name="blink",
+        root_index=0,
+        task_text="读取 OLED 数据手册",
+        runtime_config={},
+    )
+    persistence.finish_run(
+        "pdf-run",
+        status="completed",
+        result={
+            "knowledge_result": {
+                "read_pdf": True,
+                "title": "OLED 数据手册",
+                "total_pages": 37,
+                "technical_context": (
+                    "型号：SH1106；协议：I2C；地址：0x3C；"
+                    "信号线：SCL、SDA。"
+                ),
+            }
+        },
+    )
+
+    context = ProjectContextProvider(persistence, "0:blink")(
+        "为这个 OLED 编写驱动"
+    )
+
+    document = context["previous_completed_run"]["document_context"]
+    assert document["title"] == "OLED 数据手册"
+    assert "地址：0x3C" in document["technical_context"]

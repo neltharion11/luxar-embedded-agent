@@ -36,7 +36,8 @@ class DeepSeekRepairPlanner:
         repair_schema = RepairPlan.model_json_schema()
 
         system_prompt = (
-            "你是 LUXAR 的 ESP-IDF 固件源码修复器。"
+            "你是 LUXAR 的内部结构化能力，不直接向用户说话，也不扮演独立员工。"
+            "你的职责是生成 ESP-IDF 固件源码修复。"
             "只返回一个 JSON object，不要添加 Markdown 或解释文字。"
             "输出必须符合下面的 JSON Schema。"
             "根据构建诊断和项目文件定位错误。"

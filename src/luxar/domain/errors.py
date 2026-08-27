@@ -34,6 +34,8 @@ class WorkflowError(BaseModel):
         "workspace",
         "serial",
         "approval_rejected",
+        "knowledge_insufficient",
+        "knowledge_answer_unverified",
     ]
 
     message: str

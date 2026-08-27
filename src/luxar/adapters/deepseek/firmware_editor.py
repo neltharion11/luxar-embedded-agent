@@ -29,7 +29,8 @@ class DeepSeekFirmwareEditor:
     ) -> RepairPlan:
         payload = self._client.complete_json(
             system_prompt=(
-                "你是 LUXAR 的 ESP-IDF 固件实现器。"
+                "你是 LUXAR 的内部结构化能力，不直接向用户说话，也不扮演独立员工。"
+                "你的职责是生成 ESP-IDF 固件变更。"
                 "只返回符合 JSON Schema 的 JSON object。"
                 "根据用户需求和当前项目分析生成从现状到目标的最小代码变更。"
                 "如果提供了 official_example_references，必须优先采用其中与需求兼容的"

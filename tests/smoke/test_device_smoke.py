@@ -114,14 +114,15 @@ def test_real_flash_and_monitor_smoke(
     discovered = [item.name for item in device.discover_serial_ports()]
     assert port in discovered
 
-    # 4. 真实烧录（替换开发板现有固件）。
-    flash_evidence = device.flash(project, port)
+    # 4-5. 单进程连续烧录并监控，避免两个进程抢占同一串口。
+    flash_evidence, monitor_evidence = device.flash_and_monitor(
+        project,
+        port,
+        15,
+    )
     assert flash_evidence.success is True
     assert flash_evidence.error_category is None
     assert flash_evidence.port == port
-
-    # 5. 受控监控窗口：烧录后芯片复位并打印引导日志。
-    monitor_evidence = device.monitor(project, port, 15)
     assert monitor_evidence.port == port
     assert monitor_evidence.terminated_by_timeout is True
     # 空模板不打印业务输出，但复位后必然有引导/复位日志。

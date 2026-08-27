@@ -13,15 +13,86 @@ def test_migrated_ui_uses_new_workflow_contract() -> None:
     source = ui_source()
 
     assert "currentEvent === 'progress'" in source
+    assert "Array.isArray(data.tools)" in source
+    assert "tools.map(toolDisplayName).join('、')" in source
     assert "currentEvent === 'result'" in source
     assert "currentEvent === 'token'" in source
+    assert "currentEvent === 'turn_status'" in source
+    assert "eventName === 'turn_status'" in source
     assert "chunk.message || chunk.error" in source
     assert "max_attempts: 3" in source
     assert "allow_dependency_downloads: false" in source
+    assert "session_id: activeAgentSessions[runKey] || null" in source
+    assert "client_turn_id: createClientTurnId()" in source
+    assert "X-LUXAR-Session-ID" in source
+    assert "taskResult.domain_calls" in source
+    assert "taskResult.evidence_ids" in source
+    assert "currentEvent === 'tool_result'" in source
     assert "docs: docs" not in source
     assert "LangGraph Workflow" not in source
     assert "<h4>任务结果</h4>" in source
     assert "taskResult.status === 'needs_clarification'" in source
+    assert 'id="dash-chat-context-window"' in source
+    assert "context_window_tokens" in source
+    assert "达到窗口的 95% 时自动压缩" in source
+
+
+def test_chat_recovers_in_progress_output_after_page_reload() -> None:
+    source = ui_source()
+
+    assert "data.active_run" in source
+    assert "activeRun.assistant_content" in source
+    assert "recoverConversationRun" in source
+    assert "after_sequence=" in source
+    assert "X-LUXAR-Thread-ID" in source
+    assert "applyConversationStreamEvent" in source
+    assert "recoveryControllers" in source
+    assert "当前任务仍在运行，无法清空对话" in source
+
+
+def test_continuous_agent_ui_supports_runtime_steering_and_safe_cancel() -> None:
+    source = ui_source()
+
+    assert "continuousAgentV2Enabled" in source
+    assert "'/steer'" in source
+    assert "client_steering_id: createClientTurnId()" in source
+    assert "'/cancel'" in source
+    assert "session_id: runningSessionId" in source
+    assert "stopBtn.style.display = busy && canControl ? '' : 'none'" in source
+    assert "activeConversationRuns[runKey] = {threadId: null, mode: 'primary'}" in source
+
+
+def test_chat_renders_and_restores_pdf_page_progress() -> None:
+    source = ui_source()
+
+    assert "createTaskProgressController" in source
+    assert "data.progress_type !== 'pdf'" in source
+    assert "current + ' / ' + total + ' 页 · ' + percent + '%'" in source
+    assert "activeRun.progress" in source
+    assert 'role="progressbar"' in source
+    assert ".task-progress-fill" in source
+
+
+def test_chat_shows_collapsed_auditable_reasoning_summary() -> None:
+    source = ui_source()
+
+    assert "createReasoningSummaryController" in source
+    assert "reasoning-summary" in source
+    assert "view.reasoningController.update(data)" in source
+    assert "reasoningController.update(progressChunk)" in source
+    assert "推理摘要" in source
+    assert "不包含模型私密逐字思维链" in source
+    assert "document.createElement('details')" in source
+
+
+def test_chat_heartbeat_preserves_the_active_tool_name() -> None:
+    source = ui_source()
+
+    assert "function setToolRunningFromProgress" in source
+    assert "data.phase === 'heartbeat'" in source
+    assert "statusController.setState('tool_running');" in source
+    assert "setToolRunningFromProgress(view.statusController, data)" in source
+    assert "setToolRunningFromProgress(statusController, progressChunk)" in source
 
 
 def test_migrated_ui_supports_flash_approval_flow() -> None:
@@ -31,10 +102,23 @@ def test_migrated_ui_supports_flash_approval_flow() -> None:
     assert "currentEvent === 'approval'" in source
     assert "renderApprovalCard" in source
     assert "批准烧录" in source
+    assert "批准该任务并继续" in source
+    assert "request.task_description" in source
+    assert "request.planned_actions" in source
+    assert "request.tools" in source
+    assert "request.affected_targets" in source
+    assert "request.acceptance_criteria" in source
+    assert "request.preserve_conditions" in source
+    assert "request.risks" in source
+    assert "批准后将依次执行" in source
+    assert "完成前必须通过" in source
+    assert "主要风险" in source
     assert "'/api/conversations/' + encodeURIComponent(project) + '/approval'" in source
     assert "decide('approve')" in source
     assert "decide('reject')" in source
-    assert "JSON.stringify({decision: decision, root_index: selectedRootIndex})" in source
+    assert "JSON.stringify({decision: decision, feedback: feedback, root_index: selectedRootIndex})" in source
+    assert "payload.status === 'resuming'" in source
+    assert "loadConversation(project)" in source
 
 
 def test_migrated_ui_uses_project_chip_and_selects_port_per_task() -> None:
@@ -78,7 +162,16 @@ def test_migrated_ui_enabled_startup_calls_only_supported_endpoints() -> None:
     assert "openOpenProjectModal = showUnavailableFeature" not in source
     assert "deleteProject = showUnavailableFeature" not in source
     assert "loadDrivers = showUnavailableFeature" in source
-    assert "saveModelConfig = showUnavailableFeature" in source
+    assert "saveDashboardModelConfig" in source
+    assert "apiGet('/api/config/models')" in source
+    assert "fetch('/api/config/models'" in source
+    assert 'id="dash-chat-model"' in source
+    assert 'dash-chat-repair-model' not in source
+    assert "if (force) model.value = defaults.model" in source
+    assert 'id="dash-embedding-mode"' in source
+    assert "dashboardEmbeddingBody" in source
+    assert "本地 Hash（离线）" in source
+    assert "独立 Embedding API" in source
 
 
 def test_project_selector_uses_native_directory_endpoint() -> None:
@@ -101,3 +194,28 @@ def test_project_rows_show_a_hover_delete_action() -> None:
     assert "event.stopPropagation();deleteProject" in source
     assert "method: 'DELETE'" in source
     assert "?root_index=' + selectedRootIndex" in source
+
+
+def test_agent_workspace_uses_safe_snapshot_and_interaction_apis() -> None:
+    source = ui_source()
+
+    assert 'data-page-link="agent"' in source
+    assert 'id="agent-workspace"' in source
+    assert "else if (page === 'agent') {" in source
+    assert "loadAgentWorkspace(false, true)" in source
+    assert "agentSnapshotPoll = setInterval" in source
+    assert "'/agent?root_index=' + rootIndex" in source
+    assert "'/agent/interactions'" in source
+    assert "kind: kind.value" in source
+    assert '<option value="question">' in source
+    assert '<option value="change_objective">' in source
+    assert '<option value="change_plan">' in source
+    assert "escapeHtml(data.blocked_reason)" in source
+    assert "escapeHtml(item.evidence_id)" in source
+    assert "escapeHtml(item.message)" in source
+    assert "task.allowed_paths" not in source
+    assert "item.source_paths" not in source
+    assert "data.task_mode === 'knowledge'" in source
+    assert "data.knowledge_task || {}" in source
+    assert "data.knowledge_result || {}" in source
+    assert "data.supports_interactions === false" in source

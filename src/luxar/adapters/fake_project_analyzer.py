@@ -18,6 +18,7 @@ class FakeProjectAnalyzer:
         target_chip: str | None,
         fingerprint: str,
         files: list[ProjectFile],
+        inspection_request: str | None = None,
     ) -> ProjectAnalysis:
         self.calls.append(
             {
@@ -25,6 +26,7 @@ class FakeProjectAnalyzer:
                 "target_chip": target_chip,
                 "fingerprint": fingerprint,
                 "files": list(files),
+                "inspection_request": inspection_request,
             }
         )
         analysis = self._analyses.pop(0)

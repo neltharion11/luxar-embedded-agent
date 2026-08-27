@@ -26,6 +26,18 @@ class EspIdfFlashPort(Protocol):
         ...
 
 
+class EspIdfFlashMonitorPort(Protocol):
+    """单进程连续执行 flash → monitor，避免同一串口被抢占。"""
+
+    def flash_and_monitor(
+        self,
+        project_path: Path,
+        port: str,
+        timeout_seconds: int,
+    ) -> tuple[FlashEvidence, MonitorEvidence]:
+        ...
+
+
 class EspIdfMonitorPort(Protocol):
     # 在受控采集窗口内抓取设备串口日志，超时后必须终止整个进程树。
     def monitor(

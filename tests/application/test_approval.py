@@ -1,6 +1,7 @@
 """S3 审批流测试：锁定 langgraph interrupt() 的暂停/恢复语义。"""
 
 from pathlib import Path
+from dataclasses import replace
 
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -17,6 +18,7 @@ from luxar.application.context import RuntimeContext
 from luxar.application.runner import resume_workflow, run_workflow
 from luxar.application.state import WorkflowState
 from luxar.domain.devices import ApprovalRequest, FlashEvidence
+from luxar.domain.interactions import WorkflowInteraction
 from luxar.domain.evidence import BuildEvidence
 from luxar.domain.plans import ExecutionPlan, PlanStep
 from luxar.domain.repairs import FileReplacement, RepairPlan
@@ -253,3 +255,47 @@ def test_missing_serial_port_fails_before_approval() -> None:
     assert run_result.state["error"].category == "serial"
     assert run_result.state["error"].stage == "flash"
     assert flasher.flash_calls == []
+
+
+def test_interactive_workflow_reviews_full_plan_before_any_execution() -> None:
+    flasher = FakeFlasher([flash_success()])
+    context = replace(make_context(flasher=flasher), interactive_workflow=True)
+
+    paused = run_workflow(initial_state=make_initial_state(), context=context)
+
+    assert isinstance(paused.pending_approval, WorkflowInteraction)
+    assert paused.pending_approval.kind == "plan_review"
+    assert paused.pending_approval.plan is not None
+    assert [step.kind for step in paused.pending_approval.plan.steps] == [
+        "build_project", "flash_project"
+    ]
+    assert context.espidf.calls == []
+    assert flasher.flash_calls == []
+
+    flash_pause = resume_workflow(
+        thread_id=paused.thread_id, context=context, approved=True
+    )
+    assert isinstance(flash_pause.pending_approval, ApprovalRequest)
+    completed = resume_workflow(
+        thread_id=paused.thread_id, context=context, approved=True
+    )
+    assert completed.state["status"] == "completed"
+
+
+def test_plan_feedback_reuses_checkpoint_and_replans() -> None:
+    context = replace(
+        make_context(flasher=FakeFlasher([flash_success()])),
+        interactive_workflow=True,
+    )
+    paused = run_workflow(initial_state=make_initial_state(), context=context)
+
+    replanned = resume_workflow(
+        thread_id=paused.thread_id,
+        context=context,
+        approved=False,
+        feedback="把构建步骤保留，但不要烧录",
+    )
+
+    assert isinstance(replanned.pending_approval, WorkflowInteraction)
+    assert replanned.pending_approval.kind == "plan_review"
+    assert "把构建步骤保留，但不要烧录" in replanned.state["task_text"]

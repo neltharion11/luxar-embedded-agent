@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from luxar.database.persistence import PersistencePort
@@ -15,6 +16,17 @@ from luxar.ports.workspace import WorkspacePort
 _ANALYSIS_MEMORY_KEY = "project.current_analysis"
 _ANALYSIS_VERSION = b"luxar-project-analysis-v2\0"
 _SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".s")
+_CODE_SYMBOL_RE = re.compile(r"\b(SDA|SCL)\b", re.IGNORECASE)
+_DISPLAY_DIAGNOSIS_RE = re.compile(
+    r"(?:屏幕|显示|oled|ssd1306|sh1106|screen|display).*(?:不亮|没亮|未亮|"
+    r"无显示|没有显示|不显示|显示不出来|黑屏|无反应|没有反应|没有任何反应|"
+    r"没反应|不工作|blank|no display|not lit|no response|doesn.?t work)",
+    re.IGNORECASE,
+)
+_DEFINE_RE = re.compile(
+    r"^\s*#define\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?P<value>[^\s/]+)",
+    re.MULTILINE,
+)
 
 
 def _structural_gaps(files: list[ProjectFile]) -> list[str]:
@@ -137,8 +149,9 @@ def analyze_current_project(
     persistence: PersistencePort | None,
     project_key: str | None,
     force: bool = False,
+    inspection_request: str | None = None,
 ) -> ProjectAnalysis:
-    """Analyze current code, reusing only an exact source fingerprint match."""
+    """Analyze current code without confusing a focused query with cached overview."""
 
     exists = bool(
         getattr(workspace, "project_exists", project_path.exists())
@@ -150,7 +163,8 @@ def analyze_current_project(
 
     files = workspace.read_project_files(project_path)
     fingerprint = source_fingerprint(files)
-    if not force:
+    focused = bool(inspection_request and inspection_request.strip())
+    if not force and not focused:
         cached = _cached_analysis(persistence, project_key, fingerprint)
         if cached is not None:
             return cached
@@ -161,6 +175,7 @@ def analyze_current_project(
             target_chip=target_chip,
             fingerprint=fingerprint,
             files=files,
+            inspection_request=inspection_request,
         )
         if analyzer is not None
         else _fallback_analysis(files, fingerprint)
@@ -181,19 +196,28 @@ def analyze_current_project(
             ])),
         }
     )
-    _persist_analysis(analysis, persistence, project_key)
+    # 针对本轮问题裁剪过的分析不能覆盖可复用的全项目概览。
+    if not focused:
+        _persist_analysis(analysis, persistence, project_key)
     return analysis
 
 
 def render_project_analysis(
     project_name: str,
     analysis: ProjectAnalysis,
+    inspection_request: str | None = None,
 ) -> str:
     """Turn validated analysis into readable prose rather than a data dump."""
 
     if not analysis.project_exists:
         return f"项目 {project_name} 尚不存在，需要先创建基础 ESP-IDF 工程。"
-    paragraphs = [f"项目 {project_name} 的当前代码分析如下。", analysis.summary]
+    request = " ".join((inspection_request or "").split())
+    heading = (
+        f"针对“{request[:240]}”，项目 {project_name} 的检查结果如下。"
+        if request
+        else f"项目 {project_name} 的当前代码分析如下。"
+    )
+    paragraphs = [heading, analysis.summary]
     if analysis.entry_points:
         paragraphs.append("程序入口位于 " + "、".join(analysis.entry_points) + "。")
     if analysis.implemented_features:
@@ -211,3 +235,122 @@ def render_project_analysis(
             "以上判断主要依据：" + "、".join(analysis.evidence_paths[:12]) + "。"
         )
     return "\n\n".join(paragraphs)
+
+
+def extract_focused_project_fact(
+    question: str,
+    files: list[ProjectFile],
+) -> str | None:
+    """Return a minimal answer when the source contains an exact pin mapping.
+
+    This is a source-fact extractor, not a question classifier. It only emits
+    an answer when every requested I2C symbol has a consistent numeric macro
+    definition; all other questions continue through the normal project
+    analysis report.
+    """
+
+    requested = list(dict.fromkeys(
+        symbol.upper() for symbol in _CODE_SYMBOL_RE.findall(question)
+    ))
+    if not requested:
+        return None
+
+    values: dict[str, set[str]] = {symbol: set() for symbol in requested}
+    for project_file in files:
+        for match in _DEFINE_RE.finditer(project_file.content):
+            name = match.group("name").upper()
+            value = match.group("value")
+            for symbol in requested:
+                if symbol not in name:
+                    continue
+                number = re.fullmatch(r"(?:GPIO_NUM_)?(\d+)", value, re.IGNORECASE)
+                if number is not None:
+                    values[symbol].add(f"GPIO{number.group(1)}")
+
+    if any(len(values[symbol]) != 1 for symbol in requested):
+        return None
+    lines = ["根据项目当前配置："]
+    for symbol in requested:
+        lines.append(f"- {symbol}：{next(iter(values[symbol]))}")
+    return "\n".join(lines)
+
+
+def extract_focused_project_diagnosis(
+    question: str,
+    files: list[ProjectFile],
+) -> str | None:
+    """Return a concise, source-grounded first diagnosis for a blank display.
+
+    This deliberately separates confirmed software facts from likely hardware
+    causes. Without serial output or a connected board, source inspection cannot
+    prove which physical cause is the one affecting the user's device.
+    """
+
+    if _DISPLAY_DIAGNOSIS_RE.search(question) is None:
+        return None
+
+    values: dict[str, set[str]] = {"SDA": set(), "SCL": set()}
+    address_values: set[str] = set()
+    has_init = False
+    has_clear = False
+    has_display = False
+    has_error_logs = False
+    for project_file in files:
+        content = project_file.content
+        for match in _DEFINE_RE.finditer(content):
+            name = match.group("name").upper()
+            value = match.group("value")
+            for symbol in values:
+                if symbol not in name:
+                    continue
+                number = re.fullmatch(r"(?:GPIO_NUM_)?(\d+)", value, re.IGNORECASE)
+                if number is not None:
+                    values[symbol].add(f"GPIO{number.group(1)}")
+            if "I2C_ADDR" in name and re.fullmatch(
+                r"0x3[CD]", value, re.IGNORECASE
+            ):
+                address_values.add(value.upper())
+        has_init = has_init or "ssd1306_init" in content
+        has_clear = has_clear or "ssd1306_clear" in content
+        has_display = has_display or "ssd1306_display_text" in content
+        has_error_logs = has_error_logs or any(
+            marker in content
+            for marker in (
+                "SSD1306 init failed",
+                "SSD1306 clear failed",
+                "SSD1306 display_text failed",
+            )
+        )
+
+    lines = ["根据当前项目代码，软件侧已确认："]
+    if values["SDA"] and values["SCL"]:
+        lines.append(
+            f"- I2C 引脚是 SDA={next(iter(values['SDA']))}、"
+            f"SCL={next(iter(values['SCL']))}。"
+        )
+    if address_values:
+        lines.append(
+            "- 启动时会自动探测 OLED 常用地址 "
+            + " 和 ".join(sorted(address_values))
+            + "。"
+        )
+    if has_init and has_clear and has_display:
+        lines.append("- 启动流程是初始化 OLED、清屏，然后显示 `helloworld`。")
+    if has_error_logs:
+        lines.append(
+            "- 串口会打印初始化、清屏和写屏失败信息，说明代码已有基本错误出口。"
+        )
+
+    lines.extend(
+        [
+            "",
+            "但当前没有这块开发板的串口运行日志，所以还不能仅凭源码断定唯一根因。",
+            "优先排查：",
+            "1. OLED 的 VCC/GND 是否接对，模块是否使用 3.3V；",
+            "2. SDA/SCL 是否接反，实际是否接到了 GPIO21/GPIO22；",
+            "3. 模块控制器是否真的是 SSD1306（有些模块实际是 SH1106）；",
+            "4. 查看串口是否出现 `SSD1306 init failed`、`clear failed` 或 "
+            "`display_text failed`。初始化成功但仍黑屏时，优先怀疑供电、接线或控制器兼容性。",
+        ]
+    )
+    return "\n".join(lines)

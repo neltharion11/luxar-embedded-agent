@@ -16,4 +16,5 @@ class ProjectAnalyzer(Protocol):
         target_chip: str | None,
         fingerprint: str,
         files: list[ProjectFile],
+        inspection_request: str | None = None,
     ) -> ProjectAnalysis: ...

@@ -10,18 +10,48 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from luxar import arguments
+from luxar.application.agent_results import (
+    agent_exit_code_for_state,
+    agent_state_to_result,
+    agent_user_message_for_state,
+)
+from luxar.application.agent_runner import (
+    AgentWorkflowProgress,
+    resume_agent_workflow,
+    run_agent_workflow,
+)
+from luxar.application.agent_state import AgentState
 from luxar.application.results import exit_code_for_state, state_to_result
+from luxar.application.runtime_mode import select_firmware_runtime
+from luxar.application.runtime_qualification import (
+    current_supervisor_qualification,
+)
+from luxar.application.runtime_metadata_migration import (
+    plan_sqlite_runtime_metadata_migration,
+)
+from luxar.application.runtime_observation import (
+    audit_runtime_retirement,
+    inspect_sqlite_checkpoint_threads,
+)
 from luxar.application.runner import WorkflowProgress, run_workflow
 from luxar.application.state import WorkflowState
-from luxar.bootstrap import build_deepseek_runtime_context, discover_serial_ports
+from luxar.bootstrap import (
+    build_deepseek_agent_runtime_context,
+    build_deepseek_runtime_context,
+    discover_serial_ports,
+)
 from luxar.domain.devices import ApprovalRequest
+from luxar.domain.agent.approvals import AgentApprovalRequest
+from luxar.domain.interactions import WorkflowInteraction
 from luxar.database import (
     LocalStorageRuntime,
     LocalStorageSettings,
@@ -34,6 +64,7 @@ from luxar.knowledge import (
     OpenAIEmbeddingAdapter,
 )
 from luxar.sdk_knowledge import SdkExampleKnowledgeBase
+from luxar.toolchain import EspIdfToolchainManager
 from luxar.ports.espidf_errors import EspIdfError
 
 
@@ -115,6 +146,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="storage_command", required=True
     )
     storage_commands.add_parser("health", help="检查本地持久化")
+    storage_commands.add_parser(
+        "runtime-audit",
+        help="只读审计 legacy 回退观察和恢复依赖",
+    )
+    storage_commands.add_parser(
+        "runtime-migration-plan",
+        help="只读生成历史 workflow_family 迁移计划",
+    )
     return parser
 
 
@@ -148,8 +187,40 @@ def _state_to_json_envelope(state: WorkflowState) -> dict[str, object]:
     return state_to_result(state)
 
 
-def _print_approval_request(request: ApprovalRequest) -> None:
+def _print_approval_request(
+    request: ApprovalRequest | WorkflowInteraction | AgentApprovalRequest,
+) -> None:
     # 只展示审批请求里的受控字段。
+    if isinstance(request, AgentApprovalRequest):
+        print(f"—— {request.title} ——", file=sys.stderr)
+        print(request.summary, file=sys.stderr)
+        print(f"操作：{request.operation}", file=sys.stderr)
+        if request.task_description:
+            print(f"任务内容：{request.task_description}", file=sys.stderr)
+        sections = (
+            ("批准后将执行", request.planned_actions),
+            ("调用工具", request.tools),
+            ("影响范围", request.affected_targets),
+            ("验收条件", request.acceptance_criteria),
+            ("必须保持", request.preserve_conditions),
+            ("主要风险", request.risks),
+        )
+        for heading, values in sections:
+            if not values:
+                continue
+            print(f"{heading}：", file=sys.stderr)
+            for index, value in enumerate(values, 1):
+                print(f"  {index}. {value}", file=sys.stderr)
+        return
+    if isinstance(request, WorkflowInteraction):
+        print(f"—— {request.title} ——", file=sys.stderr)
+        print(request.summary, file=sys.stderr)
+        if request.plan is not None:
+            for index, step in enumerate(request.plan.steps, 1):
+                print(f"{index}. {step.kind}：{step.description}", file=sys.stderr)
+        for question in request.questions:
+            print(f"需要确认：{question}", file=sys.stderr)
+        return
     print("—— 烧录审批 ——", file=sys.stderr)
     print(f"项目：{request.project_name}", file=sys.stderr)
     print(f"串口：{request.port}", file=sys.stderr)
@@ -158,10 +229,17 @@ def _print_approval_request(request: ApprovalRequest) -> None:
     print(f"说明：{request.summary}", file=sys.stderr)
 
 
-def _interactive_approval(request: ApprovalRequest) -> bool:
+def _interactive_approval(
+    request: ApprovalRequest | WorkflowInteraction | AgentApprovalRequest,
+) -> bool:
     _print_approval_request(request)
     try:
-        answer = input("批准烧录？(y/N)：").strip().casefold()
+        prompt = (
+            "批准烧录？(y/N)："
+            if isinstance(request, ApprovalRequest)
+            else "批准并继续？(y/N)："
+        )
+        answer = input(prompt).strip().casefold()
     except EOFError:
         return False
     return answer in {"y", "yes", "是"}
@@ -222,20 +300,55 @@ def _run_setup() -> int:
     )
 
 
+def _report_agent_progress(progress: AgentWorkflowProgress) -> None:
+    print(f"[Supervisor] {progress.message}", file=sys.stderr)
+
+
 def _run_storage(command: str) -> int:
-    if command != "health":
+    if command not in {
+        "health",
+        "runtime-audit",
+        "runtime-migration-plan",
+    }:
         return 2
     runtime = LocalStorageRuntime(
         LocalStorageSettings.for_projects_root(_default_projects_roots()[0])
     )
     try:
         runtime.open()
+        if command == "runtime-audit":
+            report = audit_runtime_retirement(
+                runtime.persistence,
+                checkpoint_thread_ids=inspect_sqlite_checkpoint_threads(
+                    runtime.settings.checkpoint_path
+                ),
+            )
+            print(
+                json.dumps(
+                    report.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        if command == "runtime-migration-plan":
+            plan = plan_sqlite_runtime_metadata_migration(
+                runtime.settings.application_path
+            )
+            print(
+                json.dumps(
+                    plan.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         runtime.checkpointer()
         if runtime.health():
             print(f"SQLite 持久化正常：{runtime.settings.application_path}")
             print(f"LanceDB 目录：{runtime.settings.knowledge_path}")
             return 0
-    except (RuntimeError, ValueError, OSError):
+    except (RuntimeError, ValueError, OSError, sqlite3.Error):
         print("本地持久化不可用，请检查 LUXAR_STORAGE_DIRECTORY", file=sys.stderr)
         return 1
     finally:
@@ -305,6 +418,19 @@ def _print_result(state: WorkflowState, json_mode: bool) -> None:
         )
     else:
         print(_format_human_result(state))
+
+
+def _print_agent_result(state: AgentState, json_mode: bool) -> None:
+    if json_mode:
+        print(
+            json.dumps(
+                agent_state_to_result(state),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        print(agent_user_message_for_state(state))
 
 
 _JSON_APPROVAL_ERROR = (
@@ -421,13 +547,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     storage_runtime: LocalStorageRuntime | None = None
+    active_run_thread_id: str | None = None
+    run_persistence: object | None = None
     try:
         task = args.task if args.task is not None else input("请输入固件需求：")
         task = task.strip()
         if not task:
             print("固件需求不能为空", file=sys.stderr)
             return 2
-
+        runtime_selection = select_firmware_runtime(
+            qualification=current_supervisor_qualification()
+        )
+        runtime_mode = runtime_selection.mode
         try:
             storage_runtime = LocalStorageRuntime(
                 LocalStorageSettings.for_projects_root(project.parent)
@@ -454,28 +585,142 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 sdk_embeddings,
             )
-            bootstrap_options: dict[str, object] = {
-                "project_path": project,
-                "target_chip": args.target,
-                "serial_port": args.port,
-                "allow_dependency_downloads": args.allow_dependency_downloads,
-            }
-            active_idf_path = os.environ.get("IDF_PATH")
-            if active_idf_path:
-                bootstrap_options["idf_path"] = Path(active_idf_path)
-            bootstrap_options.update(
-                {
-                    "checkpointer": checkpointer,
-                    "persistence": persistence,
-                    "project_key": project.name,
-                    "knowledge_service": knowledge_service,
-                    "sdk_example_knowledge": sdk_example_knowledge,
-                }
+            toolchain_manager = EspIdfToolchainManager(
+                config_path=project.parent / ".luxar" / "toolchain.json",
             )
-            context = build_deepseek_runtime_context(**bootstrap_options)
+            resolved_idf_command = toolchain_manager.command or ("idf.py",)
+            resolved_idf_path = (
+                Path(toolchain_manager.status.idf_path)
+                if toolchain_manager.status.idf_path
+                else None
+            )
+            if runtime_mode == "supervisor":
+                if not project.exists():
+                    project.mkdir()
+                context = build_deepseek_agent_runtime_context(
+                    project_path=project,
+                    serial_port=args.port,
+                    allow_dependency_downloads=args.allow_dependency_downloads,
+                    idf_command=resolved_idf_command,
+                )
+            else:
+                bootstrap_options: dict[str, object] = {
+                    "project_path": project,
+                    "target_chip": args.target,
+                    "serial_port": args.port,
+                    "allow_dependency_downloads": args.allow_dependency_downloads,
+                }
+                if resolved_idf_path is not None:
+                    bootstrap_options["idf_path"] = resolved_idf_path
+                bootstrap_options["idf_command"] = resolved_idf_command
+                bootstrap_options.update(
+                    {
+                        "checkpointer": checkpointer,
+                        "persistence": persistence,
+                        "project_key": project.name,
+                        "knowledge_service": knowledge_service,
+                        "sdk_example_knowledge": sdk_example_knowledge,
+                    }
+                )
+                context = build_deepseek_runtime_context(**bootstrap_options)
         except (ValidationError, ValueError, RuntimeError, OSError):
             print("运行配置无效，请检查环境变量", file=sys.stderr)
             return 2
+
+        run_thread_id = uuid.uuid4().hex
+        persistence.start_run(
+            thread_id=run_thread_id,
+            task_key=project.name,
+            project_name=project.name,
+            root_index=0,
+            task_text=task,
+            runtime_config={
+                "project_name": project.name,
+                "serial_port": args.port,
+                "target_chip": args.target,
+                "allow_dependency_downloads": args.allow_dependency_downloads,
+                "agent_runtime": runtime_mode,
+                "firmware_runtime": runtime_mode,
+                "firmware_runtime_reason": runtime_selection.reason,
+                "workflow_family": (
+                    "supervisor_firmware"
+                    if runtime_mode == "supervisor"
+                    else "legacy_firmware_rollback"
+                ),
+                "entrypoint": "cli",
+            },
+        )
+        active_run_thread_id = run_thread_id
+        run_persistence = persistence
+
+        if runtime_mode == "supervisor":
+            run_result = run_agent_workflow(
+                initial_state={
+                    "task_text": task,
+                    "source_message_id": uuid.uuid4().hex,
+                    "project_name": project.name,
+                    "target_chip": args.target,
+                    "trace": [],
+                    "max_steps": max(20, args.max_attempts * 10),
+                },
+                context=context,  # type: ignore[arg-type]
+                checkpointer=checkpointer,
+                persistence=persistence,
+                project_key=project.name,
+                thread_id=run_thread_id,
+                progress_reporter=(
+                    None if args.json else _report_agent_progress
+                ),
+            )
+            while run_result.pending_approval is not None:
+                if args.json:
+                    if (
+                        not args.approve_flash
+                        or run_result.pending_approval.operation
+                        != "device.flash"
+                    ):
+                        envelope = agent_state_to_result(run_result.state)
+                        persistence.finish_run(
+                            run_thread_id,
+                            status="failed",
+                            result=envelope,
+                        )
+                        active_run_thread_id = None
+                        print(_JSON_APPROVAL_ERROR, file=sys.stderr)
+                        return 4
+                    approved = True
+                else:
+                    approved = _interactive_approval(
+                        run_result.pending_approval
+                    )
+                if run_result.checkpointer is None:
+                    persistence.finish_run(
+                        run_thread_id,
+                        status="failed",
+                        result=agent_state_to_result(run_result.state),
+                    )
+                    active_run_thread_id = None
+                    print("Supervisor 审批恢复状态不可用", file=sys.stderr)
+                    return 4
+                run_result = resume_agent_workflow(
+                    thread_id=run_result.thread_id,
+                    context=context,  # type: ignore[arg-type]
+                    checkpointer=run_result.checkpointer,
+                    approved=approved,
+                    persistence=persistence,
+                    project_key=project.name,
+                    progress_reporter=_report_agent_progress,
+                )
+            agent_state = run_result.state
+            agent_envelope = agent_state_to_result(agent_state)
+            persistence.finish_run(
+                run_thread_id,
+                status=str(agent_envelope["status"]),
+                result=agent_envelope,
+            )
+            active_run_thread_id = None
+            _print_agent_result(agent_state, args.json)
+            return agent_exit_code_for_state(agent_state)
 
         initial_state = WorkflowState(
             task_text=task,
@@ -495,14 +740,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             context=context,
             progress_reporter=None if args.json else _report_progress,
             approval_handler=approval_handler,  # type: ignore[arg-type]
+            thread_id=run_thread_id,
         )
         if run_result.pending_approval is not None:
             # JSON 模式未预授权：工作流已在审批前暂停，只能终止。
+            persistence.finish_run(
+                run_thread_id,
+                status="failed",
+                result=state_to_result(run_result.state),
+            )
+            active_run_thread_id = None
             print(_JSON_APPROVAL_ERROR, file=sys.stderr)
             return 4
 
         result = run_result.state
+        result_envelope = state_to_result(result)
+        persistence.finish_run(
+            run_thread_id,
+            status=str(result_envelope["status"]),
+            result=result_envelope,
+        )
+        active_run_thread_id = None
     except KeyboardInterrupt:
+        if active_run_thread_id is not None and run_persistence is not None:
+            run_persistence.finish_run(  # type: ignore[attr-defined]
+                active_run_thread_id,
+                status="failed",
+                result={
+                    "status": "failed",
+                    "message": "操作已取消",
+                    "exit_code": 130,
+                },
+            )
         print("操作已取消", file=sys.stderr)
         return 130
     finally:

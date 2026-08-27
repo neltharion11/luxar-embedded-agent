@@ -11,6 +11,7 @@ from luxar.application.nodes import (
     analyze_device_logs,
     analyze_project,
     analyze_requirement,
+    analyze_knowledge_task,
     build_project,
     completed,
     create_plan,
@@ -25,6 +26,10 @@ from luxar.application.nodes import (
     report_project,
     request_clarification,
     request_flash_approval,
+    review_plan,
+    review_knowledge_task,
+    execute_knowledge_task,
+    propose_solution_learning,
 )
 from luxar.application.routing import (
     route_after_approval,
@@ -35,7 +40,12 @@ from luxar.application.routing import (
     route_after_project_creation,
     route_after_project_analysis,
     route_after_requirement,
+    route_after_plan_review,
+    route_after_clarification,
     route_from_start,
+    route_after_knowledge_review,
+    route_after_repair,
+    route_after_plan_created,
 )
 from luxar.application.state import WorkflowState
 
@@ -55,6 +65,10 @@ def build_graph(
         "analyze_requirement",
         analyze_requirement,
     )
+    builder.add_node("analyze_knowledge_task", analyze_knowledge_task)
+    builder.add_node("review_knowledge_task", review_knowledge_task)
+    builder.add_node("execute_knowledge_task", execute_knowledge_task)
+    builder.add_node("propose_solution_learning", propose_solution_learning)
     builder.add_node(
         "analyze_project",
         analyze_project,
@@ -67,6 +81,7 @@ def build_graph(
         "create_plan",
         create_plan,
     )
+    builder.add_node("review_plan", review_plan)
     builder.add_node(
         "execute_next_step",
         execute_next_step,
@@ -127,8 +142,20 @@ def build_graph(
         {
             "analyze_requirement": "analyze_requirement",
             "analyze_project": "analyze_project",
+            "analyze_knowledge_task": "analyze_knowledge_task",
         },
     )
+    builder.add_edge("analyze_knowledge_task", "review_knowledge_task")
+    builder.add_conditional_edges(
+        "review_knowledge_task",
+        route_after_knowledge_review,
+        {
+            "execute_knowledge_task": "execute_knowledge_task",
+            "analyze_knowledge_task": "analyze_knowledge_task",
+            "failed": "failed",
+        },
+    )
+    builder.add_edge("execute_knowledge_task", "completed")
 
     # 条件边先调用路由函数，再用映射表把返回字符串解析为真实节点。
     builder.add_conditional_edges(
@@ -148,14 +175,25 @@ def build_graph(
             "report_project": "report_project",
             "create_project": "create_project",
             "create_plan": "create_plan",
+            "execute_next_step": "execute_next_step",
             "failed": "failed",
         },
     )
 
-    # 计划生成后进入游标分发器，由已验证的步骤决定下一个动作。
-    builder.add_edge(
+    # 先向用户展示完整计划并中断；批准前不会创建目录或写入源码。
+    builder.add_conditional_edges(
         "create_plan",
-        "execute_next_step",
+        route_after_plan_created,
+        {"review_plan": "review_plan", "execute_next_step": "execute_next_step"},
+    )
+    builder.add_conditional_edges(
+        "review_plan",
+        route_after_plan_review,
+        {
+            "execute_next_step": "execute_next_step",
+            "analyze_requirement": "analyze_requirement",
+            "failed": "failed",
+        },
     )
 
     # 未实现词表步骤由分发器写出固定错误并路由到 failed。
@@ -168,6 +206,7 @@ def build_graph(
             "build_project": "build_project",
             "request_flash_approval": "request_flash_approval",
             "monitor_project": "monitor_project",
+            "propose_solution_learning": "propose_solution_learning",
             "completed": "completed",
             "failed": "failed",
         },
@@ -183,6 +222,7 @@ def build_graph(
             "failed": "failed",
         },
     )
+    builder.add_edge("propose_solution_learning", "completed")
 
     # 代码实现前先检索当前 ESP-IDF 安装自带的官方例程。
     builder.add_edge(
@@ -210,9 +250,10 @@ def build_graph(
     )
 
     # 修复完成后必须重新构建，由新的工具证据证明是否真的修好。
-    builder.add_edge(
+    builder.add_conditional_edges(
         "repair_project",
-        "build_project",
+        route_after_repair,
+        {"build_project": "build_project", "failed": "failed"},
     )
 
     # 烧录前必须经过人工审批；批准后执行真实烧录，失败按类别重试或终止。
@@ -230,6 +271,7 @@ def build_graph(
         {
             "execute_next_step": "execute_next_step",
             "monitor_project": "monitor_project",
+            "analyze_device_logs": "analyze_device_logs",
             "flash_project": "flash_project",
             "failed": "failed",
         },
@@ -245,15 +287,21 @@ def build_graph(
         route_after_diagnosis,
         {
             "repair_project": "repair_project",
+            "propose_solution_learning": "propose_solution_learning",
             "completed": "completed",
             "failed": "failed",
         },
     )
 
     # 三个业务终态都连接到 LangGraph 的虚拟 END 节点。
-    builder.add_edge(
+    builder.add_conditional_edges(
         "request_clarification",
-        END,
+        route_after_clarification,
+        {
+            "analyze_requirement": "analyze_requirement",
+            "failed": "failed",
+            "completed": END,
+        },
     )
     builder.add_edge(
         "report_project",

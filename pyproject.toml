@@ -17,6 +17,7 @@ dependencies = [
     "lancedb>=0.25,<1",
     "pyserial>=3.5,<4",
     "PyYAML>=6,<7",
+    "PyMuPDF>=1.26,<2",
     "uvicorn>=0.35,<1",
     "langgraph-checkpoint-sqlite>=3,<4",
 ]

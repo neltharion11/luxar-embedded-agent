@@ -296,11 +296,13 @@ class FakeMonitorProcess:
         self.timeout_on_first_communicate = timeout_on_first_communicate
         self.terminated = False
         self.killed = False
+        self.communicate_timeouts: list[float | None] = []
 
     def communicate(
         self,
         timeout: float | None = None,
     ) -> tuple[str, str]:
+        self.communicate_timeouts.append(timeout)
         if timeout is not None and self.timeout_on_first_communicate:
             self.timeout_on_first_communicate = False
             raise subprocess.TimeoutExpired(["idf.py", "monitor"], timeout)
@@ -393,6 +395,125 @@ def test_monitor_self_exit_is_not_timeout(
     assert "boot ok" in evidence.captured_log
 
 
+def test_flash_and_monitor_runs_bounded_flash_then_short_monitor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    process = FakeMonitorProcess(
+        stdout_text="I (0) app_main: boot ok\n",
+        timeout_on_first_communicate=False,
+    )
+    captured = _patch_popen(monkeypatch, process)
+    flash_calls: list[tuple[object, ...]] = []
+
+    def fake_run(*args: object, **kwargs: object) -> FakeCompletedProcess:
+        flash_calls.append(args)
+        return FakeCompletedProcess(
+            0,
+            stdout="Hash of data verified.\nHard resetting via RTS pin...\n",
+        )
+
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.run",
+        fake_run,
+    )
+
+    flash, monitor = EspIdfDeviceAdapter().flash_and_monitor(
+        project,
+        "COM4",
+        12,
+    )
+
+    assert flash.success is True
+    assert flash.command == ["idf.py", "-p", "COM4", "flash"]
+    assert monitor.terminated_by_timeout is False
+    assert "boot ok" in monitor.captured_log
+    assert list(flash_calls[0][0]) == ["idf.py", "-p", "COM4", "flash"]
+    assert list(captured["args"][0]) == ["idf.py", "-p", "COM4", "monitor"]
+    assert process.communicate_timeouts == [12]
+
+
+def test_flash_and_monitor_accepts_flash_success_when_monitor_times_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    process = FakeMonitorProcess(
+        stdout_text=(
+            "Hash of data verified.\n"
+            "Hard resetting via RTS pin...\n"
+            "I (0) app_main: boot ok\n"
+        ),
+        timeout_on_first_communicate=True,
+    )
+    _patch_popen(monkeypatch, process)
+
+    def fake_run(*args: object, **kwargs: object) -> FakeCompletedProcess:
+        command = list(args[0])
+        if command[0] == "taskkill":
+            return FakeCompletedProcess(0)
+        return FakeCompletedProcess(
+            0,
+            stdout="Hash of data verified.\nHard resetting via RTS pin...\n",
+        )
+
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.run",
+        fake_run,
+    )
+
+    flash, monitor = EspIdfDeviceAdapter().flash_and_monitor(
+        project,
+        "COM4",
+        12,
+    )
+
+    assert flash.success is True
+    assert flash.return_code == 0
+    assert monitor.terminated_by_timeout is True
+    assert "boot ok" in monitor.captured_log
+
+
+def test_flash_and_monitor_does_not_monitor_after_flash_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_launcher(monkeypatch)
+    project = _make_project(tmp_path / "project")
+    popen_called = False
+
+    def fake_popen(*args: object, **kwargs: object) -> FakeMonitorProcess:
+        nonlocal popen_called
+        popen_called = True
+        return FakeMonitorProcess(timeout_on_first_communicate=False)
+
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.Popen",
+        fake_popen,
+    )
+    monkeypatch.setattr(
+        "luxar.adapters.espidf_device.subprocess.run",
+        lambda *args, **kwargs: FakeCompletedProcess(
+            2,
+            stderr="Failed to connect to ESP32",
+        ),
+    )
+
+    flash, monitor = EspIdfDeviceAdapter().flash_and_monitor(
+        project,
+        "COM4",
+        12,
+    )
+
+    assert flash.success is False
+    assert flash.error_category == "serial"
+    assert monitor.captured_log == ""
+    assert popen_called is False
+
+
 def test_monitor_rejects_invalid_port(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -464,6 +585,16 @@ def test_parse_device_diagnostics_patterns(
     ]
 
 
+def test_parse_device_diagnostics_ignores_armed_watchdog_health_log() -> None:
+    from luxar.adapters.espidf_device import _parse_device_diagnostics
+
+    diagnostics = _parse_device_diagnostics(
+        "I (100) diagnostics: status=ok errors=0 watchdog=armed"
+    )
+
+    assert diagnostics == []
+
+
 def test_parse_device_diagnostics_detects_boot_loop() -> None:
     from luxar.adapters.espidf_device import _parse_device_diagnostics
 
@@ -477,6 +608,18 @@ def test_parse_device_diagnostics_detects_boot_loop() -> None:
     assert [diagnostic.kind for diagnostic in diagnostics] == [
         "boot_loop"
     ]
+
+
+def test_parse_device_diagnostics_ignores_corrupted_duplicate_reset_line() -> None:
+    from luxar.adapters.espidf_device import _parse_device_diagnostics
+
+    diagnostics = _parse_device_diagnostics(
+        "rst:0x1 (POWERON_RESET),boot:\ufffdets Jul 29 2019\n"
+        "rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)\n"
+        "I (286) diagnostics: status=ok errors=0 watchdog=armed\n"
+    )
+
+    assert all(diagnostic.kind != "boot_loop" for diagnostic in diagnostics)
 
 
 def test_parse_device_diagnostics_bounds_error_count() -> None:

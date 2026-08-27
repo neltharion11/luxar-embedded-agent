@@ -33,6 +33,9 @@ class BuildEvidence(BaseModel):
     ] | None = None
     # 每份构建证据拥有独立的诊断列表。
     diagnostics: list[BuildDiagnostic] = Field(default_factory=list)
+    # 本次构建实际使用的 ESP-IDF 根目录与版本（供修复/文件探测对齐权威源）。
+    idf_path: str | None = None
+    idf_version: str | None = None
 
     @model_validator(mode="after")
     def validate_result_consistency(self) -> BuildEvidence:

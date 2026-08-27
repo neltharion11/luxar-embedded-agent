@@ -2,6 +2,10 @@ from pathlib import Path
 
 from luxar.adapters.deepseek.fake_client import FakeJsonCompletionClient
 from luxar.adapters.deepseek.planner import DeepSeekPlanner
+from luxar.adapters.deepseek.project_analyzer import DeepSeekProjectAnalyzer
+from luxar.adapters.deepseek.knowledge_task_parser import (
+    DeepSeekKnowledgeTaskParser,
+)
 from luxar.adapters.deepseek.repair_planner import DeepSeekRepairPlanner
 from luxar.adapters.deepseek.requirement_parser import DeepSeekRequirementParser
 from luxar.adapters.deepseek.settings import DeepSeekSettings
@@ -11,7 +15,60 @@ from luxar.adapters.fake_espidf import FakeEspIdf
 from luxar.adapters.fake_project_creator import FakeProjectCreator
 from luxar.adapters.fake_workspace import FakeWorkspace
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
-from luxar.bootstrap import build_deepseek_runtime_context
+from luxar.bootstrap import (
+    build_deepseek_runtime_context,
+    build_deepseek_specialized_runtime_context,
+)
+from luxar.model_config import ModelEndpoint
+
+
+def test_specialized_bootstrap_does_not_construct_firmware_execution_ports() -> None:
+    client = FakeJsonCompletionClient([])
+    workspace = FakeWorkspace([])
+
+    context = build_deepseek_specialized_runtime_context(
+        project_path=Path("firmware"),
+        workspace=workspace,
+        settings=DeepSeekSettings(
+            api_key="test-key",
+            fast_model="fast-test",
+            repair_model="repair-test",
+        ),
+        client=client,
+    )
+
+    assert context.workspace is workspace
+    assert isinstance(context.project_analyzer, DeepSeekProjectAnalyzer)
+    assert isinstance(context.knowledge_task_parser, DeepSeekKnowledgeTaskParser)
+    assert context.project_analyzer._client is client
+    assert context.knowledge_task_parser._client is client
+    assert not hasattr(context, "espidf")
+    assert not hasattr(context, "planner")
+    assert not hasattr(context, "flasher")
+
+
+def test_specialized_bootstrap_selects_pdf_concurrency_from_model_endpoint() -> None:
+    local = build_deepseek_specialized_runtime_context(
+        project_path=Path("firmware"),
+        settings=ModelEndpoint(
+            provider="local",
+            base_url="http://127.0.0.1:11434/v1",
+            model="local-model",
+        ),
+        client=FakeJsonCompletionClient([]),
+    )
+    online = build_deepseek_specialized_runtime_context(
+        project_path=Path("firmware"),
+        settings=ModelEndpoint(
+            provider="deepseek",
+            api_key="test-key",
+            model="deepseek-chat",
+        ),
+        client=FakeJsonCompletionClient([]),
+    )
+
+    assert local.document_analyzer._max_workers == 1  # type: ignore[union-attr]
+    assert online.document_analyzer._max_workers == 4  # type: ignore[union-attr]
 
 
 def test_bootstrap_injects_ports_models_and_one_shared_client() -> None:

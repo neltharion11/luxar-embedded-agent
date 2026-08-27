@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
@@ -11,8 +15,17 @@ from luxar.application.project_analysis import (
     render_project_analysis,
 )
 from luxar.application.state import WorkflowState
-from luxar.domain.devices import ApprovalRequest
+from luxar.domain.devices import ApprovalRequest, FlashEvidence, MonitorEvidence
+from luxar.domain.conversation import explicit_pdf_read_path
+from luxar.domain.interactions import WorkflowDecision, WorkflowInteraction
+from luxar.domain.knowledge_tasks import KnowledgeTask
+from luxar.domain.plans import ExecutionPlan, PlanStep
 from luxar.domain.errors import WorkflowError
+from luxar.knowledge_answering import (
+    EvidenceListKnowledgeAnswerer,
+    prepare_knowledge_evidence,
+    verify_grounded_answer,
+)
 from luxar.ports.errors import CapabilityError
 from luxar.ports.espidf_errors import EspIdfError
 
@@ -62,7 +75,7 @@ def analyze_requirement(
         )
 
     # 节点返回局部更新而不是完整 State；LangGraph 会把这些键合并回当前状态。
-    return {
+    update: dict[str, object] = {
         "requirement": requirement,
         "status": "requirement_analyzed",
         "trace": [
@@ -71,6 +84,9 @@ def analyze_requirement(
             "analyze_requirement",
         ],
     }
+    if runtime.context.interactive_workflow:
+        update["interactive_workflow"] = True
+    return update
 
 
 def create_plan(
@@ -85,6 +101,17 @@ def create_plan(
         requirement,
         project_analysis=state["project_analysis"],
     )
+    analysis = state["project_analysis"]
+    if not analysis.project_exists and not any(
+        step.kind == "create_project" for step in plan.steps
+    ):
+        plan = ExecutionPlan(steps=[
+            PlanStep(
+                kind="create_project",
+                description="创建最小 ESP-IDF 项目骨架并重新读取源码",
+            ),
+            *plan.steps,
+        ])
 
     return {
         "plan": plan,
@@ -93,6 +120,400 @@ def create_plan(
             *state.get("trace", []),
             "create_plan",
         ],
+    }
+
+
+def analyze_knowledge_task(
+    state: WorkflowState, runtime: Runtime[RuntimeContext]
+) -> dict[str, object]:
+    pdf_path = explicit_pdf_read_path(state["task_text"])
+    if pdf_path is not None:
+        return {
+            "knowledge_task": KnowledgeTask(
+                action="read_pdf",
+                summary="读取用户明确指定的本地 PDF",
+                file_path=pdf_path,
+                title=Path(pdf_path.replace("\\", "/")).stem,
+            ),
+            "trace": [*state.get("trace", []), "analyze_knowledge_task"],
+        }
+    parser = runtime.context.knowledge_task_parser
+    if parser is None:
+        raise CapabilityError(category="service", message="未配置知识任务解析能力", retryable=False)
+    task = parser.parse(state["task_text"])
+    return {
+        "knowledge_task": task,
+        "trace": [*state.get("trace", []), "analyze_knowledge_task"],
+    }
+
+
+def review_knowledge_task(state: WorkflowState) -> dict[str, object]:
+    task = state["knowledge_task"]
+    interaction = WorkflowInteraction(
+        kind="knowledge_write",
+        title="确认知识库变更" if task.mutating else "知识库操作计划",
+        summary=task.summary,
+        questions=[f"请补充：{field}" for field in task.missing_fields],
+        options=["批准执行", "补充或修改操作", "取消任务"],
+        operation=task.model_dump(mode="json"),
+    )
+    if not task.mutating and not task.missing_fields:
+        return {
+            "interaction": interaction,
+            "interaction_action": "continue",
+            "trace": [*state.get("trace", []), "review_knowledge_task"],
+        }
+    raw = interrupt(interaction.model_dump(mode="json"))
+    decision = WorkflowDecision.model_validate(raw if isinstance(raw, dict) else {})
+    feedback = " ".join(
+        item for item in (decision.selected_option, decision.feedback.strip()) if item
+    ).strip()
+    trace = [*state.get("trace", []), "review_knowledge_task"]
+    if decision.approved and not task.missing_fields and not feedback:
+        return {"interaction": interaction, "interaction_action": "continue", "trace": trace}
+    if feedback:
+        return {
+            "task_text": state["task_text"] + "\n用户补充：" + feedback,
+            "interaction": interaction,
+            "interaction_action": "replan",
+            "trace": trace,
+        }
+    return {
+        "interaction": interaction,
+        "interaction_action": "failed",
+        "error": WorkflowError.model_validate({
+            "stage": "planning", "category": "approval_rejected",
+            "message": "知识库变更未获批准，未执行任何写入",
+            "retryable": False, "user_suggestion": "可修改操作后重新提交",
+        }),
+        "trace": trace,
+    }
+
+
+def execute_knowledge_task(
+    state: WorkflowState, runtime: Runtime[RuntimeContext]
+) -> dict[str, object]:
+    task = state["knowledge_task"]
+    project_key = runtime.context.project_key or runtime.context.project_path.name
+    if task.action == "read_pdf":
+        raw_path = task.file_path.strip() or task.relative_path.strip()
+        if not raw_path:
+            raise CapabilityError(
+                category="service", message="没有提供 PDF 路径", retryable=False
+            )
+        candidate = Path(raw_path)
+        if candidate.is_absolute():
+            # 模型只能使用用户本轮明确写出的主机路径，不能自行探索其他位置。
+            if raw_path.casefold() not in state["task_text"].casefold():
+                raise CapabilityError(
+                    category="service",
+                    message="模型给出的绝对路径并非用户明确授权的路径",
+                    retryable=False,
+                )
+            source = candidate.expanduser().resolve()
+        else:
+            root = runtime.context.project_path.resolve()
+            source = (root / candidate).resolve()
+            try:
+                source.relative_to(root)
+            except ValueError as error:
+                raise CapabilityError(
+                    category="service", message="PDF 路径越出当前项目", retryable=False
+                ) from error
+        reader = runtime.context.document_reader
+        if reader is None:
+            from luxar.document_reader import PdfDocumentReader
+
+            reader = PdfDocumentReader()
+        from luxar.document_reader import PdfReadProgress, iter_pdf_batches
+
+        pdf_progress_reporter = getattr(
+            runtime.context, "pdf_progress_reporter", None
+        )
+        batches = list(iter_pdf_batches(
+            reader,
+            source,
+            progress_reporter=pdf_progress_reporter,
+        ))
+        content = "\n\n".join(batch.content for batch in batches)
+        total_pages = batches[-1].total_pages if batches else 0
+        analyzer = getattr(runtime.context, "document_analyzer", None)
+        if pdf_progress_reporter is not None and analyzer is not None:
+            pdf_progress_reporter(PdfReadProgress(
+                "analyzing",
+                total_pages,
+                total_pages,
+                total_pages or None,
+                len(batches),
+                "页面读取完成，正在整理 PDF 技术信息",
+            ))
+        report = None
+        analysis_warning = ""
+        if analyzer is not None:
+            try:
+                report = analyzer.analyze(
+                    task_text=state["task_text"],
+                    title=task.title or source.stem,
+                    batches=batches,
+                    progress_reporter=pdf_progress_reporter,
+                )
+            except CapabilityError:
+                analysis_warning = (
+                    "PDF 全文已成功读取，但智能技术提炼服务暂不可用；"
+                    "已降级返回原文预览，可稍后重试自动提炼。"
+                )
+        if report is not None and report.analysis_warnings:
+            analysis_warning = "PDF 技术提炼部分降级：\n- " + "\n- ".join(
+                report.analysis_warnings
+            )
+        if pdf_progress_reporter is not None:
+            pdf_progress_reporter(PdfReadProgress(
+                "completed",
+                total_pages,
+                total_pages,
+                total_pages or None,
+                len(batches),
+                f"PDF 处理完成，共 {total_pages} 页",
+            ))
+        result: dict[str, object] = {
+            "read_pdf": True,
+            "title": task.title or source.stem,
+            "total_pages": total_pages,
+            "batches": len(batches),
+            "sections": len(batches),
+            "characters": len(content),
+            "preview": content[:6000] if report is None else "",
+        }
+        if analysis_warning:
+            result["analysis_warning"] = analysis_warning
+            result["degraded"] = True
+        if report is not None:
+            result["answer"] = report.answer
+            result["technical_context"] = report.technical_context
+        return {
+            "knowledge_result": result,
+            "trace": [*state.get("trace", []), "execute_knowledge_task"],
+        }
+
+    service = runtime.context.knowledge_service
+    if service is None:
+        raise CapabilityError(category="service", message="外部知识库尚未配置", retryable=False)
+    if task.action == "list":
+        result: dict[str, object] = {"documents": service.list_documents(project_key)}
+    elif task.action == "search":
+        evidence = prepare_knowledge_evidence(
+            service.search(project_key=project_key, query=task.query, limit=18)
+        )
+        answerer = runtime.context.knowledge_answerer or EvidenceListKnowledgeAnswerer()
+        answer = answerer.answer(
+            question=state["task_text"],
+            evidence=evidence,
+        )
+        verification = verify_grounded_answer(answer, evidence)
+        if not verification.passed:
+            raise CapabilityError(
+                category="invalid_schema",
+                message="知识答案未通过证据验证",
+                retryable=True,
+            )
+        result = {
+            "answer": answer.answer_markdown,
+            "citations": [
+                {
+                    "evidence_id": item.evidence_id,
+                    "title": item.title,
+                    "source_uri": item.source_uri,
+                    "source_pages": item.source_pages,
+                }
+                for item in evidence
+                if item.evidence_id in answer.cited_evidence_ids
+                or f"[{item.evidence_id}]" in answer.answer_markdown
+            ],
+            "evidence_count": len(evidence),
+            "verification": verification.model_dump(mode="json"),
+        }
+    elif task.action == "delete":
+        result = {"deleted": service.delete_document(
+            project_key=project_key, document_id=task.document_id
+        ), "document_id": task.document_id}
+    elif task.action == "upsert":
+        document = service.ingest(
+            project_key=project_key, source_uri=task.source_uri,
+            title=task.title, content=task.content,
+            metadata={"learned_by": "agent"},
+        )
+        result = {"document_id": document.document_id, "chunks": document.chunks}
+    else:
+        raw_path = task.file_path.strip() or task.relative_path.strip()
+        candidate = Path(raw_path)
+        root = runtime.context.project_path.resolve()
+        if candidate.is_absolute():
+            if raw_path.casefold() not in state["task_text"].casefold():
+                raise CapabilityError(
+                    category="service", message="PDF 绝对路径未经用户明确授权", retryable=False
+                )
+            source = candidate.expanduser().resolve()
+        else:
+            source = (root / candidate).resolve()
+            try:
+                source.relative_to(root)
+            except ValueError as error:
+                raise CapabilityError(category="service", message="PDF 路径越出当前项目", retryable=False) from error
+        imported = service.ingest_pdf(
+            project_key=project_key,
+            source_uri=raw_path.replace("\\", "/"),
+            title=task.title or source.stem,
+            path=source, reader=runtime.context.document_reader,
+            extractor=runtime.context.knowledge_extractor,
+            progress_reporter=getattr(
+                runtime.context, "pdf_progress_reporter", None
+            ),
+        )
+        result = {"total_pages": imported.total_pages, "batches": imported.batches,
+                  "sections": imported.batches,
+                  "knowledge_units": imported.knowledge_units,
+                  "document_ids": [item.document_id for item in imported.documents]}
+    return {
+        "knowledge_result": result,
+        "trace": [*state.get("trace", []), "execute_knowledge_task"],
+    }
+
+
+def propose_solution_learning(
+    state: WorkflowState, runtime: Runtime[RuntimeContext]
+) -> dict[str, object]:
+    """成功实现后提出可复用经验，用户批准后才写入项目知识库。"""
+
+    service = runtime.context.knowledge_service
+    changed = list(dict.fromkeys(state.get("changed_files", [])))
+    if service is None or not changed:
+        return {
+            "learning_result": {"skipped": True},
+            "trace": [*state.get("trace", []), "propose_solution_learning"],
+        }
+    requirement = state.get("requirement")
+    references = state.get("reference_examples", [])
+    interaction = WorkflowInteraction(
+        kind="knowledge_write",
+        title="保存这次验证通过的实现经验",
+        summary=(
+            "代码已通过工作流验证。我可以把本次需求、实际修改文件和采用的 "
+            "ESP-IDF 例程保存为项目知识，供下一次遇到相同设备或接口时优先检索复用。"
+        ),
+        options=["批准保存", "本次不保存"],
+        operation={
+            "action": "upsert",
+            "changed_files": changed,
+            "reference_examples": [item.path for item in references],
+        },
+        allow_feedback=False,
+    )
+    raw = interrupt(interaction.model_dump(mode="json"))
+    decision = WorkflowDecision.model_validate(raw if isinstance(raw, dict) else {})
+    trace = [*state.get("trace", []), "propose_solution_learning"]
+    if not decision.approved:
+        return {"learning_result": {"skipped": True}, "trace": trace}
+    files = runtime.context.workspace.read_project_files(runtime.context.project_path)
+    selected = [item for item in files if item.path in changed]
+    requirement_json = (
+        json.dumps(requirement.model_dump(mode="json"), ensure_ascii=False)
+        if requirement is not None else "{}"
+    )
+    content = "\n".join([
+        "# 已验证的固件实现经验",
+        "## 需求", requirement_json,
+        "## 采用的 ESP-IDF 官方例程",
+        "\n".join(item.path for item in references) or "无",
+        "## 最终源码",
+        *[f"### {item.path}\n```\n{item.content}\n```" for item in selected],
+    ])
+    identity = hashlib.sha256(requirement_json.encode("utf-8")).hexdigest()[:20]
+    document = service.ingest(
+        project_key=runtime.context.project_key or runtime.context.project_path.name,
+        source_uri=f"learned://firmware-solution/{identity}",
+        title="已验证的固件实现：" + (requirement.goal if requirement else identity),
+        content=content,
+        metadata={"kind": "verified_firmware_solution", "changed_files": changed},
+    )
+    return {
+        "learning_result": {"skipped": False, "document_id": document.document_id,
+                            "chunks": document.chunks},
+        "trace": trace,
+    }
+
+
+def review_plan(state: WorkflowState) -> dict[str, object]:
+    """展示完整计划；任何项目或源码写入都位于此中断之后。"""
+
+    plan = state["plan"]
+    interaction = WorkflowInteraction(
+        kind="plan_review",
+        title="确认执行计划",
+        summary=(
+            "下面是完整计划。批准后我才会创建项目或修改源码；"
+            "也可以直接补充配置或提出修改意见，我会据此重新规划。"
+        ),
+        plan=plan,
+        questions=[
+            item.question
+            + (f"（默认：{item.default}）" if item.default else "")
+            + (f"——{item.rationale}" if item.rationale else "")
+            for item in plan.clarifications
+        ],
+        options=[
+            *[option for item in plan.clarifications for option in item.options],
+            "批准并开始执行", "补充要求后重新规划", "取消任务",
+        ][:12],
+    )
+    raw = interrupt(interaction.model_dump(mode="json"))
+    decision = WorkflowDecision.model_validate(raw if isinstance(raw, dict) else {})
+    trace = [*state.get("trace", []), "review_plan"]
+    feedback = " ".join(
+        item for item in (decision.selected_option, decision.feedback.strip()) if item
+    ).strip()
+    if decision.approved and not feedback:
+        return {
+            "interaction": interaction,
+            "interaction_action": "continue",
+            "plan_approved": True,
+            "status": "planned",
+            "trace": trace,
+        }
+    if feedback:
+        revisions = state.get("plan_revision_count", 0) + 1
+        if revisions > 6:
+            return {
+                "interaction": interaction,
+                "interaction_action": "failed",
+                "error": WorkflowError.model_validate({
+                    "stage": "planning",
+                    "category": "model_output",
+                    "message": "计划修改次数超过安全上限",
+                    "retryable": False,
+                    "user_suggestion": "请重新发起任务并一次说明核心要求",
+                }),
+                "trace": trace,
+            }
+        return {
+            "task_text": state["task_text"] + "\n用户对计划的补充：" + feedback,
+            "interaction": interaction,
+            "interaction_action": "replan",
+            "plan_revision_count": revisions,
+            "plan_approved": False,
+            "plan_index": 0,
+            "trace": trace,
+        }
+    return {
+        "interaction": interaction,
+        "interaction_action": "failed",
+        "error": WorkflowError.model_validate({
+            "stage": "planning",
+            "category": "approval_rejected",
+            "message": "执行计划未获批准，项目未被修改",
+            "retryable": False,
+            "user_suggestion": "可以重新发起任务或提交计划修改建议",
+        }),
+        "trace": trace,
     }
 
 
@@ -110,11 +531,15 @@ def analyze_project(
         analyzer=context.project_analyzer,
         persistence=context.persistence,
         project_key=context.project_key,
+        inspection_request=(
+            state["task_text"] if state.get("task_mode") == "inspection" else None
+        ),
     )
     update: dict[str, object] = {
         "project_analysis": analysis,
         "status": "project_analyzed",
         "trace": [*state.get("trace", []), "analyze_project"],
+        "interactive_workflow": context.interactive_workflow,
     }
 
     # A successful creator followed by a missing project is contradictory tool
@@ -143,6 +568,7 @@ def report_project(
         "inspection_response": render_project_analysis(
             runtime.context.project_path.name,
             state["project_analysis"],
+            state.get("task_text"),
         ),
         "status": "completed",
         "trace": [*state.get("trace", []), "report_project"],
@@ -266,6 +692,7 @@ def implement_change(
         ],
         "project_analysis": refreshed,
         "status": "implemented",
+        "knowledge_available": context.knowledge_service is not None,
         "trace": [*state.get("trace", []), "implement_change"],
     }
 
@@ -372,21 +799,46 @@ def flash_project(
             retryable=False,
         )
 
-    # 烧录成功与否只能由 EspIdfFlashPort 返回的真实证据决定。
-    evidence = runtime.context.flasher.flash(
-        runtime.context.project_path,
-        port,
-    )
+    # 如果设备适配器提供协调式 flash→monitor 能力，由适配器保证两个
+    # 有界进程严格串行，烧录完成后再进入短窗口 monitor。
+    combined = getattr(runtime.context.flasher, "flash_and_monitor", None)
+    monitor_evidence: MonitorEvidence | None = None
+    if callable(combined):
+        raw_evidence, raw_monitor = combined(
+            runtime.context.project_path,
+            port,
+            runtime.context.monitor_timeout_seconds,
+        )
+        evidence = (
+            raw_evidence
+            if isinstance(raw_evidence, FlashEvidence)
+            else FlashEvidence.model_validate(raw_evidence)
+        )
+        monitor_evidence = (
+            raw_monitor
+            if isinstance(raw_monitor, MonitorEvidence)
+            else MonitorEvidence.model_validate(raw_monitor)
+        )
+    else:
+        # 兼容旧 Adapter/Fake：没有协调能力时仍按原有 flash→monitor 路由。
+        evidence = runtime.context.flasher.flash(
+            runtime.context.project_path,
+            port,
+        )
 
-    return {
+    update: dict[str, object] = {
         "flash_evidence": evidence,
         "flash_attempts": state.get("flash_attempts", 0) + 1,
         "status": "flashing",
+        "flash_monitor_combined": monitor_evidence is not None,
         "trace": [
             *state.get("trace", []),
             "flash_project",
         ],
     }
+    if monitor_evidence is not None:
+        update["monitor_evidence"] = monitor_evidence
+    return update
 
 
 def build_project(
@@ -415,13 +867,44 @@ def build_project(
 def request_clarification(
     state: WorkflowState,
 ) -> dict[str, object]:
-    # 该节点不调用外部能力，所以不需要 Runtime 参数；当前切片在此结束工作流。
+    if not state.get("interactive_workflow"):
+        return {
+            "status": "needs_clarification",
+            "trace": [*state.get("trace", []), "request_clarification"],
+        }
+    missing = state["requirement"].blocking_missing_fields
+    interaction = WorkflowInteraction(
+        kind="clarification",
+        title="补充实现所需信息",
+        summary="这些信息会直接影响实现；回复后我会沿用本次上下文继续规划。",
+        questions=[f"请补充：{field}" for field in missing],
+        options=[],
+    )
+    raw = interrupt(interaction.model_dump(mode="json"))
+    decision = WorkflowDecision.model_validate(raw if isinstance(raw, dict) else {})
+    feedback = " ".join(
+        item for item in (decision.selected_option, decision.feedback.strip()) if item
+    ).strip()
+    trace = [*state.get("trace", []), "request_clarification"]
+    if feedback:
+        return {
+            "task_text": state["task_text"] + "\n用户补充：" + feedback,
+            "interaction": interaction,
+            "interaction_action": "replan",
+            "status": "needs_clarification",
+            "trace": trace,
+        }
     return {
-        "status": "needs_clarification",
-        "trace": [
-            *state.get("trace", []),
-            "request_clarification",
-        ],
+        "interaction": interaction,
+        "interaction_action": "failed",
+        "error": WorkflowError.model_validate({
+            "stage": "requirement_analysis",
+            "category": "approval_rejected",
+            "message": "用户取消了需求澄清",
+            "retryable": False,
+            "user_suggestion": "补充缺失信息后重新发起任务",
+        }),
+        "trace": trace,
     }
 
 
@@ -455,6 +938,30 @@ def repair_project(
     state: WorkflowState,
     runtime: Runtime[RuntimeContext],
 ) -> dict[str, object]:
+    interaction = WorkflowInteraction(
+        kind="repair_review",
+        title="确认生成并写入修复代码",
+        summary=(
+            "构建或设备验证发现了原计划之外的问题。批准后我会依据当前源码和"
+            "受控诊断生成修复并重新构建；拒绝则保留现有文件并结束任务。"
+        ),
+        options=["批准修复", "停止并保留当前文件"],
+        operation={"action": "repair_code", "origin": state.get("repair_origin") or "build"},
+        allow_feedback=False,
+    )
+    if runtime.context.interactive_workflow:
+        raw = interrupt(interaction.model_dump(mode="json"))
+        decision = WorkflowDecision.model_validate(raw if isinstance(raw, dict) else {})
+        if not decision.approved:
+            return {
+                "interaction": interaction,
+                "error": WorkflowError.model_validate({
+                    "stage": "repair", "category": "approval_rejected",
+                    "message": "修复代码未获批准，未执行新的源码写入",
+                    "retryable": False, "user_suggestion": "可检查构建诊断后重新规划",
+                }),
+                "trace": [*state.get("trace", []), "repair_project"],
+            }
     project_path = runtime.context.project_path
     workspace = runtime.context.workspace
     repair_planner = runtime.context.repair_planner

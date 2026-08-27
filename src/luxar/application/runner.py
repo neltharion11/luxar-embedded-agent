@@ -7,10 +7,9 @@ resume_workflow 用 Command(resume=...) 在同一 checkpoint 上继续执行。
 
 from __future__ import annotations
 
-import re
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from langgraph.types import Command
@@ -20,6 +19,7 @@ from luxar.application.graph import build_graph
 from luxar.application.nodes import failed
 from luxar.application.state import WorkflowState
 from luxar.domain.devices import ApprovalRequest
+from luxar.domain.interactions import WorkflowDecision, WorkflowInteraction
 from luxar.domain.errors import WorkflowError
 from luxar.ports.errors import CapabilityError
 from luxar.ports.espidf_errors import EspIdfError
@@ -127,7 +127,21 @@ class WorkflowProgress:
     narrative: str = ""
 
 
-ProgressReporter = Callable[[WorkflowProgress], None]
+@dataclass(frozen=True)
+class PdfWorkflowProgress:
+    stage: ProgressStage
+    message: str
+    attempts: int
+    progress_type: str
+    current: int
+    total: int
+    unit: str
+    phase: str
+    batch: int
+    narrative: str = ""
+
+
+ProgressReporter = Callable[[WorkflowProgress | PdfWorkflowProgress], None]
 
 
 _PROGRESS_BY_NODE: dict[
@@ -159,13 +173,6 @@ _STEP_LABELS = {
 }
 
 
-def _safe_identifier(value: str, fallback: str) -> str:
-    normalized = value.strip()
-    if re.fullmatch(r"[A-Za-z0-9_-]{1,24}", normalized):
-        return normalized
-    return fallback
-
-
 def _changed_file_text(state: WorkflowState) -> str:
     paths = list(dict.fromkeys(state.get("changed_files", [])))
     if not paths:
@@ -180,28 +187,8 @@ def _narrative_from_state(state: WorkflowState, node: str) -> str:
     """Build bounded prose from validated state without exposing raw logs."""
 
     if node == "analyze_requirement":
-        requirement = state.get("requirement")
-        if requirement is None:
-            return "需求信息已完成结构化整理，下一步核对项目实际代码。\n\n"
-        target = _safe_identifier(requirement.target, "已选择的芯片")
-        if requirement.project_type == "empty":
-            return (
-                f"需求目标：为 {target} 准备一个可构建的基础空项目；"
-                "不添加 GPIO、网络或其他业务功能。\n\n"
-            )
-        peripheral_names = [
-            _safe_identifier(item.kind, "自定义外设").upper()
-            for item in requirement.peripherals[:4]
-        ]
-        peripheral_text = (
-            "，涉及 " + "、".join(peripheral_names)
-            if peripheral_names
-            else "，目前不需要预设任何外设"
-        )
-        return (
-            f"需求目标：目标芯片为 {target}{peripheral_text}。"
-            "接下来将与当前源码逐项对照。\n\n"
-        )
+        # 需求解析是内部动作，不单独冒充一个角色向用户汇报。
+        return ""
 
     if node == "create_plan":
         plan = state.get("plan")
@@ -214,7 +201,7 @@ def _narrative_from_state(state: WorkflowState, node: str) -> str:
             prefix = "处理方案"
             if "implement_change" not in [step.kind for step in plan.steps]:
                 prefix += "（本次不写入源码）"
-            return prefix + "：" + " → ".join(labels) + "。\n\n"
+            return "结合当前源码，我整理了执行顺序：" + " → ".join(labels) + "。\n\n"
         return "处理方案已生成，将按依赖顺序执行。\n\n"
 
     if node == "analyze_project":
@@ -222,9 +209,9 @@ def _narrative_from_state(state: WorkflowState, node: str) -> str:
         if analysis is None:
             return "正在读取当前项目代码并建立可验证的项目快照。\n\n"
         if not analysis.project_exists:
-            return "项目现状：目录尚不存在，需要先创建基础工程并重新分析。\n\n"
+            return "我检查了项目位置：目录尚不存在，计划会先创建基础工程，再重新读取源码。\n\n"
         cache_note = "（源码未变化，复用已有分析）" if analysis.cache_hit else ""
-        return f"项目现状{cache_note}：{analysis.summary}\n\n"
+        return f"我检查了当前源码{cache_note}：{analysis.summary}\n\n"
 
     if node == "create_project":
         created = state.get("created_project")
@@ -248,12 +235,12 @@ def _narrative_from_state(state: WorkflowState, node: str) -> str:
                 else "本地关键词检索确认"
             )
             return (
-                f"例程复用：通过{retrieval}，找到与需求匹配的 "
+                f"实现前，我通过{retrieval}找到了与需求匹配的 "
                 f"ESP-IDF 官方例程 {paths}。"
                 "实现时将优先沿用其中兼容的 API 和初始化方式。\n\n"
             )
         return (
-            "例程复用：当前 ESP-IDF 安装中没有找到足够匹配的官方例程，"
+            "实现前，我在当前 ESP-IDF 安装中没有找到足够匹配的官方例程，"
             "本次将根据现有项目结构实现，并由构建结果验证。\n\n"
         )
 
@@ -439,10 +426,18 @@ class WorkflowRunResult:
 
     state: WorkflowState
     thread_id: str
-    pending_approval: ApprovalRequest | None = None
+    pending_approval: ApprovalRequest | WorkflowInteraction | None = None
 
 
-ApprovalHandler = Callable[[ApprovalRequest], bool]
+ApprovalHandler = Callable[[ApprovalRequest | WorkflowInteraction], bool | WorkflowDecision]
+
+
+def _parse_interaction(payload: object) -> ApprovalRequest | WorkflowInteraction:
+    if isinstance(payload, dict) and payload.get("kind") in {
+        "plan_review", "clarification", "knowledge_write", "repair_review"
+    }:
+        return WorkflowInteraction.model_validate(payload)
+    return ApprovalRequest.model_validate(payload)
 
 
 def _normalize_capability_failure(
@@ -480,13 +475,31 @@ def _drive_graph(
     # interrupt() 需要带 checkpointer 编译的 Graph；context.checkpointer
     # 由 Bootstrap 注入（正式运行使用 SqliteSaver，测试可回退
     # InMemorySaver）。
-    graph = build_graph(checkpointer=context.checkpointer)
+    runtime_context = context
+    if progress_reporter is not None:
+        runtime_context = replace(
+            context,
+            pdf_progress_reporter=lambda progress: progress_reporter(
+                PdfWorkflowProgress(
+                    stage="analysis",
+                    message=progress.message,
+                    attempts=0,
+                    progress_type="pdf",
+                    current=progress.completed_pages,
+                    total=progress.total_pages,
+                    unit="pages",
+                    phase=progress.phase,
+                    batch=progress.batch_number,
+                )
+            ),
+        )
+    graph = build_graph(checkpointer=runtime_context.checkpointer)
     config = {"configurable": {"thread_id": thread_id}}
 
     snapshots = iter(
         graph.stream(
             graph_input,
-            context=context,
+            context=runtime_context,
             config=config,
             stream_mode="values",
         )
@@ -523,7 +536,7 @@ def _drive_graph(
         # 该键是 LangGraph 内部数据，必须从业务 State 中剥离。
         if "__interrupt__" in snapshot:
             interrupt_payload = snapshot["__interrupt__"][0].value
-            request = ApprovalRequest.model_validate(interrupt_payload)
+            request = _parse_interaction(interrupt_payload)
             business_state = cast(
                 WorkflowState,
                 {
@@ -537,7 +550,11 @@ def _drive_graph(
                 {
                     **business_state,
                     "approval_status": "pending",
-                    "approval_request": request,
+                    **(
+                        {"approval_request": request}
+                        if isinstance(request, ApprovalRequest)
+                        else {"interaction": request}
+                    ),
                 },
             )
 
@@ -550,11 +567,18 @@ def _drive_graph(
                 )
 
             # 有回调时立即决策并继续同一次运行。
-            approved = approval_handler(request)
+            handler_result = approval_handler(request)
+            decision = (
+                handler_result
+                if isinstance(handler_result, WorkflowDecision)
+                else WorkflowDecision(approved=bool(handler_result))
+            )
             return resume_workflow(
                 thread_id=thread_id,
                 context=context,
-                approved=approved,
+                approved=decision.approved,
+                feedback=decision.feedback,
+                selected_option=decision.selected_option,
                 progress_reporter=progress_reporter,
                 approval_handler=approval_handler,
             )
@@ -603,6 +627,8 @@ def resume_workflow(
     thread_id: str,
     context: RuntimeContext,
     approved: bool,
+    feedback: str = "",
+    selected_option: str | None = None,
     progress_reporter: ProgressReporter | None = None,
     approval_handler: ApprovalHandler | None = None,
 ) -> WorkflowRunResult:
@@ -617,7 +643,11 @@ def resume_workflow(
     )
 
     return _drive_graph(
-        Command(resume={"approved": bool(approved)}),
+        Command(resume=WorkflowDecision(
+            approved=bool(approved),
+            feedback=feedback,
+            selected_option=selected_option,
+        ).model_dump(mode="json")),
         context=context,
         thread_id=thread_id,
         progress_reporter=progress_reporter,

@@ -179,3 +179,23 @@ def test_live_completed_message_summarizes_changed_files_without_full_report() -
         "构建验证通过，最终返回码为 0。"
     )
     assert "项目判断" not in message
+
+
+def test_live_pdf_message_returns_extracted_content_instead_of_firmware_summary() -> None:
+    state = WorkflowState(
+        status="completed",
+        knowledge_result={
+            "read_pdf": True,
+            "title": "OLED 规格书",
+            "total_pages": 37,
+            "batches": 4,
+            "characters": 121249,
+            "preview": "## 第 1 页\nOLED Product Specification",
+        },
+    )
+
+    message = live_message_for_state(state)
+
+    assert "PDF 已完整分批读取：共 37 页" in message
+    assert "OLED Product Specification" in message
+    assert "本次没有修改源码" not in message

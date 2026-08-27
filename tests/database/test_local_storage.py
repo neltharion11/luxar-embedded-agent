@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import pytest
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -106,6 +107,41 @@ def test_sqlite_repository_survives_reopen(tmp_path: Path) -> None:
     assert reopened.get_pending_approval("0:test") is not None
 
 
+def test_sqlite_conversation_stream_survives_reopen_and_resumes_by_sequence(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "conversation-stream.sqlite3"
+    repository = SQLitePersistence(database)
+    repository.start_conversation_stream(
+        thread_id="stream-1",
+        task_key="0:test",
+        user_message="继续",
+    )
+    repository.append_conversation_stream_event(
+        "stream-1", event="token", data={"token": "第一步完成。"}
+    )
+    checkpoint = repository.append_conversation_stream_event(
+        "stream-1",
+        event="tool_call",
+        data={"tool_call": "workspace_build"},
+    )
+    repository.append_conversation_stream_event(
+        "stream-1", event="token", data={"token": "开始构建。"}
+    )
+
+    reopened = SQLitePersistence(database)
+    active = reopened.get_active_conversation_stream("0:test")
+    assert active is not None
+    assert active.user_message == "继续"
+    assert active.assistant_content == "第一步完成。开始构建。"
+    replay = reopened.list_conversation_stream_events(
+        "stream-1", after_sequence=checkpoint
+    )
+    assert [(item.sequence, item.event, item.data) for item in replay] == [
+        (checkpoint + 1, "token", {"token": "开始构建。"})
+    ]
+
+
 def test_sqlite_returns_latest_completed_run_and_skips_incomplete_run(
     tmp_path: Path,
 ) -> None:
@@ -126,10 +162,35 @@ def test_sqlite_returns_latest_completed_run_and_skips_incomplete_run(
         )
 
     latest = repository.get_latest_completed_run("0:test")
+    latest_any_status = repository.get_latest_run("0:test")
 
     assert latest is not None
     assert latest.thread_id == "completed"
     assert latest.result["changed_files"] == ["main/main.c"]
+    assert latest_any_status is not None
+    assert latest_any_status.thread_id == "later"
+    assert latest_any_status.status == "failed"
+
+
+def test_sqlite_latest_run_exposes_unfinished_workflow_family(
+    tmp_path: Path,
+) -> None:
+    repository = SQLitePersistence(tmp_path / "luxar-running.sqlite3")
+    repository.start_run(
+        thread_id="knowledge-running",
+        task_key="0:test",
+        project_name="test",
+        root_index=0,
+        task_text="读取文档",
+        runtime_config={"workflow_family": "knowledge_task"},
+    )
+
+    latest = repository.get_latest_run("0:test")
+
+    assert latest is not None
+    assert latest.status == "running"
+    assert latest.result == {}
+    assert latest.workflow_family == "knowledge_task"
 
 
 def test_message_import_is_atomic_and_idempotent(tmp_path: Path) -> None:
@@ -227,3 +288,39 @@ def test_lancedb_knowledge_index_persists_and_filters_projects(
     )
     assert reopened.count_knowledge_documents("0:test") == 1
     assert [match.document_id for match in matches] == ["doc-a"]
+
+
+def test_lancedb_empty_index_rebuilds_for_new_embedding_dimensions(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "knowledge.lance"
+    LanceDBKnowledgeIndex(path, dimensions=3)
+
+    reopened = LanceDBKnowledgeIndex(path, dimensions=5)
+
+    vector_type = reopened._db.open_table(reopened._CHUNKS).schema.field(
+        "vector"
+    ).type
+    assert vector_type.list_size == 5
+    assert reopened.search_knowledge(
+        project_key="0:test",
+        query_text="empty",
+        query_embedding=[0.0] * 5,
+    ) == []
+
+
+def test_lancedb_populated_index_rejects_dimension_change(tmp_path: Path) -> None:
+    path = tmp_path / "knowledge.lance"
+    index = LanceDBKnowledgeIndex(path, dimensions=3)
+    index.replace_document(
+        document_id="doc-a",
+        project_key="0:test",
+        source_uri="manual://esp-idf",
+        title="ESP-IDF manual",
+        content_hash="a",
+        metadata={},
+        chunks=[("idf.py build", 2, [1.0, 0.0, 0.0])],
+    )
+
+    with pytest.raises(ValueError, match="重新索引"):
+        LanceDBKnowledgeIndex(path, dimensions=5)

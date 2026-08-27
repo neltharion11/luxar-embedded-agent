@@ -6,6 +6,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from luxar.checkpoint_serde import create_checkpoint_serializer
 from luxar.database.migration_runner import MigrationRunner
 from luxar.database.settings import DatabaseSettings
 
@@ -97,7 +98,10 @@ class DatabaseRuntime:
         )
         try:
             checkpoint_pool.open(wait=True)
-            saver = PostgresSaver(checkpoint_pool)
+            saver = PostgresSaver(
+                checkpoint_pool,
+                serde=create_checkpoint_serializer(),
+            )
             saver.setup()
         except Exception as error:
             checkpoint_pool.close()

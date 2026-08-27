@@ -9,11 +9,24 @@ from luxar.application.state import WorkflowState
 
 def route_from_start(
     state: WorkflowState,
-) -> Literal["analyze_requirement", "analyze_project"]:
+) -> Literal["analyze_requirement", "analyze_project", "analyze_knowledge_task"]:
     # 项目检查不需要伪造固件需求，但仍然必须进入同一个代码分析节点。
     if state.get("task_mode") == "inspection":
         return "analyze_project"
+    if state.get("task_mode") == "knowledge":
+        return "analyze_knowledge_task"
     return "analyze_requirement"
+
+
+def route_after_knowledge_review(
+    state: WorkflowState,
+) -> Literal["execute_knowledge_task", "analyze_knowledge_task", "failed"]:
+    action = state.get("interaction_action")
+    if action == "continue":
+        return "execute_knowledge_task"
+    if action == "replan":
+        return "analyze_knowledge_task"
+    return "failed"
 
 
 def route_after_requirement(
@@ -30,14 +43,43 @@ def route_after_requirement(
 
 def route_after_project_analysis(
     state: WorkflowState,
-) -> Literal["report_project", "create_project", "create_plan", "failed"]:
+) -> Literal["report_project", "create_project", "create_plan", "execute_next_step", "failed"]:
     if "error" in state:
         return "failed"
     if state.get("task_mode") == "inspection":
         return "report_project"
-    if state["project_analysis"].project_exists:
-        return "create_plan"
-    return "create_project"
+    if "created_project" in state and "plan" in state:
+        return "execute_next_step"
+    if not state["project_analysis"].project_exists and not state.get("interactive_workflow"):
+        return "create_project"
+    return "create_plan"
+
+
+def route_after_plan_created(
+    state: WorkflowState,
+) -> Literal["review_plan", "execute_next_step"]:
+    return "review_plan" if state.get("interactive_workflow") else "execute_next_step"
+
+
+def route_after_plan_review(
+    state: WorkflowState,
+) -> Literal["execute_next_step", "analyze_requirement", "failed"]:
+    action = state.get("interaction_action")
+    if action == "continue":
+        return "execute_next_step"
+    if action == "replan":
+        return "analyze_requirement"
+    return "failed"
+
+
+def route_after_clarification(
+    state: WorkflowState,
+) -> Literal["analyze_requirement", "failed", "completed"]:
+    if not state.get("interactive_workflow"):
+        return "completed"
+    if state.get("interaction_action") == "replan":
+        return "analyze_requirement"
+    return "failed"
 
 
 def route_after_dispatch(
@@ -48,7 +90,7 @@ def route_after_dispatch(
     "build_project",
     "request_flash_approval",
     "monitor_project",
-    "completed",
+    "propose_solution_learning",
     "failed",
 ]:
     # 已实现步骤进入对应节点；未实现步骤由分发器写入固定错误并路由到 failed。
@@ -71,7 +113,11 @@ def route_after_dispatch(
 
     # 计划执行完毕时分发器写入 None，进入 completed 终态。
     if pending is None:
-        return "completed"
+        return (
+            "propose_solution_learning"
+            if state.get("knowledge_available") and state.get("changed_files")
+            else "completed"
+        )
 
     return "failed"
 
@@ -85,7 +131,7 @@ def route_after_project_creation(
     if evidence.success:
         # 缺失项目由 Graph 在规划前创建；旧计划中的 create_project 仍按
         # 游标语义兼容执行，避免改变已持久化 checkpoint 的含义。
-        return "execute_next_step" if "plan" in state else "analyze_project"
+        return "analyze_project"
 
     return "failed"
 
@@ -105,6 +151,7 @@ def route_after_flash(
 ) -> Literal[
     "execute_next_step",
     "monitor_project",
+    "analyze_device_logs",
     "flash_project",
     "failed",
 ]:
@@ -113,6 +160,8 @@ def route_after_flash(
     attempts = state.get("flash_attempts", 0)
 
     if evidence.success:
+        if state.get("flash_monitor_combined"):
+            return "analyze_device_logs"
         # 设备回路中的重烧录必须回到监控，而不是重新走计划游标。
         if state.get("repair_origin") == "monitor":
             return "monitor_project"
@@ -130,12 +179,16 @@ def route_after_flash(
 
 def route_after_diagnosis(
     state: WorkflowState,
-) -> Literal["repair_project", "completed", "failed"]:
+) -> Literal["repair_project", "propose_solution_learning", "failed"]:
     # 健康即完成；需要修复进入设备回路；其余情况终止（节点已写入错误）。
     diagnosis = state["device_diagnosis"]
 
     if diagnosis.healthy:
-        return "completed"
+        return (
+            "propose_solution_learning"
+            if state.get("knowledge_available") and state.get("changed_files")
+            else "completed"
+        )
 
     if diagnosis.repair_needed and "error" not in state:
         return "repair_project"
@@ -178,3 +231,7 @@ def route_after_build(
         return "build_project"
 
     return "failed"
+
+
+def route_after_repair(state: WorkflowState) -> Literal["build_project", "failed"]:
+    return "failed" if "error" in state else "build_project"

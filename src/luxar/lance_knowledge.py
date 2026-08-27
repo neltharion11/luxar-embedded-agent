@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from luxar.database.persistence import KnowledgeMatch
+from luxar.domain.knowledge_atoms import KnowledgeChunk
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -40,6 +41,29 @@ class LanceDBKnowledgeIndex:
             raise RuntimeError("未安装 LanceDB") from error
         self._db = lancedb.connect(str(self.path))
         names = set(self._db.list_tables().tables)
+
+        def create_chunks_table() -> None:
+            self._db.create_table(
+                self._CHUNKS,
+                schema=pa.schema(
+                    [
+                        pa.field("chunk_id", pa.string()),
+                        pa.field("document_id", pa.string()),
+                        pa.field("project_key", pa.string()),
+                        pa.field("source_uri", pa.string()),
+                        pa.field("title", pa.string()),
+                        pa.field("ordinal", pa.int32()),
+                        pa.field("content", pa.string()),
+                        pa.field("token_count", pa.int32()),
+                        pa.field("metadata_json", pa.string()),
+                        pa.field(
+                            "vector",
+                            pa.list_(pa.float32(), self.dimensions),
+                        ),
+                    ]
+                ),
+            )
+
         if self._DOCUMENTS not in names:
             self._db.create_table(
                 self._DOCUMENTS,
@@ -55,25 +79,36 @@ class LanceDBKnowledgeIndex:
                 ),
             )
         if self._CHUNKS not in names:
-            self._db.create_table(
-                self._CHUNKS,
-                schema=pa.schema(
-                    [
-                        pa.field("chunk_id", pa.string()),
-                        pa.field("document_id", pa.string()),
-                        pa.field("project_key", pa.string()),
-                        pa.field("source_uri", pa.string()),
-                        pa.field("title", pa.string()),
-                        pa.field("ordinal", pa.int32()),
-                        pa.field("content", pa.string()),
-                        pa.field("token_count", pa.int32()),
-                        pa.field(
-                            "vector",
-                            pa.list_(pa.float32(), self.dimensions),
-                        ),
+            create_chunks_table()
+        else:
+            chunk_table = self._db.open_table(self._CHUNKS)
+            vector_type = chunk_table.schema.field("vector").type
+            stored_dimensions = getattr(vector_type, "list_size", None)
+            if stored_dimensions != self.dimensions:
+                document_table = self._db.open_table(self._DOCUMENTS)
+                if (
+                    chunk_table.count_rows() == 0
+                    and document_table.count_rows() == 0
+                ):
+                    self._db.drop_table(self._CHUNKS)
+                    create_chunks_table()
+                else:
+                    raise ValueError(
+                        "Embedding 向量维度与现有知识库不一致；"
+                        "切换模型前需要重新索引知识文档"
+                    )
+            elif "metadata_json" not in chunk_table.schema.names:
+                # LanceDB schemas are immutable across older releases. Preserve
+                # existing vectors while adding atom metadata required by v2.
+                legacy_rows = chunk_table.to_arrow().to_pylist()
+                self._db.drop_table(self._CHUNKS)
+                create_chunks_table()
+                if legacy_rows:
+                    migrated = [
+                        {**row, "metadata_json": "{}"}
+                        for row in legacy_rows
                     ]
-                ),
-            )
+                    self._db.open_table(self._CHUNKS).add(migrated)
 
     def health(self) -> bool:
         try:
@@ -90,12 +125,22 @@ class LanceDBKnowledgeIndex:
         title: str,
         content_hash: str,
         metadata: dict[str, object],
-        chunks: list[tuple[str, int, list[float]]],
+        chunks: list[KnowledgeChunk | tuple[str, int, list[float]]],
     ) -> None:
-        for _, _, vector in chunks:
-            if len(vector) != self.dimensions:
+        normalized_chunks = [
+            chunk
+            if isinstance(chunk, KnowledgeChunk)
+            else KnowledgeChunk(
+                content=chunk[0],
+                token_count=chunk[1],
+                embedding=chunk[2],
+            )
+            for chunk in chunks
+        ]
+        for chunk in normalized_chunks:
+            if len(chunk.embedding) != self.dimensions:
                 raise ValueError("知识向量维度与 LanceDB 配置不一致")
-            if any(not math.isfinite(value) for value in vector):
+            if any(not math.isfinite(value) for value in chunk.embedding):
                 raise ValueError("知识向量包含非有限值")
 
         document_filter = f"document_id = {_sql_literal(document_id)}"
@@ -120,7 +165,7 @@ class LanceDBKnowledgeIndex:
                     }
                 ]
             )
-            if chunks:
+            if normalized_chunks:
                 chunk_table.add(
                     [
                         {
@@ -130,11 +175,16 @@ class LanceDBKnowledgeIndex:
                             "source_uri": source_uri,
                             "title": title,
                             "ordinal": ordinal,
-                            "content": content,
-                            "token_count": token_count,
-                            "vector": vector,
+                            "content": chunk.content,
+                            "token_count": chunk.token_count,
+                            "metadata_json": json.dumps(
+                                chunk.metadata,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                            "vector": chunk.embedding,
                         }
-                        for ordinal, (content, token_count, vector) in enumerate(chunks)
+                        for ordinal, chunk in enumerate(normalized_chunks)
                     ]
                 )
 
@@ -196,6 +246,7 @@ class LanceDBKnowledgeIndex:
                     "ordinal": 0,
                     "content": content,
                     "token_count": max(1, len(content) // 4),
+                    "metadata_json": "{}",
                     "vector": [float(value) for value in vector],
                 }
             )
@@ -251,17 +302,52 @@ class LanceDBKnowledgeIndex:
             lexical = self._lexical_score(query_text, str(row["content"]))
             ranked.append((0.8 * semantic + 0.2 * lexical, row))
         ranked.sort(key=lambda item: item[0], reverse=True)
-        return [
-            KnowledgeMatch(
-                document_id=str(row["document_id"]),
-                title=str(row["title"]),
-                source_uri=str(row["source_uri"]),
-                ordinal=int(row["ordinal"]),
-                content=str(row["content"]),
-                score=score,
-            )
-            for score, row in ranked[:limit]
-        ]
+        return [self._match(row, score) for score, row in ranked[:limit]]
+
+    @staticmethod
+    def _match(row: dict[str, Any], score: float) -> KnowledgeMatch:
+        raw_metadata = row.get("metadata_json", "{}")
+        try:
+            metadata = json.loads(str(raw_metadata))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        pages = metadata.get("source_pages", [])
+        conditions = metadata.get("applicable_conditions", [])
+        limitations = metadata.get("limitations", [])
+        return KnowledgeMatch(
+            document_id=str(row["document_id"]),
+            title=str(row["title"]),
+            source_uri=str(row["source_uri"]),
+            ordinal=int(row["ordinal"]),
+            content=str(row["content"]),
+            score=score,
+            knowledge_id=(
+                str(metadata["knowledge_id"])
+                if metadata.get("knowledge_id")
+                else None
+            ),
+            subject=(str(metadata["subject"]) if metadata.get("subject") else None),
+            category=(
+                str(metadata["category"]) if metadata.get("category") else None
+            ),
+            source_pages=tuple(
+                int(page) for page in pages if isinstance(page, int) and page > 0
+            ) if isinstance(pages, list) else (),
+            source_section=(
+                str(metadata["source_section"])
+                if metadata.get("source_section")
+                else None
+            ),
+            applicable_conditions=tuple(
+                str(value) for value in conditions if isinstance(value, str)
+            ) if isinstance(conditions, list) else (),
+            limitations=tuple(
+                str(value) for value in limitations if isinstance(value, str)
+            ) if isinstance(limitations, list) else (),
+            metadata={str(key): value for key, value in metadata.items()},
+        )
 
     def search_sdk_knowledge(
         self,
@@ -315,17 +401,7 @@ class LanceDBKnowledgeIndex:
             semantic = max(0.0, min(1.0, (cosine + 1.0) / 2.0))
             ranked.append((0.8 * lexical + 0.2 * semantic, row))
         ranked.sort(key=lambda item: (-item[0], str(item[1]["source_uri"])))
-        return [
-            KnowledgeMatch(
-                document_id=str(row["document_id"]),
-                title=str(row["title"]),
-                source_uri=str(row["source_uri"]),
-                ordinal=int(row["ordinal"]),
-                content=str(row["content"]),
-                score=score,
-            )
-            for score, row in ranked[:limit]
-        ]
+        return [self._match(row, score) for score, row in ranked[:limit]]
 
     def count_knowledge_documents(self, project_key: str) -> int:
         with self._lock:
@@ -335,3 +411,58 @@ class LanceDBKnowledgeIndex:
                     filter=f"project_key = {_sql_literal(project_key)}"
                 )
             )
+
+    def list_knowledge_documents(self, project_key: str) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._db.open_table(self._DOCUMENTS).to_arrow().to_pylist()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            if str(row["project_key"]) != project_key:
+                continue
+            result.append({
+                "document_id": str(row["document_id"]),
+                "source_uri": str(row["source_uri"]),
+                "title": str(row["title"]),
+                "content_hash": str(row["content_hash"]),
+                "metadata": json.loads(str(row["metadata_json"]) or "{}"),
+            })
+        return sorted(result, key=lambda item: str(item["source_uri"]))
+
+    def get_knowledge_document(
+        self, *, project_key: str, document_id: str
+    ) -> dict[str, object] | None:
+        documents = self.list_knowledge_documents(project_key)
+        document = next(
+            (item for item in documents if item["document_id"] == document_id), None
+        )
+        if document is None:
+            return None
+        with self._lock:
+            rows = self._db.open_table(self._CHUNKS).to_arrow().to_pylist()
+        chunks = sorted(
+            (
+                {"ordinal": int(row["ordinal"]), "content": str(row["content"])}
+                for row in rows
+                if str(row["project_key"]) == project_key
+                and str(row["document_id"]) == document_id
+            ),
+            key=lambda item: int(item["ordinal"]),
+        )
+        return {**document, "chunks": chunks}
+
+    def delete_knowledge_document(
+        self, *, project_key: str, document_id: str
+    ) -> bool:
+        document = self.get_knowledge_document(
+            project_key=project_key, document_id=document_id
+        )
+        if document is None:
+            return False
+        scope = (
+            f"project_key = {_sql_literal(project_key)} AND "
+            f"document_id = {_sql_literal(document_id)}"
+        )
+        with self._lock:
+            self._db.open_table(self._CHUNKS).delete(scope)
+            self._db.open_table(self._DOCUMENTS).delete(scope)
+        return True

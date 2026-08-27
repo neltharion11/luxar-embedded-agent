@@ -7,7 +7,7 @@ database server and requires no Docker runtime.
 
 | Data | Backend | Default location |
 | --- | --- | --- |
-| Conversations, workflow runs, approvals, project memory | SQLite | `.luxar-data/luxar.sqlite3` |
+| Conversations, workflow runs, approvals, project memory, workbench snapshots | SQLite | `.luxar-data/luxar.sqlite3` |
 | LangGraph checkpoints | SQLite `SqliteSaver` | `.luxar-data/checkpoints.sqlite3` |
 | Knowledge documents, chunks, metadata, vectors | LanceDB | `.luxar-data/knowledge.lance/` |
 | Original ESP-IDF source files | Filesystem | configured project roots |
@@ -26,7 +26,16 @@ startup. There is no separate migration command for a new installation.
 
 ```powershell
 luxar storage health
+luxar storage runtime-audit
+luxar storage runtime-migration-plan
 ```
+
+`runtime-audit` checks the persisted observation window, workflow-family
+counts, pending recovery dependencies, and checkpoint thread inventory.
+`runtime-migration-plan` is a zero-write dry run for historical records that
+predate `workflow_family`. Deterministic evidence such as a knowledge approval
+kind, inspection trace, firmware trace, or explicit Supervisor runtime may be
+proposed for migration; ambiguous records remain unchanged and block removal.
 
 The Web endpoint returns the active application store:
 
@@ -45,6 +54,17 @@ Expected local response:
 SQLite uses WAL mode and a separate connection per application operation.
 LangGraph owns its checkpoint schema in a separate SQLite file so its internal
 tables are not treated as LUXAR application records.
+
+All checkpoint backends use LUXAR's explicit MessagePack type allowlist.
+Existing checkpoints containing approved LUXAR workflow models remain
+readable, while unregistered Python types are not reconstructed. Add every new
+Pydantic model stored in workflow state to `luxar.checkpoint_serde` together
+with a checkpoint round-trip test.
+
+`luxar_workbench_snapshots` stores the latest bounded monitoring view for each
+project independently from long-lived Supervisor objectives. Knowledge-task
+snapshots contain operation metadata, progress, approval state, and bounded
+result summaries; document bodies and model execution context are excluded.
 
 ## Knowledge/RAG
 
@@ -71,6 +91,10 @@ the LanceDB index must stay consistent.
 To reset only a project's visible conversation, use `/clear` in the Web UI or
 the conversation reset endpoint. Do not delete SQLite or LanceDB files while
 the gateway is running.
+
+The audit and migration-plan commands are read-only. They are safe to run while
+the gateway is stopped or active, but no metadata cleanup or checkpoint
+creation/deletion is performed automatically.
 
 ## Optional PostgreSQL compatibility
 

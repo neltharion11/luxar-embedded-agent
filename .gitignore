@@ -20,4 +20,7 @@ docs/
 pytest-tmp/
 BOSS*.md
 examples/deepseek_mode_router_demo.py
+tmp/
+resume-output/
+pytest-bt/
 

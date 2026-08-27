@@ -10,7 +10,9 @@ import pytest
 from luxar.adapters.espidf_cli import (
     EspIdfCliAdapter,
     _classify_failure,
+    _derive_idf_path,
     _parse_diagnostics,
+    _read_idf_version,
     _sanitize_output,
 )
 from luxar.ports.espidf_errors import EspIdfError
@@ -131,6 +133,8 @@ def test_preflight_allows_manifest_without_dependencies(
     assert environment["IDF_COMPONENT_MANAGER"] == "0"
     assert environment["IDF_COMPONENT_NO_COLORS"] == "1"
     assert environment["IDF_COMPONENT_NO_HINTS"] == "1"
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+    assert environment["PYTHONUTF8"] == "1"
 
 
 def test_preflight_rejects_declared_dependencies_before_any_command(
@@ -577,3 +581,23 @@ def test_failed_build_uses_classification_diagnostics_and_sanitized_summary(
     assert evidence.diagnostics[0].line == 9
     assert str(project) not in evidence.stderr_summary
     assert "\x1b" not in evidence.stderr_summary
+
+
+def test_derive_idf_path_from_absolute_launcher(monkeypatch) -> None:
+    monkeypatch.delenv("IDF_PATH", raising=False)
+    derived = _derive_idf_path(("C:/py/python.exe", "C:/esp/esp-idf/tools/idf.py"))
+    assert derived == str(Path("C:/esp/esp-idf"))
+
+
+def test_derive_idf_path_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("IDF_PATH", "C:/esp/esp-idf")
+    assert _derive_idf_path(("idf.py",)) == "C:/esp/esp-idf"
+
+
+def test_read_idf_version_from_version_cmake(tmp_path) -> None:
+    (tmp_path / "tools" / "cmake").mkdir(parents=True)
+    (tmp_path / "tools" / "cmake" / "version.cmake").write_text(
+        "set(IDF_VERSION_MAJOR 6)\nset(IDF_VERSION_MINOR 0)\nset(IDF_VERSION_PATCH 2)\n",
+        encoding="utf-8",
+    )
+    assert _read_idf_version(str(tmp_path)) == "6.0.2"

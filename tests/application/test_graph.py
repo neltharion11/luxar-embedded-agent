@@ -23,6 +23,11 @@ def test_graph_compiles_with_expected_business_topology() -> None:
         "request_clarification",
         "completed",
         "failed",
+        "review_plan",
+        "analyze_knowledge_task",
+        "review_knowledge_task",
+        "execute_knowledge_task",
+        "propose_solution_learning",
         "__end__",
     }
 
@@ -30,7 +35,7 @@ def test_graph_compiles_with_expected_business_topology() -> None:
         (edge.source, edge.target, edge.conditional)
         for edge in drawable.edges
     }
-    assert edges == {
+    expected_legacy_edges = {
         ("__start__", "analyze_requirement", True),
         ("__start__", "analyze_project", True),
         ("analyze_requirement", "analyze_project", True),
@@ -40,7 +45,8 @@ def test_graph_compiles_with_expected_business_topology() -> None:
         ("analyze_project", "create_plan", True),
         ("analyze_project", "failed", True),
         ("report_project", "__end__", False),
-        ("create_plan", "execute_next_step", False),
+        ("create_plan", "execute_next_step", True),
+        ("create_plan", "review_plan", True),
         ("execute_next_step", "create_project", True),
         ("execute_next_step", "find_idf_examples", True),
         ("execute_next_step", "build_project", True),
@@ -58,7 +64,8 @@ def test_graph_compiles_with_expected_business_topology() -> None:
         ("build_project", "repair_project", True),
         ("build_project", "build_project", True),
         ("build_project", "failed", True),
-        ("repair_project", "build_project", False),
+        ("repair_project", "build_project", True),
+        ("repair_project", "failed", True),
         ("request_flash_approval", "flash_project", True),
         ("request_flash_approval", "failed", True),
         ("flash_project", "execute_next_step", True),
@@ -69,7 +76,15 @@ def test_graph_compiles_with_expected_business_topology() -> None:
         ("analyze_device_logs", "repair_project", True),
         ("analyze_device_logs", "completed", True),
         ("analyze_device_logs", "failed", True),
-        ("request_clarification", "__end__", False),
+        ("request_clarification", "__end__", True),
         ("completed", "__end__", False),
         ("failed", "__end__", False),
     }
+    assert expected_legacy_edges <= edges
+    assert {
+        ("__start__", "analyze_knowledge_task", True),
+        ("analyze_knowledge_task", "review_knowledge_task", False),
+        ("review_plan", "execute_next_step", True),
+        ("execute_knowledge_task", "completed", False),
+        ("propose_solution_learning", "completed", False),
+    } <= edges

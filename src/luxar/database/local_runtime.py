@@ -7,6 +7,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from luxar.checkpoint_serde import create_checkpoint_serializer
 from luxar.database.local_settings import LocalStorageSettings
 from luxar.database.sqlite_persistence import SQLitePersistence
 
@@ -63,7 +64,10 @@ class LocalStorageRuntime:
         )
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 10000")
-        checkpointer: Any = SqliteSaver(connection)
+        checkpointer: Any = SqliteSaver(
+            connection,
+            serde=create_checkpoint_serializer(),
+        )
         checkpointer.setup()
         self._checkpoint_connection = connection
         self._checkpointer = checkpointer

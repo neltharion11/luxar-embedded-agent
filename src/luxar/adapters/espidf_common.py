@@ -118,6 +118,11 @@ def build_safe_idf_environment(
     environment = os.environ.copy()
     environment["IDF_COMPONENT_NO_COLORS"] = "1"
     environment["IDF_COMPONENT_NO_HINTS"] = "1"
+    # idf_monitor may emit Unicode symbols.  On Chinese Windows its inherited
+    # GBK stdout can crash before device logs are captured, so every ESP-IDF
+    # Python subprocess tree is pinned to UTF-8.
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
 
     if allow_dependency_downloads:
         environment.pop("IDF_COMPONENT_MANAGER", None)

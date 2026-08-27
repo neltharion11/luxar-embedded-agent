@@ -52,6 +52,15 @@ def make_response(content: str | None) -> object:
     )
 
 
+def make_stream(*contents: str | None) -> list[object]:
+    return [
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content=content))]
+        )
+        for content in contents
+    ]
+
+
 def make_client(completions: StubCompletions) -> DeepSeekJsonClient:
     settings = DeepSeekSettings(api_key="test-key")
     return DeepSeekJsonClient(
@@ -89,6 +98,46 @@ def test_client_sends_json_mode_request_and_returns_object() -> None:
             "response_format": {"type": "json_object"},
         }
     ]
+
+
+def test_client_yields_provider_stream_deltas_without_fake_chunking() -> None:
+    completions = StubCompletions(response=make_stream("修改已", None, "完成。"))
+    client = make_client(completions)
+
+    chunks = list(
+        client.stream_text(
+            system_prompt="自然回答",
+            user_prompt="总结事实",
+            model="deepseek-v4-flash",
+        )
+    )
+
+    assert chunks == ["修改已", "完成。"]
+    assert completions.calls == [
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "自然回答"},
+                {"role": "user", "content": "总结事实"},
+            ],
+            "stream": True,
+        }
+    ]
+
+
+def test_client_rejects_empty_provider_stream() -> None:
+    client = make_client(StubCompletions(response=make_stream(None, "")))
+
+    with pytest.raises(CapabilityError) as captured:
+        list(
+            client.stream_text(
+                system_prompt="system",
+                user_prompt="user",
+                model="deepseek-v4-flash",
+            )
+        )
+
+    assert captured.value.category == "empty_response"
 
 
 def test_client_builds_sdk_with_deepseek_settings(

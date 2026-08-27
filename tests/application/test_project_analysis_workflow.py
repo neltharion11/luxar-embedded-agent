@@ -14,7 +14,11 @@ from luxar.adapters.fake_repair_planner import FakeRepairPlanner
 from luxar.adapters.fake_requirement_parser import FakeRequirementParser
 from luxar.adapters.fake_workspace import FakeWorkspace
 from luxar.application.context import RuntimeContext
-from luxar.application.project_analysis import analyze_current_project
+from luxar.application.project_analysis import (
+    analyze_current_project,
+    extract_focused_project_diagnosis,
+    extract_focused_project_fact,
+)
 from luxar.application.results import user_message_for_state
 from luxar.application.runner import run_workflow
 from luxar.application.state import WorkflowState
@@ -43,6 +47,62 @@ def repair(content: str) -> RepairPlan:
         diagnosis="implement requested behavior",
         replacements=[FileReplacement(path="main/main.c", content=content)],
     )
+
+
+def test_focused_project_fact_returns_only_exact_i2c_pin_mapping() -> None:
+    answer = extract_focused_project_fact(
+        "项目中 SCL 和 SDA 是哪两个引脚？",
+        [
+            ProjectFile(
+                path="main/pin_config.h",
+                content=(
+                    "#define I2C_OLED_SDA_GPIO 21\n"
+                    "#define I2C_OLED_SCL_GPIO 22\n"
+                ),
+            )
+        ],
+    )
+
+    assert answer == "根据项目当前配置：\n- SCL：GPIO22\n- SDA：GPIO21"
+
+
+def test_blank_display_diagnosis_separates_code_facts_from_missing_hardware_evidence() -> None:
+    answer = extract_focused_project_diagnosis(
+        "那为什么屏幕还是没亮",
+        [
+            ProjectFile(
+                path="main/pin_config.h",
+                content=(
+                    "#define I2C_OLED_SDA_GPIO 21\n"
+                    "#define I2C_OLED_SCL_GPIO 22\n"
+                ),
+            ),
+            ProjectFile(
+                path="components/ssd1306/ssd1306.h",
+                content=(
+                    "#define SSD1306_I2C_ADDR_DEFAULT 0x3C\n"
+                    "#define SSD1306_I2C_ADDR_ALT 0x3D\n"
+                ),
+            ),
+            ProjectFile(
+                path="main/test4.c",
+                content=(
+                    "ssd1306_init(&dev);\n"
+                    "ssd1306_clear(&dev);\n"
+                    "ssd1306_display_text(&dev, 0, \"helloworld\");\n"
+                    "SSD1306 init failed\n"
+                ),
+            ),
+        ],
+    )
+
+    assert answer is not None
+    assert "SDA=GPIO21" in answer
+    assert "SCL=GPIO22" in answer
+    assert "0X3C 和 0X3D" in answer
+    assert "helloworld" in answer
+    assert "没有这块开发板的串口运行日志" in answer
+    assert "SH1106" in answer
 
 
 def test_analysis_cache_reuses_only_an_exact_source_fingerprint() -> None:
@@ -91,6 +151,53 @@ def test_analysis_cache_reuses_only_an_exact_source_fingerprint() -> None:
     assert refreshed.cache_hit is False
     assert refreshed.fingerprint != first.fingerprint
     assert len(analyzer.calls) == 2
+
+
+def test_focused_inspections_do_not_reuse_or_overwrite_project_overview() -> None:
+    project_path = Path("workspace/blink")
+    workspace = FakeWorkspace(
+        [ProjectFile(path="main/main.c", content="void app_main(void) {}")]
+    )
+    analyzer = FakeProjectAnalyzer(
+        [analysis("first focus"), analysis("second focus"), analysis("overview")]
+    )
+    persistence = TransientPersistence()
+
+    first = analyze_current_project(
+        project_path=project_path,
+        target_chip="esp32",
+        workspace=workspace,
+        analyzer=analyzer,
+        persistence=persistence,
+        project_key="0:blink",
+        inspection_request="检查 app_main 的控制流程",
+    )
+    second = analyze_current_project(
+        project_path=project_path,
+        target_chip="esp32",
+        workspace=workspace,
+        analyzer=analyzer,
+        persistence=persistence,
+        project_key="0:blink",
+        inspection_request="检查是否存在资源泄漏",
+    )
+    overview = analyze_current_project(
+        project_path=project_path,
+        target_chip="esp32",
+        workspace=workspace,
+        analyzer=analyzer,
+        persistence=persistence,
+        project_key="0:blink",
+    )
+
+    assert first.summary == "first focus"
+    assert second.summary == "second focus"
+    assert overview.summary == "overview"
+    assert [call["inspection_request"] for call in analyzer.calls] == [
+        "检查 app_main 的控制流程",
+        "检查是否存在资源泄漏",
+        None,
+    ]
 
 
 def test_structural_gaps_are_reported_even_when_model_omits_them() -> None:

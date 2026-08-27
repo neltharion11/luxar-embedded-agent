@@ -8,20 +8,39 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import SecretStr
 
 from luxar.adapters.deepseek.conversation_router import (
     DeepSeekConversationRouter,
 )
 from luxar.adapters.deepseek.fake_client import FakeJsonCompletionClient
+from luxar.adapters.deepseek.settings import DeepSeekSettings
+from luxar.adapters.fake_espidf import FakeEspIdf
+from luxar.application.agent_runner import (
+    AgentWorkflowProgress,
+    AgentWorkflowRunResult,
+)
 from luxar.application.runner import WorkflowProgress, WorkflowRunResult
+from luxar.application.specialized_runner import (
+    PdfSpecializedWorkflowProgress,
+    SpecializedWorkflowRunResult,
+)
+from luxar.application.specialized_state import SpecializedWorkflowState
 from luxar.application.state import WorkflowState
+from luxar.bootstrap import build_deepseek_agent_runtime_context
 from luxar.domain.devices import ApprovalRequest
+from luxar.domain.agent.approvals import AgentApprovalRequest
+from luxar.domain.agent.changes import CapabilityChange, ChangeSet
+from luxar.domain.agent.objectives import ProjectObjective
 from luxar.domain.conversation import ConversationDecision
 from luxar.domain.errors import WorkflowError
-from luxar.domain.evidence import BuildEvidence
+from luxar.domain.evidence import BuildDiagnostic, BuildEvidence
+from luxar.domain.interactions import WorkflowInteraction
 from luxar.domain.requirements import FirmwareRequirement
 from luxar.toolchain import EspIdfToolchainManager
 from luxar.web import create_app
+from luxar.model_config import ModelConfigStore
 from luxar.database.persistence import (
     PendingApprovalRecord,
     TransientPersistence,
@@ -30,6 +49,10 @@ from luxar.database.persistence import (
 
 def _run_result(state: WorkflowState) -> WorkflowRunResult:
     return WorkflowRunResult(state=state, thread_id="test-thread")
+
+
+def _agent_run_result(state: dict[str, object]) -> AgentWorkflowRunResult:
+    return AgentWorkflowRunResult(state=state, thread_id="agent-test-thread")
 
 
 def make_project(root: Path, name: str = "blink") -> Path:
@@ -54,6 +77,224 @@ def parse_sse(text: str) -> list[tuple[str, object]]:
     return parsed
 
 
+def test_conversation_snapshot_exposes_recoverable_active_run(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    persistence.start_conversation_stream(
+        thread_id="stream-active",
+        task_key="0:blink",
+        user_message="设置 P32 为高电平并烧录",
+    )
+    persistence.append_conversation_stream_event(
+        "stream-active",
+        event="token",
+        data={"token": "已检查工程，准备构建。"},
+    )
+    persistence.append_conversation_stream_event(
+        "stream-active",
+        event="progress",
+        data={
+            "progress_type": "pdf",
+            "current": 18,
+            "total": 36,
+            "unit": "pages",
+            "phase": "extracting",
+            "batch": 2,
+            "message": "已读取 18/36 页",
+        },
+    )
+    persistence.save_pending_approval(
+        PendingApprovalRecord(
+            task_key="0:blink",
+            project_name="blink",
+            root_index=0,
+            thread_id="stream-active",
+            request={"title": "烧录审批", "summary": "即将写入设备"},
+            runtime_config={},
+        )
+    )
+    client = TestClient(
+        create_app(projects_roots=[tmp_path], persistence=persistence)
+    )
+
+    response = client.get("/api/conversations/blink")
+
+    assert response.status_code == 200
+    active = response.json()["active_run"]
+    assert active["thread_id"] == "stream-active"
+    assert active["user_message"] == "设置 P32 为高电平并烧录"
+    assert active["assistant_content"] == "已检查工程，准备构建。"
+    assert active["last_sequence"] == 2
+    assert active["progress"]["current"] == 18
+    assert active["progress"]["total"] == 36
+    assert active["pending_approval"]["title"] == "烧录审批"
+
+
+def test_conversation_stream_replay_uses_sse_event_ids(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    persistence.start_conversation_stream(
+        thread_id="stream-replay",
+        task_key="0:blink",
+        user_message="继续",
+    )
+    persistence.append_conversation_stream_event(
+        "stream-replay", event="token", data={"token": "第一步。"}
+    )
+    persistence.append_conversation_stream_event(
+        "stream-replay",
+        event="tool_call",
+        data={"tool_call": "espidf.build"},
+    )
+    persistence.append_conversation_stream_event(
+        "stream-replay", event="done", data="[DONE]"
+    )
+    persistence.finish_conversation_stream("stream-replay", status="completed")
+    client = TestClient(
+        create_app(projects_roots=[tmp_path], persistence=persistence)
+    )
+
+    response = client.get(
+        "/api/conversations/blink/streams/stream-replay?after_sequence=1"
+    )
+
+    assert response.status_code == 200
+    assert "id: 2\nevent: tool_call" in response.text
+    assert "id: 3\nevent: done\ndata: [DONE]" in response.text
+    assert "第一步" not in response.text
+
+
+def test_active_conversation_cannot_be_reset(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    persistence.start_conversation_stream(
+        thread_id="stream-active",
+        task_key="0:blink",
+        user_message="构建中",
+    )
+    client = TestClient(
+        create_app(projects_roots=[tmp_path], persistence=persistence)
+    )
+
+    response = client.post("/api/conversations/blink/reset")
+
+    assert response.status_code == 409
+    assert persistence.get_conversation_stream("stream-active") is not None
+
+
+def test_dashboard_model_config_supports_openai_local_and_secret_masking(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    store = ModelConfigStore(tmp_path / "settings" / "models.json")
+    client = TestClient(create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        model_config_store=store,
+    ))
+
+    saved = client.put("/api/config/models", json={
+        "conversation": {
+            "provider": "openai",
+            "api_key": "openai-secret",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-test",
+            "timeout_seconds": 60.0,
+            "context_window_tokens": 262144,
+        },
+        "vision_mode": "separate",
+        "vision": {
+            "provider": "local",
+            "api_key": "local-vision-secret",
+            "base_url": "http://127.0.0.1:9001/v1",
+            "model": "qwen-vl",
+            "timeout_seconds": 90.0,
+        },
+        "embedding": {
+            "mode": "api",
+            "provider": "local",
+            "api_key": "local-embedding-secret",
+            "base_url": "http://127.0.0.1:9002/v1",
+            "model": "embedding-test",
+            "dimensions": 64,
+            "timeout_seconds": 30.0,
+        },
+    })
+
+    assert saved.status_code == 200
+    response_text = saved.text
+    assert "openai-secret" not in response_text
+    assert "local-vision-secret" not in response_text
+    assert "local-embedding-secret" not in response_text
+    assert saved.json()["conversation"]["provider"] == "openai"
+    assert saved.json()["vision"]["provider"] == "local"
+    assert saved.json()["conversation"]["api_key_configured"] is True
+    assert saved.json()["conversation"]["context_window_tokens"] == 262144
+    assert saved.json()["conversation"]["context_compaction_threshold"] == 0.95
+    assert saved.json()["embedding"] == {
+        "mode": "api",
+        "provider": "local",
+        "base_url": "http://127.0.0.1:9002/v1",
+        "model": "embedding-test",
+        "dimensions": 64,
+        "timeout_seconds": 30.0,
+        "api_key_configured": True,
+        "configured": True,
+    }
+    assert client.get("/api/config/models").json() == saved.json()
+
+
+def test_local_hash_embedding_enables_project_knowledge_without_api_key(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        model_config_store=ModelConfigStore(tmp_path / "models.json"),
+    )
+
+    with TestClient(app) as client:
+        config = client.get("/api/config/models").json()
+        documents = client.get(
+            "/api/projects/blink/knowledge/documents?root_index=0"
+        )
+
+    assert config["embedding"]["mode"] == "local_hash"
+    assert config["embedding"]["configured"] is True
+    assert documents.status_code == 200
+    assert documents.json() == {"documents": []}
+
+
+def test_dashboard_accepts_local_chat_without_api_key(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    client = TestClient(create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        model_config_store=ModelConfigStore(tmp_path / "models.json"),
+    ))
+
+    saved = client.put("/api/config/models", json={
+        "conversation": {
+            "provider": "local",
+            "base_url": "http://127.0.0.1:1234/v1",
+            "model": "local-chat",
+            "timeout_seconds": 60.0,
+        },
+        "vision_mode": "python",
+    })
+
+    assert saved.status_code == 200
+    assert saved.json()["conversation"]["api_key_configured"] is False
+
+
 def test_app_serves_ui_health_and_safe_project_list(tmp_path: Path) -> None:
     make_project(tmp_path)
     ui = tmp_path / "index.html"
@@ -73,6 +314,21 @@ def test_app_serves_ui_health_and_safe_project_list(tmp_path: Path) -> None:
         "status": "ok",
         "service": "luxar-langgraph",
     }
+    runtime = client.get("/api/runtime").json()
+    assert runtime["mode"] == "legacy"
+    assert runtime["reason"] == "unqualified_fallback"
+    assert runtime["legacy_deprecated"] is True
+    assert runtime["legacy_retirement_ready"] is False
+    assert "specialized_workflows_extracted" not in (
+        runtime["legacy_retirement_blocking_gates"]
+    )
+    assert "no_legacy_recovery_dependencies" in (
+        runtime["legacy_retirement_blocking_gates"]
+    )
+    audit = client.get("/api/runtime/audit").json()
+    assert audit["durable"] is False
+    assert audit["qualifies_as_release_evidence"] is False
+    assert "storage_not_durable" in audit["blocking_reasons"]
     projects = client.get("/api/workspace/projects").json()
     assert projects == {
         "roots": [{"index": 0, "label": tmp_path.name}],
@@ -276,6 +532,268 @@ def test_injected_chat_router_skips_bootstrap_and_workflow(
     assert calls == []
 
 
+def test_flash_command_without_serial_asks_only_for_serial_port(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    # This test documents the explicit emergency fallback contract.
+    app = create_app(
+        projects_roots=[tmp_path],
+        continuous_agent_enabled=False,
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "烧录"},
+    )
+
+    assert response.status_code == 200
+    token_text = "".join(
+        data["token"]
+        for event, data in parse_sse(response.text)
+        if event == "token" and isinstance(data, dict)
+    )
+    assert "还缺少开发板串口" in token_text
+    assert "COM3" in token_text
+
+
+def test_focused_knowledge_followup_returns_only_the_direct_answer(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    calls: list[str] = []
+
+    def should_not_bootstrap(**_: object) -> object:
+        calls.append("bootstrap")
+        raise AssertionError("focused follow-up must not start a workflow")
+
+    def should_not_run(**_: object) -> SpecializedWorkflowRunResult:
+        calls.append("workflow")
+        raise AssertionError("focused follow-up must not start a workflow")
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        specialized_bootstrap_factory=should_not_bootstrap,  # type: ignore[arg-type]
+        specialized_workflow_runner=should_not_run,
+        conversation_router=DeepSeekConversationRouter(
+            FakeJsonCompletionClient(
+                [
+                    {
+                        "intent": "knowledge_task",
+                        "response": "SDA 是数据线，SCL 是时钟线。",
+                        "response_plan": {
+                            "operation": "direct_answer",
+                            "context_required": True,
+                            "scope": "focused",
+                            "confidence": 0.95,
+                            "ambiguity": 0.01,
+                            "answer_budget": 240,
+                        },
+                    }
+                ]
+            ),
+            "fast-model",
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "SCL 和 SDA 是哪两个引脚？"},
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    assert events[-1] == ("done", "[DONE]")
+    assert all(event != "progress" for event, _ in events)
+    assert "".join(
+        data["token"]
+        for event, data in events
+        if event == "token" and isinstance(data, dict)
+    ) == "SDA 是数据线，SCL 是时钟线。"
+    assert calls == []
+
+
+def test_web_persists_rolling_summary_when_history_reaches_95_percent(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    for index in range(4):
+        persistence.append_exchange(
+            "0:blink",
+            thread_id=f"history-{index}",
+            user_message=f"需求 {index}：" + "GPIO 约束" * 350,
+            assistant_message=f"结果 {index}：" + "工具证据" * 350,
+        )
+    client = FakeJsonCompletionClient(
+        [
+            {"summary": "用户持续修改 GPIO；必须保留已有能力和工具证据。"},
+            {"intent": "casual_chat", "response": "上下文仍然可用。"},
+        ]
+    )
+    router = DeepSeekConversationRouter(
+        client,
+        "custom-small-model",
+        context_window_tokens=4096,
+    )
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        conversation_router=router,
+        persistence=persistence,
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "还记得之前的约束吗？"},
+    )
+
+    assert response.status_code == 200
+    streamed = "".join(
+        item["token"]
+        for event, item in parse_sse(response.text)
+        if event == "token" and isinstance(item, dict)
+    )
+    assert "对话上下文已达到模型窗口的 95%" in streamed
+    memories = persistence.find_memories(
+        "0:blink",
+        memory_type="conversation_context",
+    )
+    assert len(memories) == 1
+    assert memories[0].value["summary"].startswith("用户持续修改 GPIO")
+    assert memories[0].value["covered_message_count"] > 0
+    routed_payload = json.loads(client.calls[1][1])
+    assert routed_payload["history"][0]["content"].startswith(
+        "【LUXAR 压缩的早期对话上下文】"
+    )
+    reset = TestClient(app).post("/api/conversations/blink/reset")
+    assert reset.status_code == 200
+    cleared = persistence.find_memories(
+        "0:blink",
+        memory_type="conversation_context",
+    )[0]
+    assert cleared.value == {"summary": "", "covered_message_count": 0}
+
+
+def test_web_retry_restores_latest_blocked_goal_and_failure_context(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    objective = ProjectObjective(
+        objective_id="retry-p32",
+        title="设置 P32 高电平并烧录",
+        description="将 P32 配置为高电平，构建并烧录开发板",
+    )
+    change_set = ChangeSet(
+        changes=[
+            CapabilityChange(
+                operation="modify",
+                capability_id="gpio.output:P32",
+                desired_state={"pin": 32, "level": 1},
+            )
+        ]
+    )
+    previous_build = BuildEvidence(
+        success=False,
+        command=["idf.py", "build"],
+        return_code=2,
+        stderr_summary="driver/gpio.h: No such file or directory",
+        error_category="source",
+        diagnostics=[
+            BuildDiagnostic(
+                file="components/ssd1306/ssd1306.h",
+                line=6,
+                column=10,
+                severity="error",
+                message="driver/gpio.h: No such file or directory",
+            )
+        ],
+    )
+    persistence.save_agent_project(
+        project_key="0:blink",
+        objective=objective.model_dump(mode="json"),
+        change_set=change_set.model_dump(mode="json"),
+        revision=1,
+        capabilities=[],
+        snapshot={
+            "status": "blocked",
+            "last_error": "ESP-IDF 构建未通过: source",
+            "build_evidence": previous_build.model_dump(mode="json"),
+        },
+    )
+    persistence.start_run(
+        thread_id="blocked-p32",
+        task_key="0:blink",
+        project_name="blink",
+        root_index=0,
+        task_text="设置 P32 为高电平并烧录",
+        runtime_config={},
+    )
+    persistence.finish_run(
+        "blocked-p32",
+        status="blocked",
+        result={
+            "status": "blocked",
+            "last_error": "ESP-IDF 构建未通过: source",
+            "changed_files": ["main/12345.c", "main/CMakeLists.txt"],
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class MustNotRouteRetry:
+        def route(self, *_: object, **__: object) -> ConversationDecision:
+            raise AssertionError("明确的重试指令不应再次交给模型猜测")
+
+    def agent_runner(**kwargs: object) -> AgentWorkflowRunResult:
+        captured.update(kwargs)
+        initial = kwargs["initial_state"]
+        assert isinstance(initial, dict)
+        return _agent_run_result(
+            {
+                **initial,
+                "status": "completed",
+                "acceptance_passed": True,
+                "build_verified": True,
+                "trace": [],
+            }
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        agent_bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        agent_workflow_runner=agent_runner,
+        agent_runtime_mode="supervisor",
+        conversation_router=MustNotRouteRetry(),
+        persistence=persistence,
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "重试"},
+    )
+
+    events = parse_sse(response.text)
+    token_text = "".join(
+        item["token"]
+        for event, item in events
+        if event == "token" and isinstance(item, dict)
+    )
+    initial = captured["initial_state"]
+    assert isinstance(initial, dict)
+    assert initial["objective"] == objective
+    assert initial["build_evidence"] == previous_build
+    assert "设置 P32 为高电平并烧录" in initial["task_text"]
+    assert "ESP-IDF 构建未通过: source" in initial["task_text"]
+    assert "已识别“重试”为承接上一任务的指令" in token_text
+    assert "重新检查后从失败处修复" in token_text
+    history = persistence.get_messages("0:blink")
+    assert history[-2] == {"role": "user", "content": "重试"}
+
+
 def test_project_inspection_enters_shared_analysis_workflow(
     tmp_path: Path,
 ) -> None:
@@ -332,6 +850,196 @@ def test_project_inspection_enters_shared_analysis_workflow(
     assert "当前代码分析" in text
     assert "main/main.c" in text
     assert calls == ["bootstrap", "workflow"]
+
+
+def test_project_inspection_prefers_dedicated_workflow_and_records_family(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    calls: list[str] = []
+
+    class RecordingPersistence(TransientPersistence):
+        def __init__(self) -> None:
+            super().__init__()
+            self.runtime_configs: list[dict[str, object]] = []
+
+        def start_run(self, **values: object) -> None:
+            self.runtime_configs.append(
+                dict(values["runtime_config"])  # type: ignore[arg-type]
+            )
+            super().start_run(**values)
+
+    persistence = RecordingPersistence()
+
+    def legacy_bootstrap(**_: object) -> object:
+        raise AssertionError("inspection must not bootstrap legacy firmware")
+
+    def legacy_runner(**_: object) -> WorkflowRunResult:
+        raise AssertionError("inspection must not enter legacy firmware graph")
+
+    def specialized_bootstrap(**_: object) -> object:
+        calls.append("specialized_bootstrap")
+        return object()
+
+    def specialized_runner(**kwargs: object) -> SpecializedWorkflowRunResult:
+        initial = kwargs["initial_state"]
+        assert isinstance(initial, dict)
+        assert initial["task_mode"] == "inspection"
+        calls.append("specialized_runner")
+        return SpecializedWorkflowRunResult(
+            state=SpecializedWorkflowState(
+                task_mode="inspection",
+                status="completed",
+                inspection_response="独立项目检查完成。",
+                trace=["analyze_project", "report_project"],
+            ),
+            thread_id="specialized-thread",
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=legacy_bootstrap,  # type: ignore[arg-type]
+        workflow_runner=legacy_runner,
+        specialized_bootstrap_factory=specialized_bootstrap,  # type: ignore[arg-type]
+        specialized_workflow_runner=specialized_runner,
+        persistence=persistence,
+        conversation_router=DeepSeekConversationRouter(
+            FakeJsonCompletionClient(
+                [{"intent": "project_inspection", "response": ""}]
+            ),
+            "fast-model",
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "检查当前项目"},
+    )
+
+    assert response.status_code == 200
+    assert "独立项目检查完成" in response.text
+    assert calls == ["specialized_bootstrap", "specialized_runner"]
+    assert persistence.runtime_configs[0]["workflow_family"] == (
+        "project_inspection"
+    )
+
+
+def test_blank_display_question_overrides_an_incorrect_injected_route(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    calls: list[str] = []
+
+    def specialized_bootstrap(**_: object) -> object:
+        calls.append("specialized_bootstrap")
+        return object()
+
+    def specialized_runner(**kwargs: object) -> SpecializedWorkflowRunResult:
+        initial = kwargs["initial_state"]
+        assert isinstance(initial, dict)
+        assert initial["task_mode"] == "inspection"
+        calls.append("specialized_runner")
+        return SpecializedWorkflowRunResult(
+            state=SpecializedWorkflowState(
+                task_mode="inspection",
+                status="completed",
+                inspection_response="已进入屏幕故障诊断。",
+                trace=["analyze_project", "report_project"],
+            ),
+            thread_id="display-diagnosis-thread",
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        specialized_bootstrap_factory=specialized_bootstrap,
+        specialized_workflow_runner=specialized_runner,
+        conversation_router=DeepSeekConversationRouter(
+            FakeJsonCompletionClient(
+                [{"intent": "knowledge_task", "response": "不相关"}]
+            ),
+            "fast-model",
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "那为什么屏幕还是没亮"},
+    )
+
+    assert response.status_code == 200
+    assert "已进入屏幕故障诊断" in response.text
+    assert calls == ["specialized_bootstrap", "specialized_runner"]
+
+
+def test_pdf_page_progress_is_streamed_as_structured_sse(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+
+    def specialized_runner(**kwargs: object) -> SpecializedWorkflowRunResult:
+        reporter = kwargs["progress_reporter"]
+        assert callable(reporter)
+        reporter(PdfSpecializedWorkflowProgress(
+            stage="knowledge",
+            message="已读取 12/36 页",
+            progress_type="pdf",
+            current=12,
+            total=36,
+            unit="pages",
+            phase="extracting",
+            batch=1,
+        ))
+        return SpecializedWorkflowRunResult(
+            state=SpecializedWorkflowState(
+                task_mode="knowledge",
+                status="completed",
+                knowledge_result={
+                    "read_pdf": True,
+                    "title": "ESP32 手册",
+                    "total_pages": 36,
+                    "batches": 3,
+                    "preview": "GPIO",
+                },
+                trace=["execute_knowledge_task", "completed"],
+            ),
+            thread_id="pdf-progress-thread",
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        specialized_bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        specialized_workflow_runner=specialized_runner,
+        conversation_router=DeepSeekConversationRouter(
+            FakeJsonCompletionClient(
+                [{"intent": "knowledge_task", "response": ""}]
+            ),
+            "fast-model",
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "读取项目中的 ESP32 手册 PDF"},
+    )
+
+    progress = next(
+        data
+        for event, data in parse_sse(response.text)
+        if event == "progress"
+        and isinstance(data, dict)
+        and data.get("progress_type") == "pdf"
+    )
+    assert progress == {
+        "stage": "knowledge",
+        "message": "已读取 12/36 页",
+        "attempts": 0,
+        "progress_type": "pdf",
+        "current": 12,
+        "total": 36,
+        "unit": "pages",
+        "phase": "extracting",
+        "batch": 1,
+    }
 
 
 def test_sse_runs_shared_application_and_emits_allowlisted_result(
@@ -425,6 +1133,282 @@ def test_sse_runs_shared_application_and_emits_allowlisted_result(
     }
 
 
+def test_web_explicit_supervisor_mode_uses_agent_entrypoint(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    calls: dict[str, object] = {}
+    agent_context = object()
+
+    def legacy_bootstrap(**kwargs: object) -> object:
+        raise AssertionError("firmware task must not use legacy bootstrap")
+
+    def legacy_runner(**kwargs: object) -> WorkflowRunResult:
+        raise AssertionError("firmware task must not use legacy runner")
+
+    def agent_bootstrap(**kwargs: object) -> object:
+        calls["bootstrap"] = kwargs
+        return agent_context
+
+    def agent_runner(**kwargs: object) -> AgentWorkflowRunResult:
+        calls["runner"] = kwargs
+        reporter = kwargs["progress_reporter"]
+        assert callable(reporter)
+        reporter(
+            AgentWorkflowProgress(
+                node="project_inspector",
+                message="已检查工程结构和现有能力",
+                step_count=2,
+                phase="completed",
+                narrative="**第 2 轮｜已检查工程结构和现有能力**\n\n",
+                tools=("project.inspect",),
+            )
+        )
+        return _agent_run_result(
+            {
+                "status": "completed",
+                "evidence_ids": ["build:web-agent"],
+                "build_verified": True,
+                "acceptance_passed": True,
+                "trace": ["complete_objective"],
+            }
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=legacy_bootstrap,  # type: ignore[arg-type]
+        workflow_runner=legacy_runner,
+        agent_bootstrap_factory=agent_bootstrap,  # type: ignore[arg-type]
+        agent_workflow_runner=agent_runner,
+        agent_runtime_mode="supervisor",
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "构建当前工程", "target_chip": "esp32"},
+    )
+
+    events = parse_sse(response.text)
+    result = next(data for event, data in events if event == "result")
+    progress = next(data for event, data in events if event == "progress")
+    assert response.status_code == 200
+    assert result["status"] == "completed"
+    assert result["build_verified"] is True
+    assert progress == {
+        "stage": "project_inspector",
+        "message": "已检查工程结构和现有能力",
+        "attempts": 2,
+        "phase": "completed",
+        "tools": ["project.inspect"],
+        "task_id": None,
+    }
+    token_text = "".join(
+        data["token"]
+        for event, data in events
+        if event == "token" and isinstance(data, dict)
+    )
+    assert "第 2 轮｜已检查工程结构和现有能力" not in token_text
+    assert "Supervisor 决策" not in token_text
+    assert "目标：当前项目任务。" in token_text
+    assert "计划：" in token_text
+    bootstrap = calls["bootstrap"]
+    runner = calls["runner"]
+    assert isinstance(bootstrap, dict)
+    assert isinstance(runner, dict)
+    assert bootstrap["project_path"] == project.resolve()
+    assert runner["context"] is agent_context
+    assert runner["initial_state"]["target_chip"] == "esp32"
+    assert runner["project_key"] == "0:blink"
+
+
+def test_web_supervisor_emits_heartbeat_while_runner_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_project(tmp_path)
+    monkeypatch.setattr("luxar.web._WORKFLOW_HEARTBEAT_SECONDS", 0.01)
+
+    def agent_runner(**kwargs: object) -> AgentWorkflowRunResult:
+        reporter = kwargs["progress_reporter"]
+        assert callable(reporter)
+        reporter(
+            AgentWorkflowProgress(
+                node="project_inspector",
+                message="正在检查工程",
+                step_count=1,
+                phase="started",
+                tools=("project.inspect",),
+                task_id="inspect-project",
+            )
+        )
+        time.sleep(0.04)
+        return _agent_run_result(
+            {
+                "status": "completed",
+                "acceptance_passed": True,
+                "trace": [],
+            }
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        agent_bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        agent_workflow_runner=agent_runner,
+        agent_runtime_mode="supervisor",
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "执行耗时验证"},
+    )
+
+    heartbeats = [
+        data
+        for event, data in parse_sse(response.text)
+        if event == "progress"
+        and isinstance(data, dict)
+        and data.get("phase") == "heartbeat"
+    ]
+    assert response.status_code == 200
+    assert heartbeats
+    assert heartbeats[0]["stage"] == "project_inspector"
+    assert heartbeats[0]["tools"] == ["project.inspect"]
+    assert heartbeats[0]["task_id"] == "inspect-project"
+
+
+def test_web_supervisor_natural_language_run_persists_agent_snapshot(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    persistence = TransientPersistence()
+    objective_id = "web-natural-gpio"
+    client = FakeJsonCompletionClient(
+        [
+            {
+                "intent": "change_objective",
+                "objective": {
+                    "objective_id": objective_id,
+                    "title": "新增 GPIO13 高电平输出",
+                    "description": "在当前工程新增 GPIO13 高电平输出",
+                    "acceptance_criteria": ["GPIO13 输出高电平且构建通过"],
+                },
+                "change_set": {
+                    "changes": [
+                        {
+                            "operation": "add",
+                            "capability_id": "gpio.output:P13",
+                            "desired_state": {
+                                "pin": 13,
+                                "mode": "output",
+                                "level": 1,
+                            },
+                            "rationale": "用户要求新增 GPIO13 输出",
+                        }
+                    ]
+                },
+                "allowed_paths_by_capability": {
+                    "gpio.output:P13": ["main/main.c"]
+                },
+                "objective_changed": True,
+            },
+            {
+                "bundle_id": "web-natural-gpio-bundle",
+                "task_id": f"{objective_id}:code:add:gpio.output_P13",
+                "description": "创建 GPIO13 高电平输出入口",
+                "allowed_paths": ["main/main.c"],
+                "preserves": [],
+                "changes": [
+                    {
+                        "operation": "create",
+                        "path": "main/main.c",
+                        "content": (
+                            '#include "driver/gpio.h"\n'
+                            "void app_main(void) {\n"
+                            "    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);\n"
+                            "    gpio_set_level(GPIO_NUM_13, 1);\n"
+                            "}\n"
+                        ),
+                    }
+                ],
+            },
+        ]
+    )
+    context = build_deepseek_agent_runtime_context(
+        project_path=project,
+        build_executor=FakeEspIdf(
+            [
+                BuildEvidence(
+                    success=True,
+                    command=["idf.py", "build"],
+                    return_code=0,
+                )
+            ]
+        ),
+        settings=DeepSeekSettings(
+            api_key=SecretStr("test-key"),
+            repair_model="deepseek-reasoner",
+        ),
+        client=client,
+    )
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        agent_bootstrap_factory=lambda **_: context,  # type: ignore[arg-type]
+        agent_runtime_mode="supervisor",
+        persistence=persistence,
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "实现一个高电平状态指示灯功能"},
+    )
+
+    events = parse_sse(response.text)
+    result = next(data for event, data in events if event == "result")
+    progress_events = [
+        data
+        for event, data in events
+        if event == "progress" and isinstance(data, dict)
+    ]
+    token_text = "".join(
+        data["token"]
+        for event, data in events
+        if event == "token" and isinstance(data, dict)
+    )
+    snapshot = TestClient(app).get("/api/projects/blink/agent").json()
+    assert response.status_code == 200
+    assert result["last_error"] is None
+    assert result["status"] == "completed"
+    assert result["build_verified"] is True
+    assert (project / "main" / "main.c").is_file()
+    assert snapshot["status"] == "completed"
+    assert snapshot["objective"]["objective_id"] == objective_id
+    assert len(progress_events) > 4
+    assert any(item["phase"] == "decision" for item in progress_events)
+    assert any(item["tools"] for item in progress_events)
+    assert "Supervisor 决策" not in token_text
+    assert "准备调用：" not in token_text
+    assert "本步调用完成：" not in token_text
+    assert "执行计划已生成" not in token_text
+    assert "第 1 轮" not in token_text
+    assert "目标：新增 GPIO13 高电平输出。" in token_text
+    assert "计划：" in token_text
+    assert "检查现有工程" in token_text
+    assert "建立变更边界" in token_text
+    assert "验证目标和非回归条件" in token_text
+    assert "本次修改：" in token_text
+    assert "create: main/main.c" in token_text
+    assert "验证结果：" in token_text
+    assert snapshot["acceptance_passed"] is True
+    assert "bundle:web-natural-gpio-bundle" in {
+        item["evidence_id"] for item in snapshot["evidence"]
+    }
+    assert len(client.calls) == 2
+
+
 def test_web_rejects_invalid_project_before_bootstrap(tmp_path: Path) -> None:
     make_project(tmp_path)
     calls: list[object] = []
@@ -446,6 +1430,7 @@ def test_web_rejects_invalid_project_before_bootstrap(tmp_path: Path) -> None:
 
 def test_web_sanitizes_startup_error(tmp_path: Path) -> None:
     make_project(tmp_path)
+    persistence = TransientPersistence()
 
     def fail_bootstrap(**_: object) -> object:
         raise ValueError("SECRET_API_KEY_DETAIL")
@@ -454,6 +1439,7 @@ def test_web_sanitizes_startup_error(tmp_path: Path) -> None:
         projects_roots=[tmp_path],
         bootstrap_factory=fail_bootstrap,  # type: ignore[arg-type]
         workflow_runner=lambda **_: _run_result(WorkflowState()),
+        persistence=persistence,
     )
     response = TestClient(app).post(
         "/api/conversations/blink",
@@ -467,6 +1453,38 @@ def test_web_sanitizes_startup_error(tmp_path: Path) -> None:
         "message": "运行配置无效，请检查服务端环境变量",
     }
     assert "SECRET_API_KEY_DETAIL" not in response.text
+    assert next(iter(persistence._runs.values()))["status"] == "failed"
+
+
+def test_web_classifies_workflow_validation_separately_from_startup(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+
+    def fail_workflow(**_: object) -> WorkflowRunResult:
+        raise ValueError("SECRET_MODEL_RESPONSE_DETAIL")
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=fail_workflow,
+        persistence=persistence,
+    )
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": "P34 输出低电平"},
+    )
+
+    events = parse_sse(response.text)
+    error_events = [data for event, data in events if event == "error"]
+    assert error_events == [{
+        "category": "validation",
+        "message": "任务处理结果校验失败，请检查服务端日志",
+    }]
+    assert events[-1] == ("done", "[DONE]")
+    assert "SECRET_MODEL_RESPONSE_DETAIL" not in response.text
+    assert next(iter(persistence._runs.values()))["status"] == "failed"
 
 
 def test_sqlite_history_and_reset(tmp_path: Path) -> None:
@@ -495,6 +1513,112 @@ def test_sqlite_history_and_reset(tmp_path: Path) -> None:
 
         assert client.post("/api/conversations/blink/reset").status_code == 200
         assert client.get("/api/conversations/blink").json()["messages"] == []
+
+
+def test_pdf_knowledge_result_is_streamed_and_persisted(tmp_path: Path) -> None:
+    make_project(tmp_path)
+
+    def knowledge_runner(**kwargs: object) -> WorkflowRunResult:
+        initial = kwargs["initial_state"]
+        assert isinstance(initial, dict)
+        assert initial["task_mode"] == "knowledge"
+        return _run_result(
+            WorkflowState(
+                status="completed",
+                knowledge_result={
+                    "read_pdf": True,
+                    "title": "OLED 规格书",
+                    "total_pages": 37,
+                    "batches": 4,
+                    "characters": 121249,
+                    "preview": "## 第 1 页\nOLED Product Specification",
+                },
+            )
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=knowledge_runner,
+        conversation_router=DeepSeekConversationRouter(
+            FakeJsonCompletionClient(
+                [{"intent": "knowledge_task", "response": ""}]
+            ),
+            "fast-model",
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/conversations/blink",
+            json={"message": "读取 OLED 规格书 PDF"},
+        )
+        events = parse_sse(response.text)
+        streamed = "".join(
+            data["token"]
+            for event, data in events
+            if event == "token" and isinstance(data, dict)
+        )
+        history = client.get("/api/conversations/blink").json()["messages"]
+
+    assert "PDF 已完整分批读取：共 37 页" in streamed
+    assert "OLED Product Specification" in streamed
+    assert "本次没有修改源码" not in streamed
+    assert "PDF 已完整分批读取：共 37 页" in history[1]["content"]
+    assert "OLED Product Specification" in history[1]["content"]
+
+
+def test_explicit_absolute_pdf_command_overrides_wrong_firmware_router(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    router_calls: list[str] = []
+
+    class WrongRouter:
+        def route(self, message: str, *_: object, **__: object) -> ConversationDecision:
+            router_calls.append(message)
+            return ConversationDecision(intent="firmware_task")
+
+    def knowledge_runner(**kwargs: object) -> WorkflowRunResult:
+        initial = kwargs["initial_state"]
+        assert isinstance(initial, dict)
+        assert initial["task_mode"] == "knowledge"
+        return _run_result(
+            WorkflowState(
+                status="completed",
+                knowledge_result={
+                    "read_pdf": True,
+                    "title": "1.3寸横屏规格书",
+                    "total_pages": 37,
+                    "batches": 4,
+                    "characters": 1000,
+                    "preview": "OLED specification",
+                },
+            )
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=knowledge_runner,
+        conversation_router=WrongRouter(),  # type: ignore[arg-type]
+        continuous_agent_enabled=True,
+    )
+    message = (
+        '"D:\\download\\中景园电子1.3英寸OLED技术资料V3.0\\'
+        '1.3寸横屏规格书.pdf" 那么读取这个PDF'
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink",
+        json={"message": message},
+    )
+
+    assert response.status_code == 200
+    assert router_calls == []
+    assert "正在读取你指定的本地" in response.text
+    assert "检索项目知识库" not in response.text
+    assert "PDF 已完整分批读取：共 37 页" in response.text
 
 
 def test_same_project_concurrent_request_is_rejected(tmp_path: Path) -> None:
@@ -656,6 +1780,85 @@ def test_web_approval_flow_approves_and_resumes(
     assert "处理完成" in token_text
     result = next(data for event, data in events if event == "result")
     assert result["status"] == "completed"
+    assert app.state.pending_approvals == {}
+
+
+def test_web_supervisor_approval_flow_uses_agent_resumer(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    context = object()
+    saver = InMemorySaver()
+    resume_calls: list[dict[str, object]] = []
+    request = AgentApprovalRequest(
+        task_id="agent-web:architecture",
+        title="审批架构任务",
+        summary="高风险任务需要明确批准",
+        operation="project.plan",
+        risks=["可能修改工程状态"],
+    )
+
+    def agent_runner(**kwargs: object) -> AgentWorkflowRunResult:
+        return AgentWorkflowRunResult(
+            state={
+                "status": "awaiting_user",
+                "approval_request": request,
+                "approval_status": "pending",
+                "trace": [],
+            },
+            thread_id="agent-web-thread",
+            pending_approval=request,
+            checkpointer=saver,
+        )
+
+    def agent_resumer(**kwargs: object) -> AgentWorkflowRunResult:
+        assert persistence._approvals["0:blink"].status == "completed"
+        resume_calls.append(kwargs)
+        return AgentWorkflowRunResult(
+            state={
+                "status": "completed",
+                "approval_request": request,
+                "approval_status": "approved",
+                "evidence_ids": ["approval:agent-web:architecture"],
+                "acceptance_passed": True,
+                "trace": [],
+            },
+            thread_id="agent-web-thread",
+            checkpointer=saver,
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        workflow_runner=lambda **_: _run_result(WorkflowState()),
+        agent_bootstrap_factory=lambda **_: context,  # type: ignore[arg-type]
+        agent_workflow_runner=agent_runner,
+        agent_workflow_resumer=agent_resumer,
+        agent_runtime_mode="supervisor",
+        persistence=persistence,
+    )
+    client = TestClient(app)
+    thread, responses = _run_task_in_background(client)
+    _wait_for_pending_approval(app)
+
+    decision = client.post(
+        "/api/conversations/blink/approval",
+        json={"decision": "approve", "feedback": "确认执行"},
+    )
+    thread.join(timeout=5)
+
+    assert decision.status_code == 200
+    events = parse_sse(responses[0].text)
+    approval = next(data for event, data in events if event == "approval")
+    result = next(data for event, data in events if event == "result")
+    assert approval["request"]["kind"] == "task_approval"
+    assert approval["request"]["task_id"] == "agent-web:architecture"
+    assert result["status"] == "completed"
+    assert resume_calls[0]["thread_id"] == "agent-web-thread"
+    assert resume_calls[0]["approved"] is True
+    assert resume_calls[0]["feedback"] == "确认执行"
+    assert resume_calls[0]["checkpointer"] is saver
     assert app.state.pending_approvals == {}
 
 
@@ -1076,6 +2279,7 @@ def test_database_health_reports_sqlite_mode(tmp_path: Path) -> None:
     make_project(tmp_path)
     with TestClient(create_app(projects_roots=[tmp_path])) as client:
         response = client.get("/api/health/database")
+        audit_response = client.get("/api/runtime/audit")
     payload = response.json()
     assert payload == {
         "status": "ok",
@@ -1094,6 +2298,11 @@ def test_database_health_reports_sqlite_mode(tmp_path: Path) -> None:
             (tmp_path.parent / ".luxar-data" / "sdk-knowledge.lance").resolve()
         ),
     }
+    audit = audit_response.json()
+    assert audit["durable"] is True
+    assert audit["checkpoint_inventory_complete"] is True
+    assert audit["qualifies_as_release_evidence"] is False
+    assert "observation_window_too_short" in audit["blocking_reasons"]
 
 
 def test_followup_flash_question_uses_previous_run_without_new_workflow(
@@ -1227,6 +2436,204 @@ def test_restart_path_resumes_persisted_approval(
     assert resume_calls[0]["approved"] is True
     assert bootstrap_calls[0]["checkpointer"] is app.state.checkpointer
     assert persistence.get_messages("0:blink")[0]["content"] == "flash"
+
+
+def test_restart_path_resumes_persisted_supervisor_approval(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+
+    class DurableTestPersistence(TransientPersistence):
+        durable = True
+
+    persistence = DurableTestPersistence()
+    persistence.start_run(
+        thread_id="agent-durable-thread",
+        task_key="0:blink",
+        project_name="blink",
+        root_index=0,
+        task_text="执行高风险任务",
+        runtime_config={"agent_runtime": "supervisor"},
+    )
+    persistence.start_conversation_stream(
+        thread_id="agent-durable-thread",
+        task_key="0:blink",
+        user_message="执行高风险任务",
+    )
+    persistence.append_conversation_stream_event(
+        "agent-durable-thread",
+        event="token",
+        data={"token": "已完成风险检查。"},
+    )
+    persistence.finish_conversation_stream(
+        "agent-durable-thread", status="pending_approval"
+    )
+    request = AgentApprovalRequest(
+        task_id="agent-durable:task",
+        title="审批高风险任务",
+        summary="需要明确批准后继续",
+        operation="device.flash",
+        risks=["会修改外部设备状态"],
+    )
+    persistence.save_pending_approval(
+        PendingApprovalRecord(
+            task_key="0:blink",
+            project_name="blink",
+            root_index=0,
+            thread_id="agent-durable-thread",
+            request=request.model_dump(mode="json"),
+            runtime_config={
+                "agent_runtime": "supervisor",
+                "task_text": "执行高风险任务",
+                "serial_port": "COM3",
+                "target_chip": "esp32",
+            },
+        )
+    )
+    checkpointer = object()
+    context = object()
+    bootstrap_calls: list[dict[str, object]] = []
+    resume_calls: list[dict[str, object]] = []
+
+    def fake_agent_resume(**kwargs: object) -> AgentWorkflowRunResult:
+        resume_calls.append(kwargs)
+        return AgentWorkflowRunResult(
+            state={
+                "status": "completed",
+                "approval_status": "approved",
+                "evidence_ids": ["approval:agent-durable:task"],
+                "acceptance_passed": True,
+                "trace": [],
+            },
+            thread_id="agent-durable-thread",
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        persistence=persistence,
+        checkpointer=checkpointer,  # type: ignore[arg-type]
+        bootstrap_factory=lambda **_: object(),  # type: ignore[arg-type]
+        agent_bootstrap_factory=lambda **kwargs: (
+            bootstrap_calls.append(kwargs) or context
+        ),  # type: ignore[arg-type]
+        agent_workflow_resumer=fake_agent_resume,
+        agent_runtime_mode="supervisor",
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink/approval",
+        json={"decision": "approve", "feedback": "设备已核对"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recovered"] is True
+    assert payload["result"]["status"] == "completed"
+    assert bootstrap_calls[0]["project_path"] == (tmp_path / "blink").resolve()
+    assert resume_calls[0]["thread_id"] == "agent-durable-thread"
+    assert resume_calls[0]["context"] is context
+    assert resume_calls[0]["checkpointer"] is checkpointer
+    assert resume_calls[0]["approved"] is True
+    assert resume_calls[0]["feedback"] == "设备已核对"
+    assert persistence.get_messages("0:blink")[0]["content"] == "执行高风险任务"
+    stream = persistence.get_conversation_stream("agent-durable-thread")
+    assert stream is not None
+    assert stream.status == "completed"
+    assert "已完成风险检查" in stream.assistant_content
+    assert "审批已处理" in stream.assistant_content
+    assert [
+        item.event
+        for item in persistence.list_conversation_stream_events(
+            "agent-durable-thread"
+        )[-2:]
+    ] == ["result", "done"]
+
+
+def test_restart_path_resumes_persisted_specialized_approval(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+
+    class DurableTestPersistence(TransientPersistence):
+        durable = True
+
+    persistence = DurableTestPersistence()
+    request = WorkflowInteraction(
+        kind="knowledge_write",
+        title="确认知识库变更",
+        summary="保存 OLED 笔记",
+        options=["批准执行", "取消任务"],
+        operation={"action": "upsert"},
+    )
+    runtime_config = {
+        "agent_runtime": "legacy",
+        "firmware_runtime": "supervisor",
+        "workflow_family": "knowledge_task",
+        "task_text": "保存 OLED 笔记",
+        "target_chip": "esp32",
+    }
+    persistence.start_run(
+        thread_id="specialized-durable-thread",
+        task_key="0:blink",
+        project_name="blink",
+        root_index=0,
+        task_text="保存 OLED 笔记",
+        runtime_config=runtime_config,
+    )
+    persistence.save_pending_approval(
+        PendingApprovalRecord(
+            task_key="0:blink",
+            project_name="blink",
+            root_index=0,
+            thread_id="specialized-durable-thread",
+            request=request.model_dump(mode="json"),
+            runtime_config=runtime_config,
+        )
+    )
+    bootstrap_calls: list[dict[str, object]] = []
+    resume_calls: list[dict[str, object]] = []
+
+    def specialized_bootstrap(**kwargs: object) -> object:
+        bootstrap_calls.append(kwargs)
+        return object()
+
+    def specialized_resume(**kwargs: object) -> SpecializedWorkflowRunResult:
+        resume_calls.append(kwargs)
+        return SpecializedWorkflowRunResult(
+            state=SpecializedWorkflowState(
+                task_mode="knowledge",
+                status="completed",
+                knowledge_result={"document_id": "doc-1", "chunks": 2},
+                trace=[
+                    "analyze_knowledge_task",
+                    "review_knowledge_task",
+                    "execute_knowledge_task",
+                    "completed",
+                ],
+            ),
+            thread_id="specialized-durable-thread",
+        )
+
+    app = create_app(
+        projects_roots=[tmp_path],
+        specialized_bootstrap_factory=specialized_bootstrap,  # type: ignore[arg-type]
+        specialized_workflow_resumer=specialized_resume,
+        persistence=persistence,
+        checkpointer=object(),  # type: ignore[arg-type]
+    )
+
+    response = TestClient(app).post(
+        "/api/conversations/blink/approval",
+        json={"decision": "approve"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["recovered"] is True
+    assert len(bootstrap_calls) == 1
+    assert bootstrap_calls[0]["knowledge_service"] is app.state.knowledge_service
+    assert len(resume_calls) == 1
+    assert resume_calls[0]["thread_id"] == "specialized-durable-thread"
+    assert persistence.get_pending_approval("0:blink") is None
 
 
 def test_knowledge_ingest_and_search_api(tmp_path: Path) -> None:

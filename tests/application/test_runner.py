@@ -651,7 +651,7 @@ def test_runner_reports_safe_progress_for_complete_repair_loop() -> None:
     assert all(
         event.narrative
         for event in events
-        if event.stage not in {"completed", "failed"}
+        if event.stage not in {"requirement", "completed", "failed"}
     )
     assert set(vars(events[0])) == {
         "stage",
@@ -710,7 +710,7 @@ def test_runner_reports_one_failed_event_for_caught_espidf_error() -> None:
     assert all(
         event.narrative
         for event in events
-        if event.stage not in {"completed", "failed"}
+        if event.stage not in {"requirement", "completed", "failed"}
     )
     assert "SECRET_MANIFEST" not in repr(events)
     assert "SECRET_PROJECT_PATH" not in repr(events)
