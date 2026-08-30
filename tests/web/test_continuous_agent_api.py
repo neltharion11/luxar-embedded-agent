@@ -83,6 +83,20 @@ class _ReplyStepper:
         return AssistantReply(content=f"收到：{message}")
 
 
+class _NaturalCommentaryReplyStepper(_ReplyStepper):
+    def decide_next_step_streaming(
+        self,
+        context: AgentStepContext,
+        *,
+        on_commentary: object,
+    ) -> AssistantReply:
+        assert callable(on_commentary)
+        self.contexts.append(context)
+        on_commentary("我先看一下工程当前的实现，")
+        on_commentary("确认问题落在哪一层。")
+        return AssistantReply(content="工程检查完成。")
+
+
 class _ContextFactory:
     def __init__(self, stepper: _ReplyStepper | None = None) -> None:
         self.stepper = stepper or _ReplyStepper()
@@ -337,6 +351,7 @@ def test_v2_direct_turns_reuse_session_and_expose_distinct_turns(
         json={"message": "继续", "client_turn_id": "browser-2"},
     )
     conversation = client.get("/api/conversations/test4")
+    workbench = client.get("/api/projects/test4/agent")
 
     assert first.status_code == second.status_code == 200
     assert first.headers["X-LUXAR-Session-ID"] == second.headers[
@@ -350,6 +365,46 @@ def test_v2_direct_turns_reuse_session_and_expose_distinct_turns(
     assert conversation.json()["session_id"] == first.headers[
         "X-LUXAR-Session-ID"
     ]
+    assert workbench.status_code == 200
+    assert workbench.json()["workflow_family"] == "continuous_agent"
+    assert workbench.json()["status"] == "completed"
+    assert workbench.json()["tasks"][0]["task_id"] == "continuous_turn"
+
+
+def test_v2_stream_surfaces_commentary_before_the_final_answer(
+    tmp_path: Path,
+) -> None:
+    _make_project(tmp_path)
+    persistence = TransientPersistence()
+    client = TestClient(
+        create_app(
+            projects_roots=[tmp_path],
+            persistence=persistence,
+            continuous_agent_enabled=True,
+            continuous_agent_context_factory=_ContextFactory(
+                _NaturalCommentaryReplyStepper()
+            ),
+        )
+    )
+
+    response = client.post(
+        "/api/conversations/test4",
+        json={"message": "检查工程", "client_turn_id": "visible-progress-1"},
+    )
+
+    assert response.status_code == 200
+    assert "event: commentary" in response.text
+    assert response.text.index("event: commentary") < response.text.index("event: token")
+    events = persistence.list_conversation_stream_events(
+        response.headers["X-LUXAR-Turn-ID"],
+        after_sequence=0,
+        limit=100,
+    )
+    commentary = [item for item in events if item.event == "commentary"]
+    assert "".join(str(item.data["token"]) for item in commentary) == (
+        "我先看一下工程当前的实现，确认问题落在哪一层。"
+    )
+    assert all(item.data["phase"] == "commentary" for item in commentary)
 
 
 def test_v2_duplicate_client_turn_replays_without_duplicate_history(
@@ -556,6 +611,13 @@ def test_v2_web_approval_resumes_same_graph_and_executes_tool_once(
     approval = persistence.get_pending_approval("0:test4")
     assert approval is not None
     assert approval.thread_id == waiting.headers["X-LUXAR-Session-ID"]
+    # 待审批仍是进行中的同一 Turn，不能提前进入已完成聊天历史；否则
+    # WebUI 会同时渲染 messages 与 active_run.user_message，显示两次输入。
+    assert persistence.get_messages("0:test4") == []
+    waiting_conversation = client.get("/api/conversations/test4").json()
+    assert waiting_conversation["messages"] == []
+    assert waiting_conversation["active_run"]["user_message"] == "烧录开发板"
+    assert waiting_conversation["active_run"]["status"] == "pending_approval"
 
     resumed = client.post(
         "/api/conversations/test4/approval",
@@ -570,7 +632,17 @@ def test_v2_web_approval_resumes_same_graph_and_executes_tool_once(
     assert resumed.json()["status"] == "resuming"
     assert resumed.json()["turn_id"] == waiting.headers["X-LUXAR-Turn-ID"]
     _wait_until(lambda: tool.calls == 1)
+    _wait_until(
+        lambda: len(persistence.get_messages("0:test4")) == 2
+    )
     assert tool.calls == 1
+    assert persistence.get_messages("0:test4") == [
+        {"role": "user", "content": "烧录开发板"},
+        {
+            "role": "assistant",
+            "content": "烧录完成，设备工具只执行了一次。",
+        },
+    ]
     result_events = [
         item.data
         for item in persistence.list_conversation_stream_events(
@@ -1151,3 +1223,227 @@ def test_v2_retired_shadow_setting_does_not_run_a_hidden_model_call(
         "broad_disagreements": 0,
         "disagreement_rate": 0.0,
     }
+
+
+def test_v2_previous_exchanges_are_inherited_into_next_turn_context(
+    tmp_path: Path,
+) -> None:
+    _make_project(tmp_path)
+    persistence = TransientPersistence()
+    stepper = _ReplyStepper()
+    client = TestClient(
+        create_app(
+            projects_roots=[tmp_path],
+            persistence=persistence,
+            continuous_agent_enabled=True,
+            continuous_agent_context_factory=_ContextFactory(stepper),
+        )
+    )
+
+    first = client.post(
+        "/api/conversations/test4",
+        json={"message": "读取PDF并提取SH1106知识", "client_turn_id": "t1"},
+    )
+    second = client.post(
+        "/api/conversations/test4",
+        json={"message": "把前面提取的知识写入知识库", "client_turn_id": "t2"},
+    )
+    assert _sse_text(first.text) == "收到：读取PDF并提取SH1106知识"
+    assert _sse_text(second.text) == "收到：把前面提取的知识写入知识库"
+
+    second_context = stepper.contexts[-1]
+    inherited = [
+        (event.kind, str(event.payload.get("content", "")))
+        for event in second_context.recent_events
+    ]
+    # 本轮 user 消息始终是最后一条
+    assert inherited[-1] == ("user_message", "把前面提取的知识写入知识库")
+    # 第一轮的 user/assistant 交换被派生为历史事件，跨轮继承
+    assert ("user_message", "读取PDF并提取SH1106知识") in inherited
+    assert ("assistant_message", "收到：读取PDF并提取SH1106知识") in inherited
+    # 历史事件带独立 history: turn_id，不会冒充当前轮次
+    second_turn_id = second.headers["X-LUXAR-Turn-ID"]
+    history_ids = {
+        event.event_id
+        for event in second_context.recent_events
+        if event.turn_id.startswith("history:")
+    }
+    assert history_ids == {
+        f"history:{second_turn_id}:0",
+        f"history:{second_turn_id}:1",
+    }
+    # 历史事件不会投影/发布到当前会话流
+    stream_ids = [
+        str(item.data.get("conversation_event_id"))
+        for item in persistence.list_conversation_stream_events(
+            second_turn_id,
+            after_sequence=0,
+        )
+        if isinstance(item.data, dict)
+        and item.data.get("conversation_event_id") is not None
+    ]
+    assert not any(item.startswith("history:") for item in stream_ids)
+
+
+def test_v2_history_injection_is_bounded_and_truncated(
+    tmp_path: Path,
+) -> None:
+    _make_project(tmp_path)
+    persistence = TransientPersistence()
+    stepper = _ReplyStepper()
+    client = TestClient(
+        create_app(
+            projects_roots=[tmp_path],
+            persistence=persistence,
+            continuous_agent_enabled=True,
+            continuous_agent_context_factory=_ContextFactory(stepper),
+        )
+    )
+    # 预置 25 轮历史（每轮 user+assistant，assistant 超长），只应注入最近
+    # 20 条消息且每条内容截断到末尾 2000 字符。
+    for index in range(25):
+        persistence.append_exchange(
+            "0:test4",
+            thread_id=f"seed-{index}",
+            user_message=f"历史问题{index}",
+            assistant_message=f"历史回答{index}" + "X" * 5_000,
+        )
+
+    client.post(
+        "/api/conversations/test4",
+        json={"message": "现在继续", "client_turn_id": "t-limit"},
+    )
+    events = stepper.contexts[-1].recent_events
+    assert len(events) == 21  # 20 条历史 + 本轮 user
+    assert str(events[0].payload["content"]) == "历史问题15"
+    assert str(events[-1].payload["content"]) == "现在继续"
+    assistant_contents = [
+        str(event.payload["content"])
+        for event in events
+        if event.kind == "assistant_message"
+    ]
+    assert len(assistant_contents) == 10
+    assert all(content == "X" * 2_000 for content in assistant_contents)
+
+
+def test_v2_events_reset_per_turn_keeps_context_bounded_and_uncompacted(
+    tmp_path: Path,
+) -> None:
+    _make_project(tmp_path)
+    persistence = TransientPersistence()
+    stepper = _ReplyStepper()
+    client = TestClient(
+        create_app(
+            projects_roots=[tmp_path],
+            persistence=persistence,
+            continuous_agent_enabled=True,
+            continuous_agent_context_factory=_ContextFactory(stepper),
+        )
+    )
+    messages = [
+        "读取PDF提取SH1106知识",
+        "把知识写入知识库",
+        "现在编写OLED的I2C驱动库，GPIO21=SDA，GPIO22=SCL",
+    ]
+    for index, message in enumerate(messages):
+        response = client.post(
+            "/api/conversations/test4",
+            json={"message": message, "client_turn_id": f"t{index}"},
+        )
+        assert response.status_code == 200
+
+    final = stepper.contexts[-1]
+    # 未触发压缩：events 每轮重置，数量达不到压缩阈值，摘要必须为空
+    assert final.context_summary == ""
+    # 事件有界且不跨轮累积：注入的历史（前两轮 4 条消息）+ 本轮 user
+    assert len(final.recent_events) == 5, len(final.recent_events)
+    latest = [
+        str(event.payload["content"])
+        for event in final.recent_events
+        if event.kind == "user_message"
+    ]
+    # 本轮新命令必须是模型看到的最新 user 消息（修复前它会被旧摘要/旧游标
+    # 挤掉，导致 agent 反复回复"知识库已完成"而不执行）
+    assert latest[-1] == messages[-1], latest
+    assert messages[0] in latest  # 跨轮历史仍被继承
+
+
+class _ExplodingWorkflow:
+    """start 直接抛异常：异常从 execute_domain_workflow 节点冒出到 worker 兜底桶。"""
+
+    descriptor = DomainWorkflowDescriptor(
+        name="project.change",
+        description="复杂项目变更",
+    )
+
+    def start(
+        self,
+        call: DomainWorkflowCall,
+        context: DomainWorkflowExecutionContext,
+    ) -> DomainWorkflowOutcome:
+        del call, context
+        raise RuntimeError("workflow exploded for observability test")
+
+    def resume(
+        self,
+        call: DomainWorkflowCall,
+        context: DomainWorkflowExecutionContext,
+        *,
+        approved: bool,
+        feedback: str = "",
+    ) -> DomainWorkflowOutcome:
+        del call, context, approved, feedback
+        raise RuntimeError("workflow exploded for observability test")
+
+
+class _DomainWorkflowExploderStepper:
+    def decide_next_step(self, context: AgentStepContext) -> DomainWorkflowCall:
+        del context
+        return DomainWorkflowCall(
+            call_id="change-1",
+            workflow_name="project.change",
+            task="触发一次未捕获异常",
+        )
+
+
+def test_v2_worker_catch_all_preserves_original_error_in_details(
+    tmp_path: Path,
+) -> None:
+    """Fix C：worker 兜底桶必须把原始异常写进 failure.details，便于定位根因。"""
+    _make_project(tmp_path)
+    persistence = TransientPersistence()
+    context = ContinuousAgentRuntimeContext(
+        stepper=_DomainWorkflowExploderStepper(),  # type: ignore[arg-type]
+        tools=ToolRegistry(),
+        domain_workflows=DomainWorkflowRegistry([_ExplodingWorkflow()]),
+        project_path=tmp_path / "test4",
+    )
+    client = TestClient(
+        create_app(
+            projects_roots=[tmp_path],
+            persistence=persistence,
+            continuous_agent_enabled=True,
+            continuous_agent_context_factory=lambda **_: context,
+        )
+    )
+
+    response = client.post(
+        "/api/conversations/test4",
+        json={"message": "执行会失败的领域工作流", "client_turn_id": "boom-1"},
+    )
+    assert response.status_code == 200
+    assert "event: error" in response.text
+
+    session = persistence.get_active_agent_session("0:test4")
+    assert session is not None
+    turn = persistence.get_agent_turn_by_client_id(
+        session_id=session.session_id,
+        client_turn_id="boom-1",
+    )
+    assert turn is not None
+    assert turn.status == "failed"
+    assert turn.failure is not None
+    assert turn.failure["code"] == "continuous_agent_failed"
+    assert "details" in turn.failure
+    assert "RuntimeError" in turn.failure["details"]["error"]
+    assert "workflow exploded" in turn.failure["details"]["error"]

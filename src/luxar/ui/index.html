@@ -238,6 +238,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .task-progress-track{height:8px;overflow:hidden;border-radius:999px;background:#dce9f5}
 .task-progress-fill{width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,#0d74ce,#3e9bff);transition:width .25s ease}
 .task-progress.completed .task-progress-fill{background:#2e7d32}
+.commentary-stream{display:none;margin:0 0 10px;color:#46505c;font-size:13px;line-height:1.65}
+.commentary-stream.visible{display:block}
+.commentary-message{margin:0 0 8px;white-space:pre-wrap;word-break:break-word}
+.commentary-message:last-child{margin-bottom:0}
 .reasoning-summary{display:none;margin-top:10px;border:1px solid #e0e1e6;border-radius:10px;background:#fbfcfd;overflow:hidden}
 .reasoning-summary.visible{display:block}
 .reasoning-summary > summary{cursor:pointer;padding:9px 12px;font-size:12px;font-weight:650;color:#4b5563;list-style-position:inside;user-select:none}
@@ -259,6 +263,22 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f0f3;color:#1c2024;-
 .page-header{margin-bottom:24px}
 .page-header h1{font-size:28px;font-weight:800;letter-spacing:-1px;color:#1c2024}
 .page-header p{font-size:14px;color:#60646c;margin-top:4px}
+.serial-toolbar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:14px 16px;background:#fff;border:1px solid #e0e1e6;border-radius:12px 12px 0 0}
+.serial-field{display:flex;flex-direction:column;gap:5px;min-width:120px}
+.serial-field.port{flex:1;min-width:220px}
+.serial-field label{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#888}
+.serial-field select,.serial-field input{height:36px;border:1px solid #d8dbe0;border-radius:8px;background:#fff;color:#1c2024;padding:0 10px;font:12px 'Inter',sans-serif;outline:none}
+.serial-field select:focus,.serial-field input:focus{border-color:#0d74ce}
+.serial-console{min-height:360px;height:calc(100vh - 390px);background:#111827;color:#d1fae5;border-left:1px solid #202938;border-right:1px solid #202938;padding:16px;overflow:auto;font:12px/1.65 'JetBrains Mono',monospace;white-space:pre-wrap;word-break:break-word}
+.serial-console-empty{height:100%;display:flex;align-items:center;justify-content:center;color:#6b7280;text-align:center;font-family:'Inter',sans-serif}
+.serial-composer{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px;padding:12px 16px;background:#fff;border:1px solid #e0e1e6;border-radius:0 0 12px 12px;align-items:end}
+.serial-composer textarea{min-height:40px;max-height:110px;resize:vertical;border:1px solid #d8dbe0;border-radius:8px;padding:10px 12px;font:12px/1.45 'JetBrains Mono',monospace;outline:none}
+.serial-composer textarea:focus{border-color:#0d74ce}
+.serial-status-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 2px 0;color:#60646c;font-size:11px}
+.serial-status-main{display:flex;align-items:center;gap:7px}
+.serial-status-dot{width:8px;height:8px;border-radius:50%;background:#9ca3af}
+.serial-status-dot.connected{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.12)}
+@media(max-width:760px){.serial-console{height:50vh;min-height:300px}.serial-composer{grid-template-columns:1fr 1fr}.serial-composer textarea{grid-column:1/-1}.serial-field{min-width:calc(50% - 6px)}}
 .search-input{width:100%;padding:10px 14px;border:1px solid #e0e1e6;border-radius:10px;font-size:14px;outline:none;background:#fff;color:#1c2024;transition:border-color .15s}
 .search-input:focus{border-color:#0d74ce}
 .form-group{margin-bottom:14px}
@@ -295,6 +315,20 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
 .modal-status{font-size:12px;color:#60646c;min-height:18px;margin-top:8px}
 .path-picker{display:flex;gap:8px;align-items:center}
 .path-picker input{flex:1}
+/* 结构化错误卡片：工具失败 / 模型决策失败 / 策略拒绝等，显式暴露排查依据 */
+.failure-card{max-width:100%;margin:8px 0;border:1px solid #e57373;border-left:4px solid #c62828;background:#fff5f5;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5}
+.failure-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.failure-card-head strong{color:#b71c1c;font-size:13px;word-break:break-all}
+.failure-badge{flex:none;font-size:11px;padding:1px 8px;border-radius:999px;background:#e0e1e6;color:#555;white-space:nowrap}
+.failure-badge.retryable{background:#fff8e1;color:#f57f17}
+.failure-card-body{color:#424242}
+.failure-category{display:inline-block;background:#ef9a9a;color:#7f0000;border-radius:3px;padding:0 6px;font-size:11px;margin-right:6px;vertical-align:middle}
+.failure-code{display:inline-block;background:#212121;color:#ffcdd2;border-radius:3px;padding:1px 6px;font-family:'JetBrains Mono',monospace;font-size:12px;margin-right:6px;vertical-align:middle}
+.failure-call{color:#888;font-size:11px;font-family:'JetBrains Mono',monospace;vertical-align:middle}
+.failure-message{margin-top:6px;white-space:pre-wrap;word-break:break-word}
+.failure-details{margin-top:6px}
+.failure-details summary{cursor:pointer;font-size:12px;color:#c62828;user-select:none}
+.failure-details pre{background:#fafafa;border:1px solid #eee;padding:8px;border-radius:4px;overflow:auto;font-size:11px;max-height:240px;margin:6px 0 0}
 @media (max-width: 900px){.modal-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -317,6 +351,7 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
     <div class="nav-item active" data-page-link="chat" onclick="navigate('chat')"><span class="nav-icon">&#x1F4AC;</span><span data-i18n="nav.chat">Chat</span></div>
     <div class="nav-item" data-page-link="agent" onclick="navigate('agent')"><span class="nav-icon">&#x1F9ED;</span><span data-i18n="nav.agent">Agent 工作台</span></div>
     <div class="nav-item" data-page-link="dashboard" onclick="navigate('dashboard')"><span class="nav-icon">&#x1F4CA;</span><span data-i18n="nav.dashboard">Dashboard</span></div>
+    <div class="nav-item" data-page-link="serial" onclick="navigate('serial')"><span class="nav-icon">&#x2328;</span><span data-i18n="nav.serial">串口工具</span></div>
     <div class="nav-item" data-page-link="drivers" onclick="navigate('drivers')"><span class="nav-icon">&#x1F50C;</span><span data-i18n="nav.drivers">Driver Library</span></div>
     <div class="nav-item" data-page-link="skills" onclick="navigate('skills')"><span class="nav-icon">&#x1F9E0;</span><span data-i18n="nav.skills">Skill Library</span></div>
     <div class="nav-item" data-page-link="model-config" onclick="navigate('model-config')"><span class="nav-icon">&#x2699;</span><span data-i18n="nav.modelConfig">Model Config</span></div>
@@ -495,6 +530,31 @@ input[type="range"]{width:100%;accent-color:#1c2024;height:4px}
   </div>
 </div>
 
+<!-- Serial Terminal Page -->
+<div data-page="serial" id="serial-page">
+  <div class="page-header">
+    <h1 data-i18n="serial.title">串口信息收发</h1>
+    <p data-i18n="serial.subtitle">连接本机串口，实时查看设备输出并发送文本或十六进制数据。</p>
+  </div>
+  <div class="serial-toolbar">
+    <div class="serial-field port"><label data-i18n="serial.port">串口</label><select id="serial-tool-port"><option value="">请选择串口</option></select></div>
+    <div class="serial-field"><label data-i18n="serial.baudRate">波特率</label><select id="serial-tool-baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option selected>115200</option><option>230400</option><option>460800</option><option>921600</option></select></div>
+    <div class="serial-field"><label data-i18n="serial.dataFormat">数据格式</label><select id="serial-tool-format"><option value="8-none-1">8-N-1</option><option value="8-even-1">8-E-1</option><option value="8-odd-1">8-O-1</option></select></div>
+    <div class="serial-field"><label data-i18n="serial.displayMode">接收显示</label><select id="serial-display-mode"><option value="text">TEXT</option><option value="hex">HEX</option></select></div>
+    <button type="button" class="btn-secondary" id="serial-refresh-btn" data-i18n="serial.refresh">刷新</button>
+    <button type="button" class="btn-secondary" id="serial-clear-btn" data-i18n="serial.clear">清屏</button>
+    <button type="button" class="btn-primary" id="serial-connect-btn" data-i18n="serial.connect">连接</button>
+  </div>
+  <div id="serial-tool-console" class="serial-console" role="log" aria-live="polite"><div class="serial-console-empty" data-i18n="serial.empty">连接串口后，收发内容会显示在这里。</div></div>
+  <div class="serial-composer">
+    <select id="serial-send-mode" class="form-input" aria-label="发送格式"><option value="text">TEXT</option><option value="hex">HEX</option></select>
+    <textarea id="serial-send-input" rows="1" data-i18n-placeholder="serial.sendPlaceholder" placeholder="输入要发送的内容"></textarea>
+    <select id="serial-line-ending" class="form-input" aria-label="行尾"><option value="none">无行尾</option><option value="lf">LF</option><option value="crlf">CRLF</option></select>
+    <button type="button" class="btn-primary" id="serial-send-btn" disabled data-i18n="serial.send">发送</button>
+  </div>
+  <div class="serial-status-row"><div class="serial-status-main"><span id="serial-tool-status-dot" class="serial-status-dot"></span><span id="serial-tool-status" data-i18n="serial.disconnected">未连接</span></div><div><span id="serial-rx-count">RX 0 B</span> · <span id="serial-tx-count">TX 0 B</span></div></div>
+</div>
+
 <div data-page="drivers">
   <div class="page-header">
     <h1 data-i18n="drivers.title">Driver Library</h1>
@@ -662,6 +722,7 @@ const zh=i18n.zh, en=i18n.en;
 zh['nav.chat']='聊天';
 zh['nav.agent']='Agent 工作台';
 zh['nav.dashboard']='仪表盘';
+zh['nav.serial']='串口工具';
 zh['nav.drivers']='驱动库';
 zh['nav.skills']='技能库';
 zh['nav.modelConfig']='模型配置';
@@ -731,8 +792,8 @@ zh['chat.lastResponseAgo']='最近响应于 {seconds} 秒前';
 zh['chat.noEventSince']='{seconds} 秒未收到新事件';
 zh['chat.toolRunningWithName']='正在调用工具：{tool}';
 zh['chat.toolRunningGeneric']='正在调用工具...';
-zh['chat.reasoningSummary']='推理摘要';
-zh['chat.reasoningSummaryNote']='展示可审计的判断、步骤、工具与证据；不包含模型私密逐字思维链。';
+zh['chat.reasoningSummary']='运行详情';
+zh['chat.reasoningSummaryNote']='工具、阶段与耗时等工程信息；不包含模型私密逐字思维链。';
 zh['chat.reasoningStep']='步骤';
 zh['agent.title']='Agent 工作台';
 zh['agent.subtitle']='查看项目目标、任务依赖、能力和验收证据。';
@@ -791,6 +852,25 @@ zh['dashboard.configRuntime']='系统';
 zh['dashboard.configWorkspace']='工作空间';
 zh['dashboard.recentProjects']='项目';
 zh['dashboard.loadingProjects']='加载中...';
+zh['serial.title']='串口信息收发';
+zh['serial.subtitle']='连接本机串口，实时查看设备输出并发送文本或十六进制数据。';
+zh['serial.port']='串口';
+zh['serial.baudRate']='波特率';
+zh['serial.dataFormat']='数据格式';
+zh['serial.displayMode']='接收显示';
+zh['serial.refresh']='刷新';
+zh['serial.clear']='清屏';
+zh['serial.connect']='连接';
+zh['serial.disconnect']='断开';
+zh['serial.empty']='连接串口后，收发内容会显示在这里。';
+zh['serial.sendPlaceholder']='输入要发送的内容';
+zh['serial.send']='发送';
+zh['serial.disconnected']='未连接';
+zh['serial.connecting']='正在连接...';
+zh['serial.connected']='已连接 {port}';
+zh['serial.loadFailed']='串口发现失败';
+zh['serial.connectionFailed']='串口连接失败';
+zh['serial.sendFailed']='发送失败';
 zh['drivers.title']='驱动库';
 zh['drivers.subtitle']='浏览、搜索和管理本地驱动库。';
 zh['drivers.searchPlaceholder']='搜索驱动...';
@@ -846,10 +926,30 @@ zh['modelConfig.loaded']='配置已加载';
 en['nav.chat']='Chat';
 en['nav.agent']='Agent Workspace';
 en['nav.dashboard']='Dashboard';
+en['nav.serial']='Serial Terminal';
 en['nav.drivers']='Driver Library';
 en['nav.skills']='Skill Library';
 en['nav.modelConfig']='Model Config';
 en['nav.apiConnected']='Connected';
+en['serial.title']='Serial Terminal';
+en['serial.subtitle']='Connect to a local serial port, inspect device output, and send text or hexadecimal data.';
+en['serial.port']='Port';
+en['serial.baudRate']='Baud rate';
+en['serial.dataFormat']='Data format';
+en['serial.displayMode']='RX display';
+en['serial.refresh']='Refresh';
+en['serial.clear']='Clear';
+en['serial.connect']='Connect';
+en['serial.disconnect']='Disconnect';
+en['serial.empty']='Received and transmitted data will appear here after connecting.';
+en['serial.sendPlaceholder']='Enter data to send';
+en['serial.send']='Send';
+en['serial.disconnected']='Disconnected';
+en['serial.connecting']='Connecting...';
+en['serial.connected']='Connected to {port}';
+en['serial.loadFailed']='Serial port discovery failed';
+en['serial.connectionFailed']='Serial connection failed';
+en['serial.sendFailed']='Send failed';
 en['sidebar.projects']='Projects';
 en['sidebar.newProject']='New project';
 en['sidebar.selectProject']='Select project';
@@ -915,8 +1015,8 @@ en['chat.lastResponseAgo']='Last response {seconds}s ago';
 en['chat.noEventSince']='No new events for {seconds}s';
 en['chat.toolRunningWithName']='Running tool: {tool}';
 en['chat.toolRunningGeneric']='Running tool...';
-en['chat.reasoningSummary']='Reasoning summary';
-en['chat.reasoningSummaryNote']='Shows auditable decisions, steps, tools, and evidence—not private chain-of-thought.';
+en['chat.reasoningSummary']='Run details';
+en['chat.reasoningSummaryNote']='Engineering details such as tools, phases, and elapsed time—not private chain-of-thought.';
 en['chat.reasoningStep']='Step';
 en['agent.title']='Agent Workspace';
 en['agent.subtitle']='Inspect project goals, task dependencies, capabilities, and acceptance evidence.';
@@ -1047,6 +1147,11 @@ let activeConversationRuns = {};
 let recoveryControllers = {};
 let activeAgentSessions = {};
 let continuousAgentV2Enabled = false;
+let serialTerminalSessionId = null;
+let serialTerminalSequence = 0;
+let serialTerminalEvents = [];
+let serialTerminalPollTimer = null;
+let serialTerminalPolling = false;
 
 function conversationRunKey(project, rootIndex) {
   return String(rootIndex) + ':' + String(project || '__global__');
@@ -1134,6 +1239,12 @@ function createChatStatusController(el) {
     render();
   }
 
+  function markHeartbeat() {
+    // Transport heartbeats keep SSE alive, but they are not semantic progress.
+    // Keeping lastEventAt unchanged lets the UI truthfully surface a stalled step.
+    render();
+  }
+
   function setState(nextState, opts) {
     state = nextState;
     if (opts && Object.prototype.hasOwnProperty.call(opts, 'toolName')) {
@@ -1154,6 +1265,7 @@ function createChatStatusController(el) {
   start();
   return {
     markEvent: markEvent,
+    markHeartbeat: markHeartbeat,
     setState: setState,
     finish: finish
   };
@@ -1167,6 +1279,7 @@ function applyI18n() {
   updateNewProjectSubmitLabel();
   updateChatHeader();
   if (document.querySelector('[data-page="agent"].active')) loadAgentWorkspace();
+  if (document.querySelector('[data-page="serial"].active')) renderSerialTerminalEvents();
   if (document.getElementById('mc-provider')) updateThinkingUi();
 }
 
@@ -1188,6 +1301,7 @@ function navigate(page) {
   var navItem = document.querySelector('[data-page-link="' + page + '"]');
   if (navItem) navItem.classList.add('active');
   if (page === 'dashboard') loadDashboard();
+  else if (page === 'serial') loadSerialTerminalPorts();
   else if (page === 'agent') {
     loadAgentWorkspace();
     agentSnapshotPoll = setInterval(function() {
@@ -1342,9 +1456,9 @@ function renderApprovalCard(bubbleDiv, request, project) {
       card.innerHTML = '<div style="color:#2e7d32;font-weight:600;">已' +
         (feedback ? '提交修改意见，正在重新规划' : (decision === 'approve' ? '批准，工作流继续执行…' : '取消任务')) + '</div>';
       if (payload.status === 'resuming' && payload.turn_id) {
-        // 审批恢复在后台继续写入同一个 Turn；重新加载后复用持久化 SSE
-        // 游标接收进度和最终 token，不轮询也不重复执行工具。
-        loadConversation(project);
+        // 审批恢复仍属于同一个 Turn。保留当前气泡及其已显示内容，
+        // 只把恢复 SSE 接到现有视图上，避免 loadConversation() 清空 DOM。
+        resumeConversationRunAfterApproval(project, selectedRootIndex, bubbleDiv);
       }
     }).catch(function () {
       card.innerHTML = '<div style="color:#c62828;">审批请求失败</div>';
@@ -1358,6 +1472,26 @@ function renderApprovalCard(bubbleDiv, request, project) {
   });
 }
 
+async function resumeConversationRunAfterApproval(project, rootIndex, bubbleDiv) {
+  var view = bubbleDiv && bubbleDiv.__luxarStreamView;
+  if (!view) {
+    // 仅兼容旧页面或非流式卡片；正常 WebUI 审批卡片都会挂在流视图上。
+    loadConversation(project);
+    return;
+  }
+  try {
+    var data = await apiGet('/api/conversations/' + encodeURIComponent(project) + '?root_index=' + rootIndex);
+    var activeRun = data && data.active_run;
+    if (!activeRun || !activeRun.thread_id) {
+      return;
+    }
+    recoverConversationRun(project, rootIndex, activeRun, view);
+  } catch (e) {
+    // 恢复监听失败时保留已显示内容，并在同一个气泡内给出可理解的错误。
+    appendFailureCard(bubbleDiv, {category: 'recovery', message: '审批已提交，但任务输出恢复失败，请刷新后重试'}, {});
+  }
+}
+
 function getTaskArtifact(taskResult, key) {
   if (!taskResult || typeof taskResult !== 'object') return {};
   if (taskResult.artifacts && typeof taskResult.artifacts === 'object' && taskResult.artifacts[key]) {
@@ -1366,6 +1500,68 @@ function getTaskArtifact(taskResult, key) {
   return taskResult[key] || {};
 }
 
+var FAILURE_CATEGORY_LABELS = {
+  model: '模型',
+  tool: '工具',
+  policy: '策略',
+  validation: '参数校验',
+  user_input: '等待输入',
+  internal: '内部',
+  service: '服务',
+  authentication: '认证',
+  timeout: '超时',
+  rate_limit: '限流',
+  empty_response: '空响应',
+  invalid_json: '响应格式错误',
+  invalid_schema: '响应格式错误'
+};
+function failureCategoryLabel(category) {
+  return FAILURE_CATEGORY_LABELS[category] || String(category || 'unknown');
+}
+function renderFailureCard(failure, options) {
+  if (!failure || typeof failure !== 'object') return '';
+  options = options || {};
+  var category = failureCategoryLabel(failure.category);
+  var code = failure.code ? String(failure.code) : '';
+  var message = escapeHtml(String(failure.message || '未知错误'));
+  var retryable = !!failure.retryable;
+  var toolName = options.toolName ? escapeHtml(String(options.toolName)) : '';
+  var rejected = options.status === 'rejected';
+  var title = toolName
+    ? ('工具 ' + toolName + (rejected ? ' 已被拒绝' : ' 执行失败'))
+    : (category + '错误');
+  var html = '<div class="failure-card" data-failure-card="1">' +
+    '<div class="failure-card-head">' +
+      '<strong>' + escapeHtml(title) + '</strong>' +
+      (retryable
+        ? '<span class="failure-badge retryable">可重试</span>'
+        : '<span class="failure-badge">不可重试</span>') +
+    '</div>' +
+    '<div class="failure-card-body">' +
+      '<span class="failure-category">' + escapeHtml(category) + '</span>' +
+      (code ? '<code class="failure-code">' + escapeHtml(code) + '</code>' : '') +
+      (options.callId ? '<span class="failure-call">' + escapeHtml(String(options.callId)) + '</span>' : '') +
+      '<div class="failure-message">' + message + '</div>' +
+    '</div>';
+  var details = failure.details;
+  if (details && typeof details === 'object' && Object.keys(details).length) {
+    html += '<details class="failure-details"><summary>错误详情（排查依据）</summary><pre>' +
+      escapeHtml(JSON.stringify(details, null, 2)) + '</pre></details>';
+  }
+  html += '</div>';
+  return html;
+}
+function appendFailureCard(container, failure, options) {
+  if (!container || !failure || typeof failure !== 'object') return;
+  var html = renderFailureCard(failure, options);
+  if (!html) return;
+  var wrapper = document.createElement('div');
+  wrapper.className = 'failure-card-slot';
+  wrapper.innerHTML = html;
+  container.appendChild(wrapper);
+  if (container.scrollTop !== undefined) container.scrollTop = container.scrollHeight;
+  return wrapper;
+}
 function renderTaskResultCards(taskResult) {
   if (!taskResult || typeof taskResult !== 'object') return '';
   if (taskResult.status) {
@@ -1420,7 +1616,12 @@ function renderTaskResultCards(taskResult) {
     }
     var continuousFailure = taskResult.failure || {};
     if (continuousFailure.message) {
-      items.push('<li><span>失败原因：</span> ' + escapeHtml(String(continuousFailure.message)) + '</li>');
+      if (continuousFailure.code || continuousFailure.category) {
+        items.push('<li style="list-style:none;padding:0">' +
+          renderFailureCard(continuousFailure, {}) + '</li>');
+      } else {
+        items.push('<li><span>失败原因：</span> ' + escapeHtml(String(continuousFailure.message)) + '</li>');
+      }
     }
     return '<div class="chat-result-stack"><div class="chat-result-card"><h4>任务结果</h4><ul>' +
       items.join('') + '</ul></div></div>';
@@ -1967,6 +2168,202 @@ async function loadSerialPorts() {
   }
 }
 
+async function loadSerialTerminalPorts() {
+  var select = document.getElementById('serial-tool-port');
+  if (!select) return;
+  var previous = select.value;
+  select.disabled = true;
+  select.innerHTML = '<option value="">' + escapeHtml(t('sidebar.loading')) + '</option>';
+  try {
+    var data = await apiGet('/api/devices/ports');
+    var ports = data.ports || [];
+    select.innerHTML = '<option value="">' + (ports.length ? '请选择串口' : '未发现可用串口') + '</option>';
+    ports.forEach(function(port) {
+      var option = document.createElement('option');
+      option.value = port.name;
+      option.textContent = port.description ? (port.name + ' — ' + port.description) : port.name;
+      option.title = port.hardware_id || '';
+      select.appendChild(option);
+    });
+    if (previous && ports.some(function(port) { return port.name === previous; })) select.value = previous;
+  } catch (error) {
+    select.innerHTML = '<option value="">' + escapeHtml(t('serial.loadFailed')) + '</option>';
+  } finally {
+    select.disabled = !!serialTerminalSessionId;
+  }
+}
+
+function serialTerminalSetConnected(connected, port) {
+  var dot = document.getElementById('serial-tool-status-dot');
+  var status = document.getElementById('serial-tool-status');
+  var button = document.getElementById('serial-connect-btn');
+  var send = document.getElementById('serial-send-btn');
+  var controls = ['serial-tool-port', 'serial-tool-baud', 'serial-tool-format'];
+  if (dot) dot.classList.toggle('connected', !!connected);
+  if (status) status.textContent = connected ? formatI18n('serial.connected', {port: port || ''}) : t('serial.disconnected');
+  if (button) button.textContent = connected ? t('serial.disconnect') : t('serial.connect');
+  if (send) send.disabled = !connected;
+  controls.forEach(function(id) {
+    var element = document.getElementById(id);
+    if (element) element.disabled = !!connected;
+  });
+}
+
+function serialTerminalErrorMessage(prefix, responseBody) {
+  var detail = responseBody && responseBody.detail ? String(responseBody.detail) : '';
+  return detail ? (prefix + '：' + detail) : prefix;
+}
+
+async function toggleSerialTerminalConnection() {
+  var button = document.getElementById('serial-connect-btn');
+  if (button) button.disabled = true;
+  try {
+    if (serialTerminalSessionId) {
+      var closingId = serialTerminalSessionId;
+      serialTerminalSessionId = null;
+      if (serialTerminalPollTimer) clearTimeout(serialTerminalPollTimer);
+      serialTerminalPollTimer = null;
+      await fetch('/api/serial/sessions/' + encodeURIComponent(closingId), {method: 'DELETE'});
+      serialTerminalSetConnected(false);
+      return;
+    }
+    var port = document.getElementById('serial-tool-port').value;
+    if (!port) throw new Error('请选择串口');
+    var format = document.getElementById('serial-tool-format').value.split('-');
+    var status = document.getElementById('serial-tool-status');
+    if (status) status.textContent = t('serial.connecting');
+    var response = await fetch('/api/serial/sessions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        port: port,
+        baud_rate: Number(document.getElementById('serial-tool-baud').value),
+        data_bits: Number(format[0]),
+        parity: format[1],
+        stop_bits: Number(format[2])
+      })
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(serialTerminalErrorMessage(t('serial.connectionFailed'), data));
+    serialTerminalSessionId = data.session_id;
+    serialTerminalSequence = Number(data.last_sequence || 0);
+    serialTerminalEvents = [];
+    renderSerialTerminalEvents();
+    updateSerialTerminalCounters(data);
+    serialTerminalSetConnected(true, data.port);
+    scheduleSerialTerminalPoll(0);
+  } catch (error) {
+    serialTerminalSetConnected(false);
+    var statusEl = document.getElementById('serial-tool-status');
+    if (statusEl) statusEl.textContent = error.message || t('serial.connectionFailed');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function scheduleSerialTerminalPoll(delay) {
+  if (serialTerminalPollTimer) clearTimeout(serialTerminalPollTimer);
+  if (!serialTerminalSessionId) return;
+  serialTerminalPollTimer = setTimeout(pollSerialTerminal, delay == null ? 250 : delay);
+}
+
+async function pollSerialTerminal() {
+  if (!serialTerminalSessionId || serialTerminalPolling) return;
+  serialTerminalPolling = true;
+  var sessionId = serialTerminalSessionId;
+  try {
+    var response = await fetch('/api/serial/sessions/' + encodeURIComponent(sessionId) + '?after_sequence=' + serialTerminalSequence);
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(serialTerminalErrorMessage(t('serial.connectionFailed'), data));
+    if (sessionId !== serialTerminalSessionId) return;
+    var events = Array.isArray(data.events) ? data.events : [];
+    if (events.length) {
+      serialTerminalEvents = serialTerminalEvents.concat(events).slice(-1000);
+      serialTerminalSequence = Number(data.last_sequence || serialTerminalSequence);
+      renderSerialTerminalEvents();
+    }
+    updateSerialTerminalCounters(data);
+    if (!data.connected || data.reader_error) {
+      serialTerminalSessionId = null;
+      serialTerminalSetConnected(false);
+      var status = document.getElementById('serial-tool-status');
+      if (status && data.reader_error) status.textContent = data.reader_error;
+      return;
+    }
+  } catch (error) {
+    if (sessionId === serialTerminalSessionId) {
+      serialTerminalSessionId = null;
+      serialTerminalSetConnected(false);
+      var statusEl = document.getElementById('serial-tool-status');
+      if (statusEl) statusEl.textContent = error.message || t('serial.connectionFailed');
+    }
+    return;
+  } finally {
+    serialTerminalPolling = false;
+  }
+  scheduleSerialTerminalPoll(250);
+}
+
+function renderSerialTerminalEvents() {
+  var consoleEl = document.getElementById('serial-tool-console');
+  if (!consoleEl) return;
+  consoleEl.textContent = '';
+  if (!serialTerminalEvents.length) {
+    var empty = document.createElement('div');
+    empty.className = 'serial-console-empty';
+    empty.textContent = t('serial.empty');
+    consoleEl.appendChild(empty);
+    return;
+  }
+  var displayMode = document.getElementById('serial-display-mode').value;
+  var fragment = document.createDocumentFragment();
+  serialTerminalEvents.forEach(function(event) {
+    var line = document.createElement('div');
+    var direction = String(event.direction || '').toUpperCase();
+    var timestamp = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '--:--:--';
+    var content = displayMode === 'hex' ? String(event.hex || '') : String(event.text || '');
+    line.style.color = direction === 'TX' ? '#93c5fd' : direction === 'ERROR' ? '#fca5a5' : '#d1fae5';
+    line.textContent = '[' + timestamp + '] ' + direction.padEnd(5, ' ') + content;
+    fragment.appendChild(line);
+  });
+  consoleEl.appendChild(fragment);
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function updateSerialTerminalCounters(data) {
+  document.getElementById('serial-rx-count').textContent = 'RX ' + Number(data.rx_bytes || 0) + ' B';
+  document.getElementById('serial-tx-count').textContent = 'TX ' + Number(data.tx_bytes || 0) + ' B';
+}
+
+async function sendSerialTerminalData() {
+  if (!serialTerminalSessionId) return;
+  var input = document.getElementById('serial-send-input');
+  var button = document.getElementById('serial-send-btn');
+  var payload = input.value;
+  if (!payload) return;
+  button.disabled = true;
+  try {
+    var response = await fetch('/api/serial/sessions/' + encodeURIComponent(serialTerminalSessionId) + '/write', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        mode: document.getElementById('serial-send-mode').value,
+        payload: payload,
+        line_ending: document.getElementById('serial-line-ending').value
+      })
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(serialTerminalErrorMessage(t('serial.sendFailed'), data));
+    input.value = '';
+    scheduleSerialTerminalPoll(0);
+  } catch (error) {
+    var status = document.getElementById('serial-tool-status');
+    if (status) status.textContent = error.message || t('serial.sendFailed');
+  } finally {
+    button.disabled = !serialTerminalSessionId;
+  }
+}
+
 function openNewProjectModal() {
   if (!espIdfToolchain || !espIdfToolchain.available) {
     navigate('dashboard');
@@ -2296,13 +2693,43 @@ function createTaskProgressController(bubbleDiv, beforeNode) {
 
   function update(data) {
     if (!data || data.progress_type !== 'pdf') return;
+    var phase = String(data.phase || '');
     var current = Math.max(0, Number(data.current || 0));
     var total = Math.max(0, Number(data.total || 0));
-    var percent = total > 0 ? Math.min(100, Math.round(current * 100 / total)) : 0;
+    var message = String(data.message || '');
+    var percent = 0;
+    var countText = '';
+    // 进度条只在模型分析阶段推进，并在读取 + 分析全部完成时才到 100%：
+    // - 打开/读取阶段只占前段（0-15%），避免一上传 PDF 进度条就走完；
+    // - 分析阶段按服务器消息里的 “X/Y 块” 从 15% 推进到 95%；
+    //   工程图分析等不带块数的事件保持基础进度，避免进度回退；
+    // - phase=completed 才显示 100% 完成（绿色）。
+    if (phase === 'completed') {
+      percent = 100;
+      countText = '完成';
+    } else if (phase === 'analyzing') {
+      var block = /(\d+)\s*\/\s*(\d+)\s*块/.exec(message);
+      if (block) {
+        var done = Math.max(0, Number(block[1]));
+        var blockTotal = Math.max(1, Number(block[2]));
+        percent = Math.min(95, Math.round(15 + 80 * (Math.min(done, blockTotal) / blockTotal)));
+        countText = block[1] + ' / ' + block[2] + ' 块 · ' + percent + '%';
+      } else {
+        percent = 15;
+        countText = percent + '%';
+      }
+    } else if (phase === 'extracting' || phase === 'opening') {
+      var read = total > 0 ? Math.min(current, total) / total : 0;
+      percent = Math.round(15 * read);
+      countText = total > 0 ? (current + ' / ' + total + ' 页 · ' + percent + '%') : '正在打开 PDF';
+    } else if (phase === 'extracted') {
+      percent = 15;
+      countText = percent + '%';
+    }
     wrapper.classList.add('visible');
-    wrapper.classList.toggle('completed', data.phase === 'completed' || (total > 0 && current >= total));
-    label.textContent = String(data.message || '正在读取 PDF');
-    count.textContent = total > 0 ? (current + ' / ' + total + ' 页 · ' + percent + '%') : '正在打开 PDF';
+    wrapper.classList.toggle('completed', phase === 'completed');
+    label.textContent = message || '正在读取 PDF';
+    count.textContent = countText || (percent + '%');
     fill.style.width = percent + '%';
     track.setAttribute('aria-valuenow', String(percent));
     track.setAttribute('aria-label', label.textContent);
@@ -2357,22 +2784,38 @@ function createReasoningSummaryController(bubbleDiv, beforeNode) {
     return item;
   }
 
-  function update(data) {
+  function eventLabel(data, eventName) {
+    if (eventName === 'tool_call') {
+      return '开始执行工具 ' + toolDisplayName(data.tool_name || data.tool_call || data.call_id || '');
+    }
+    if (eventName === 'tool_result') {
+      var tool = toolDisplayName(data.tool_name || data.workflow_name || data.call_id || '');
+      return (data.status === 'succeeded' || data.status === 'completed' ? '工具执行完成 ' : '工具执行结束 ') + tool;
+    }
+    return String(data.message || data.stage || data.phase || '').trim();
+  }
+
+  function update(data, eventName) {
     if (!data || data.phase === 'heartbeat') return;
-    var label = String(data.message || data.stage || '').trim();
+    var label = eventLabel(data, eventName || 'progress');
     if (!label) return;
     var tools = Array.isArray(data.tools) ? data.tools.map(String) : [];
+    var eventTool = data.tool_name || data.workflow_name || data.tool_call || data.tool;
+    if (!tools.length && eventTool) tools = [String(eventTool)];
     var detail = String(data.detail || '').trim();
+    if (!detail && Number(data.elapsed_ms) >= 0 && data.elapsed_ms !== undefined) {
+      detail = '耗时 ' + (Number(data.elapsed_ms) / 1000).toFixed(1) + ' 秒';
+    }
     var replaceable = data.progress_type === 'pdf'
       ? 'pdf:' + String(data.stage || '') + ':' + String(data.phase || '')
       : '';
-    var entry = {label: label, detail: detail, tools: tools, replaceable: replaceable};
+    var entry = {label: label, detail: detail, tools: tools, replaceable: replaceable, startedAt: Date.now()};
     if (replaceable && entries.length && entries[entries.length - 1].replaceable === replaceable) {
       entries[entries.length - 1] = entry;
       var last = list.lastElementChild;
       if (last) renderEntry(entry, entries.length - 1, last);
     } else {
-      var signature = [data.stage, data.phase, data.attempts, label, detail, tools.join('|')].join('::');
+      var signature = [eventName, data.stage, data.phase, data.attempts, label, detail, tools.join('|')].join('::');
       if (entries.some(function(item) { return item.signature === signature; })) return;
       entry.signature = signature;
       entries.push(entry);
@@ -2389,12 +2832,63 @@ function createReasoningSummaryController(bubbleDiv, beforeNode) {
     count.textContent = '(' + entries.length + ')';
   }
 
+  function heartbeat(data) {
+    if (!data || !entries.length) return;
+    var entry = entries[entries.length - 1];
+    var elapsed = Math.max(0, Math.floor((Date.now() - entry.startedAt) / 1000));
+    entry.detail = '当前步骤已运行 ' + elapsed + ' 秒';
+    var last = list.lastElementChild;
+    if (last) renderEntry(entry, entries.length - 1, last);
+  }
+
   function reset() {
     entries = [];
     list.innerHTML = '';
     count.textContent = '';
     wrapper.className = 'reasoning-summary';
     wrapper.open = false;
+  }
+
+  function finish() {
+    if (entries.length) wrapper.open = false;
+  }
+
+  return {update: update, heartbeat: heartbeat, reset: reset, finish: finish};
+}
+
+function createCommentaryController(bubbleDiv, beforeNode) {
+  var wrapper = document.createElement('div');
+  wrapper.className = 'commentary-stream';
+  wrapper.setAttribute('aria-live', 'polite');
+  bubbleDiv.insertBefore(wrapper, beforeNode || null);
+  var currentId = '';
+  var currentText = '';
+  var currentNode = null;
+
+  function update(data) {
+    if (!data || typeof data !== 'object') return;
+    var text = String(data.token || data.content || data.message || '');
+    if (!text) return;
+    var messageId = String(data.commentary_id || data.conversation_event_id || 'commentary');
+    if (!currentNode || messageId !== currentId) {
+      currentId = messageId;
+      currentText = '';
+      currentNode = document.createElement('p');
+      currentNode.className = 'commentary-message';
+      wrapper.appendChild(currentNode);
+      while (wrapper.children.length > 20) wrapper.removeChild(wrapper.firstElementChild);
+    }
+    currentText += text;
+    currentNode.textContent = currentText;
+    wrapper.classList.add('visible');
+  }
+
+  function reset() {
+    currentId = '';
+    currentText = '';
+    currentNode = null;
+    wrapper.innerHTML = '';
+    wrapper.className = 'commentary-stream';
   }
 
   return {update: update, reset: reset};
@@ -2420,13 +2914,16 @@ function createStreamingConversationView(container, initialContent) {
     container: container,
     streamContent: String(initialContent || ''),
     statusController: createChatStatusController(typingDiv),
+    commentaryController: null,
     editedFilesController: null,
     progressController: null,
     reasoningController: null
   };
+  view.commentaryController = createCommentaryController(bubbleDiv, mdDiv);
   view.editedFilesController = createEditedFilesController(bubbleDiv, container);
   view.progressController = createTaskProgressController(bubbleDiv, typingDiv);
   view.reasoningController = createReasoningSummaryController(bubbleDiv, typingDiv);
+  bubbleDiv.__luxarStreamView = view;
   if (view.streamContent) renderStreamMarkdown(mdDiv, view.streamContent, container);
   return view;
 }
@@ -2440,7 +2937,11 @@ function setToolRunningFromProgress(statusController, data) {
   // 旧服务或已持久化的心跳可能没有 tools。心跳只表示调用仍然活跃，
   // 不应使用通用等待文案覆盖上一条已知的工具名称。
   if (data && data.phase === 'heartbeat') {
-    statusController.setState('tool_running');
+    if (String(data.stage || '').indexOf('agent_decision') === 0) {
+      statusController.setState('thinking');
+    } else {
+      statusController.setState('tool_running');
+    }
     return;
   }
   statusController.setState(
@@ -2456,12 +2957,24 @@ function parseConversationEventData(dataText) {
 
 function applyConversationStreamEvent(view, eventName, dataText, project) {
   var data = parseConversationEventData(dataText);
-  view.statusController.markEvent();
+  var isHeartbeat = eventName === 'progress' && data && data.phase === 'heartbeat';
+  if (isHeartbeat) view.statusController.markHeartbeat();
+  else view.statusController.markEvent();
   if (eventName === 'turn_status') {
     var turnState = data && data.status;
     if (turnState === 'running') {
       view.statusController.setState('thinking');
+    } else if (turnState === 'failed') {
+      if (data && data.failure) {
+        appendFailureCard(view.bubbleDiv, data.failure, {});
+      }
+      view.statusController.finish('error');
+    } else if (turnState === 'waiting_input') {
+      view.statusController.finish('idle');
     }
+  } else if (eventName === 'commentary') {
+    view.statusController.setState('thinking');
+    view.commentaryController.update(data);
   } else if (eventName === 'token') {
     var token = data && typeof data === 'object' ? (data.token || data.content || '') : '';
     if (token) {
@@ -2471,7 +2984,8 @@ function applyConversationStreamEvent(view, eventName, dataText, project) {
     }
   } else if (eventName === 'progress') {
     view.progressController.update(data);
-    view.reasoningController.update(data);
+    if (isHeartbeat) view.reasoningController.heartbeat(data);
+    else view.reasoningController.update(data, eventName);
     setToolRunningFromProgress(view.statusController, data);
   } else if (eventName === 'approval') {
     renderApprovalCard(view.bubbleDiv, (data && data.request) || {}, project);
@@ -2483,9 +2997,26 @@ function applyConversationStreamEvent(view, eventName, dataText, project) {
   } else if (eventName === 'tool_output_refine') {
     if (!view.editedFilesController.refine(data)) renderToolOutputRefine(data);
   } else if (eventName === 'tool_result') {
-    view.statusController.setState('tool_running', {toolName: (data && (data.tool_name || data.workflow_name || data.call_id)) || ''});
-  } else if (eventName === 'tool_call' || eventName === 'tool_running' || eventName === 'phase_changed' || eventName === 'skill_loaded') {
+    view.statusController.setState('thinking');
+    view.reasoningController.update(data, eventName);
+    var createdProjectName = extractProjectNameFromToolResult(data && data.tool, data && data.result);
+    if (createdProjectName) pendingProjectSelection = createdProjectName;
+    if (data && (data.status === 'failed' || data.status === 'rejected') && data.failure) {
+      appendFailureCard(view.bubbleDiv, data.failure, {
+        toolName: data.tool_name || data.workflow_name,
+        callId: data.call_id,
+        status: data.status
+      });
+    }
+  } else if (eventName === 'phase_changed') {
+    view.statusController.setState(
+      String((data && data.phase) || '').indexOf('agent_decision') === 0 ? 'thinking' : 'tool_running',
+      {toolName: (data && (data.tool || data.message)) || ''}
+    );
+    view.reasoningController.update(data, eventName);
+  } else if (eventName === 'tool_call' || eventName === 'tool_running' || eventName === 'skill_loaded') {
     view.statusController.setState('tool_running', {toolName: (data && (data.tool_call || data.tool || data.phase || data.name)) || ''});
+    view.reasoningController.update(data, eventName);
   } else if (eventName === 'warning' || eventName === 'escalation_triggered') {
     var warning = data && (data.warning || data.reason || data.message);
     if (warning) {
@@ -2499,13 +3030,18 @@ function applyConversationStreamEvent(view, eventName, dataText, project) {
     view.streamContent = '';
     view.mdDiv.innerHTML = '';
     view.resultDiv.innerHTML = '';
+    view.commentaryController.reset();
     view.editedFilesController.reset();
     view.progressController.reset();
     view.reasoningController.reset();
   } else if (eventName === 'error') {
-    var message = data && (data.message || data.error) || 'unknown';
-    view.streamContent += '\n\n_' + t('chat.error') + ': ' + message + '_\n\n';
-    renderStreamMarkdown(view.mdDiv, view.streamContent, view.container);
+    if (data && (data.code || data.category || data.message)) {
+      appendFailureCard(view.bubbleDiv, data, {});
+    } else {
+      var message = data && (data.message || data.error) || 'unknown';
+      view.streamContent += '\n\n_' + t('chat.error') + ': ' + message + '_\n\n';
+      renderStreamMarkdown(view.mdDiv, view.streamContent, view.container);
+    }
     view.statusController.finish('error');
   }
   view.container.scrollTop = view.container.scrollHeight;
@@ -2560,6 +3096,7 @@ async function recoverConversationRun(project, rootIndex, activeRun, view) {
             if (eventName === 'done') {
               completed = true;
               view.statusController.finish('done');
+              view.reasoningController.finish();
               break;
             }
             if (eventName) applyConversationStreamEvent(view, eventName, dataText, project);
@@ -2734,9 +3271,24 @@ async function sendMessage() {
   container.appendChild(bubbleDiv);
   var streamContent = '';
   var statusController = createChatStatusController(typingDiv);
+  var commentaryController = createCommentaryController(bubbleDiv, mdDiv);
   var editedFilesController = createEditedFilesController(bubbleDiv, container);
   var progressController = createTaskProgressController(bubbleDiv, typingDiv);
   var reasoningController = createReasoningSummaryController(bubbleDiv, typingDiv);
+  var streamView = {
+    bubbleDiv: bubbleDiv,
+    mdDiv: mdDiv,
+    resultDiv: resultDiv,
+    typingDiv: typingDiv,
+    container: container,
+    streamContent: streamContent,
+    statusController: statusController,
+    commentaryController: commentaryController,
+    editedFilesController: editedFilesController,
+    progressController: progressController,
+    reasoningController: reasoningController
+  };
+  bubbleDiv.__luxarStreamView = streamView;
   statusController.setState('thinking');
 
   var requestController = new AbortController();
@@ -2790,6 +3342,7 @@ async function sendMessage() {
                 statusController.markEvent();
                 statusController.setState('streaming');
                 streamContent += token;
+                streamView.streamContent = streamContent;
                 renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
@@ -2807,17 +3360,29 @@ async function sendMessage() {
           currentEvent = line.slice(7).trim();
         } else if (line.startsWith('data: ')) {
           var dataStr = line.slice(6).trim();
-          statusController.markEvent();
+          var parsedEventData = parseConversationEventData(dataStr);
+          var heartbeatEvent = currentEvent === 'progress' && parsedEventData && parsedEventData.phase === 'heartbeat';
+          if (heartbeatEvent) statusController.markHeartbeat();
+          else statusController.markEvent();
           if (currentEvent === 'turn_status') {
             try {
               var turnStatusChunk = JSON.parse(dataStr);
-              if (turnStatusChunk.status === 'running') statusController.setState('thinking');
+              if (turnStatusChunk.status === 'running') {
+                statusController.setState('thinking');
+              }
+            } catch(e) {}
+          } else if (currentEvent === 'commentary') {
+            try {
+              var commentaryChunk = JSON.parse(dataStr);
+              statusController.setState('thinking');
+              commentaryController.update(commentaryChunk);
             } catch(e) {}
           } else if (currentEvent === 'progress') {
             try {
               var progressChunk = JSON.parse(dataStr);
               progressController.update(progressChunk);
-              reasoningController.update(progressChunk);
+              if (progressChunk.phase === 'heartbeat') reasoningController.heartbeat(progressChunk);
+              else reasoningController.update(progressChunk, 'progress');
               setToolRunningFromProgress(statusController, progressChunk);
             } catch(e) {}
           } else if (currentEvent === 'approval') {
@@ -2832,6 +3397,7 @@ async function sendMessage() {
               if (token) {
                 statusController.setState('streaming');
                 streamContent += token;
+                streamView.streamContent = streamContent;
                 renderStreamMarkdown(mdDiv, streamContent, container);
               }
             } catch(e) {}
@@ -2844,7 +3410,15 @@ async function sendMessage() {
           } else if (currentEvent === 'tool_result') {
             try {
               var toolChunk = JSON.parse(dataStr);
-              statusController.setState('tool_running', {toolName: toolChunk.tool_name || toolChunk.workflow_name || toolChunk.call_id || ''});
+              statusController.setState('thinking');
+              reasoningController.update(toolChunk, 'tool_result');
+              if ((toolChunk.status === 'failed' || toolChunk.status === 'rejected') && toolChunk.failure) {
+                appendFailureCard(bubbleDiv, toolChunk.failure, {
+                  toolName: toolChunk.tool_name || toolChunk.workflow_name,
+                  callId: toolChunk.call_id,
+                  status: toolChunk.status
+                });
+              }
               var createdProjectName = extractProjectNameFromToolResult(toolChunk.tool, toolChunk.result);
               if (createdProjectName) pendingProjectSelection = createdProjectName;
             } catch(e) {}
@@ -2887,11 +3461,13 @@ async function sendMessage() {
             try {
               var chunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: chunk.tool_call || ''});
+              reasoningController.update(chunk, 'tool_call');
             } catch(e) {}
           } else if (currentEvent === 'tool_running') {
             try {
               var runningChunk = JSON.parse(dataStr);
               statusController.setState('tool_running', {toolName: runningChunk.tool || ''});
+              reasoningController.update(runningChunk, 'tool_running');
             } catch(e) {}
           } else if (currentEvent === 'project_created') {
             try {
@@ -2905,13 +3481,18 @@ pendingProjectSelection = pname;
           } else if (currentEvent === 'phase_changed') {
             try {
               var phaseChunk = JSON.parse(dataStr);
-              statusController.setState('tool_running', {toolName: phaseChunk.tool || phaseChunk.phase || ''});
+              statusController.setState(
+                String(phaseChunk.phase || '').indexOf('agent_decision') === 0 ? 'thinking' : 'tool_running',
+                {toolName: phaseChunk.tool || phaseChunk.message || ''}
+              );
+              reasoningController.update(phaseChunk, 'phase_changed');
             } catch(e) {}
           } else if (currentEvent === 'skill_loaded') {
             try {
               var skillChunk = JSON.parse(dataStr);
               var skillName = skillChunk.tool || skillChunk.name || 'skill';
               statusController.setState('tool_running', {toolName: skillName});
+              reasoningController.update(skillChunk, 'skill_loaded');
             } catch(e) {}
           } else if (currentEvent === 'lesson_recorded') {
             try {
@@ -2950,18 +3531,24 @@ pendingProjectSelection = pname;
             streamContent = '';
             mdDiv.innerHTML = '';
             resultDiv.innerHTML = '';
+            commentaryController.reset();
             editedFilesController.reset();
             progressController.reset();
             reasoningController.reset();
           } else if (currentEvent === 'error') {
             try {
               var chunk = JSON.parse(dataStr);
-              streamContent += '\n\n_' + t('chat.error') + ': ' + (chunk.message || chunk.error || 'unknown') + '_\n\n';
-              renderStreamMarkdown(mdDiv, streamContent, container);
+              if (chunk && (chunk.code || chunk.category || chunk.message)) {
+                appendFailureCard(bubbleDiv, chunk, {});
+              } else {
+                streamContent += '\n\n_' + t('chat.error') + ': ' + (chunk.message || chunk.error || 'unknown') + '_\n\n';
+                renderStreamMarkdown(mdDiv, streamContent, container);
+              }
             } catch(e) {}
             statusController.finish('error');
           } else if (currentEvent === 'done') {
             statusController.finish('done');
+            reasoningController.finish();
             if (activeConversationRuns[runKey] && activeConversationRuns[runKey].mode === 'primary') {
               delete activeConversationRuns[runKey];
             }
@@ -3067,10 +3654,15 @@ async function selectEspIdfToolchain() {
 async function loadDashboard() {
   await Promise.all([loadEspIdfToolchain(), loadDashboardModelConfig()]);
   try {
-    var pdata = await apiGet('/api/workspace/projects');
+    var dashboardData = await Promise.all([
+      apiGet('/api/workspace/projects'),
+      apiGet('/api/drivers?limit=100')
+    ]);
+    var pdata = dashboardData[0];
+    var driverData = dashboardData[1];
     var projList = pdata.projects || [];
     document.getElementById('stat-projects').textContent = projList.length;
-    document.getElementById('stat-drivers').textContent = '暂未接入';
+    document.getElementById('stat-drivers').textContent = Number(driverData.count || 0);
     document.getElementById('stat-skills').textContent = '暂未接入';
     document.getElementById('stat-toolchains').textContent = espIdfToolchain && espIdfToolchain.available ? '1' : '0';
     var dashList = document.getElementById('dash-project-list');
@@ -3552,6 +4144,29 @@ if (landingDescription) landingDescription.textContent = '请从左侧选择一�
 loadSidebarProjects();
 loadDashboard();
 loadSerialPorts();
+loadSerialTerminalPorts();
+document.getElementById('serial-refresh-btn').addEventListener('click', loadSerialTerminalPorts);
+document.getElementById('serial-connect-btn').addEventListener('click', toggleSerialTerminalConnection);
+document.getElementById('serial-clear-btn').addEventListener('click', function() {
+  serialTerminalEvents = [];
+  renderSerialTerminalEvents();
+});
+document.getElementById('serial-display-mode').addEventListener('change', renderSerialTerminalEvents);
+document.getElementById('serial-send-btn').addEventListener('click', sendSerialTerminalData);
+document.getElementById('serial-send-mode').addEventListener('change', function(event) {
+  document.getElementById('serial-line-ending').disabled = event.target.value === 'hex';
+});
+document.getElementById('serial-send-input').addEventListener('keydown', function(event) {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    sendSerialTerminalData();
+  }
+});
+window.addEventListener('beforeunload', function() {
+  if (serialTerminalSessionId) {
+    fetch('/api/serial/sessions/' + encodeURIComponent(serialTerminalSessionId), {method: 'DELETE', keepalive: true});
+  }
+});
 
   // ── Hardware Status Polling ──
 

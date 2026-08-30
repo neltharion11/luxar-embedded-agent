@@ -14,6 +14,7 @@ from openai import (
 import luxar.adapters.deepseek.client as client_module
 from luxar.adapters.deepseek.client import DeepSeekJsonClient
 from luxar.adapters.deepseek.settings import DeepSeekSettings
+from luxar.model_config import ModelEndpoint
 from luxar.ports.errors import CapabilityError, CapabilityErrorCategory
 
 
@@ -23,9 +24,11 @@ class StubCompletions:
         *,
         response: object | None = None,
         error: Exception | None = None,
+        sequence: list[object] | None = None,
     ) -> None:
         self.response = response
         self.error = error
+        self.sequence = list(sequence) if sequence else []
         self.calls: list[dict[str, object]] = []
 
     def create(self, **kwargs: object) -> object:
@@ -33,6 +36,9 @@ class StubCompletions:
 
         if self.error is not None:
             raise self.error
+
+        if self.sequence:
+            return self.sequence.pop(0)
 
         return self.response
 
@@ -42,11 +48,15 @@ class StubSdkClient:
         self.chat = SimpleNamespace(completions=completions)
 
 
-def make_response(content: str | None) -> object:
+def make_response(
+    content: str | None,
+    finish_reason: str | None = None,
+) -> object:
     return SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(content=content),
+                finish_reason=finish_reason,
             )
         ]
     )
@@ -96,6 +106,7 @@ def test_client_sends_json_mode_request_and_returns_object() -> None:
                 },
             ],
             "response_format": {"type": "json_object"},
+            "extra_body": {"thinking": {"type": "disabled"}},
         }
     ]
 
@@ -121,8 +132,57 @@ def test_client_yields_provider_stream_deltas_without_fake_chunking() -> None:
                 {"role": "user", "content": "总结事实"},
             ],
             "stream": True,
+            "extra_body": {"thinking": {"type": "disabled"}},
         }
     ]
+
+
+def test_client_streams_json_mode_without_buffering_the_response() -> None:
+    completions = StubCompletions(
+        response=make_stream('{"commentary":"我先检查', '工程。","step":{}}')
+    )
+    client = make_client(completions)
+
+    chunks = list(
+        client.stream_json_text(
+            system_prompt="输出决策 JSON",
+            user_prompt="检查 OLED 工程",
+            model="deepseek-v4-flash",
+        )
+    )
+
+    assert chunks == ['{"commentary":"我先检查', '工程。","step":{}}']
+    assert completions.calls[0]["stream"] is True
+    assert completions.calls[0]["response_format"] == {"type": "json_object"}
+    assert completions.calls[0]["extra_body"] == {
+        "thinking": {"type": "disabled"}
+    }
+
+
+def test_client_honors_explicit_deepseek_thinking_configuration() -> None:
+    completions = StubCompletions(response=make_stream("自然更新"))
+    client = DeepSeekJsonClient(
+        ModelEndpoint(
+            provider="deepseek",
+            api_key="test-key",
+            model="deepseek-v4-pro",
+            thinking_enabled=True,
+            thinking_effort="max",
+        ),
+        sdk_client=StubSdkClient(completions),  # type: ignore[arg-type]
+    )
+
+    assert list(
+        client.stream_text(
+            system_prompt="自然回复",
+            user_prompt="检查工程",
+            model="deepseek-v4-pro",
+        )
+    ) == ["自然更新"]
+    assert completions.calls[0]["extra_body"] == {
+        "thinking": {"type": "enabled"}
+    }
+    assert completions.calls[0]["reasoning_effort"] == "max"
 
 
 def test_client_rejects_empty_provider_stream() -> None:
@@ -208,6 +268,129 @@ def test_client_rejects_invalid_json_object(content: str) -> None:
 
     assert captured.value.category == "invalid_json"
     assert captured.value.retryable is True
+
+
+def test_client_reports_truncation_when_finish_reason_is_length() -> None:
+    """C：输出达到 max_tokens 被截断时，报 truncated 而非笼统 invalid_json。"""
+    client = make_client(
+        StubCompletions(
+            response=make_response('{"step": {"type": "tool_calls"', "length")
+        )
+    )
+
+    with pytest.raises(CapabilityError) as captured:
+        client.complete_json(
+            system_prompt="system",
+            user_prompt="user",
+            model="deepseek-v4-flash",
+        )
+
+    assert captured.value.category == "truncated"
+    assert captured.value.retryable is False
+    assert captured.value.details["finish_reason"] == "length"
+
+
+def test_client_repairs_broken_json_once_when_repair_enabled() -> None:
+    """B：JSON 语法损坏时，把原文+错误位置回给模型修复一次，成功即返回。"""
+    completions = StubCompletions(
+        sequence=[
+            make_response('{"step": {"type": "tool_calls", "calls": ['),
+            make_response(
+                '{"step": {"type": "tool_calls", "calls": []}}'
+            ),
+        ]
+    )
+    client = make_client(completions)
+
+    result = client.complete_json(
+        system_prompt="system",
+        user_prompt="user",
+        model="deepseek-v4-flash",
+        repair=True,
+    )
+
+    assert result == {"step": {"type": "tool_calls", "calls": []}}
+    assert len(completions.calls) == 2
+    repair_prompt = str(completions.calls[1]["messages"][0]["content"])
+    assert "修复下面 JSON 的语法错误" in repair_prompt
+    assert "broken_json" in str(completions.calls[1]["messages"][1]["content"])
+
+
+def test_client_invalid_json_survives_when_repair_also_fails() -> None:
+    """B：修复也失败时，仍抛 invalid_json（含原始响应细节）。"""
+    completions = StubCompletions(
+        sequence=[
+            make_response('{"step": {"type":'),
+            make_response("still-not-json"),
+        ]
+    )
+    client = make_client(completions)
+
+    with pytest.raises(CapabilityError) as captured:
+        client.complete_json(
+            system_prompt="system",
+            user_prompt="user",
+            model="deepseek-v4-flash",
+            repair=True,
+        )
+
+    assert captured.value.category == "invalid_json"
+    # 保留原始（首次损坏）响应的细节，便于定位
+    assert captured.value.details["response_length"] == len('{"step": {"type":')
+    assert len(completions.calls) == 2
+
+
+def test_client_passes_max_tokens_to_provider_request() -> None:
+    """C：显式 max_tokens 透传到 provider 请求。"""
+    completions = StubCompletions(
+        response=make_response('{"ok": true}')
+    )
+    client = make_client(completions)
+
+    client.complete_json(
+        system_prompt="system",
+        user_prompt="user",
+        model="deepseek-v4-flash",
+        max_tokens=8192,
+    )
+
+    assert completions.calls[0]["max_tokens"] == 8192
+
+
+def test_client_reports_truncation_on_streaming_finish_reason() -> None:
+    """C：流式路径 finish_reason=length 同样报 truncated。"""
+    completions = StubCompletions(
+        response=[
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content='{"step":'),
+                        finish_reason=None,
+                    )
+                ]
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=None),
+                        finish_reason="length",
+                    )
+                ]
+            ),
+        ]
+    )
+    client = make_client(completions)
+
+    with pytest.raises(CapabilityError) as captured:
+        list(
+            client.stream_json_text(
+                system_prompt="system",
+                user_prompt="user",
+                model="deepseek-v4-flash",
+            )
+        )
+
+    assert captured.value.category == "truncated"
 
 
 def sdk_error_cases() -> list[

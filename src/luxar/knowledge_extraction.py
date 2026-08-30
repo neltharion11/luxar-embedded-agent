@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from luxar.document_reader import PdfBatch
 from luxar.domain.knowledge_atoms import KnowledgeAtomDraft
+from luxar.ports.knowledge_extraction import KnowledgeExtraction
 
 
 _PAGE_MARKER_RE = re.compile(r"(?m)^## 第\s*(\d+)\s*页\s*$")
@@ -63,7 +64,7 @@ class SemanticKnowledgeAtomExtractor:
         title: str,
         source_uri: str,
         batches: Sequence[PdfBatch],
-    ) -> list[KnowledgeAtomDraft]:
+    ) -> KnowledgeExtraction:
         del title, source_uri
         drafts: list[KnowledgeAtomDraft] = []
         for batch in batches:
@@ -114,7 +115,7 @@ class SemanticKnowledgeAtomExtractor:
                     else:
                         buffer.append(line)
                 flush()
-        return drafts
+        return KnowledgeExtraction(atoms=drafts, parameters=[])
 
 
 __all__ = ["SemanticKnowledgeAtomExtractor"]

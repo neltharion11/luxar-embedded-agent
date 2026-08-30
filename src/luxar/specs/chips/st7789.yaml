@@ -1,0 +1,68 @@
+# LUXAR 芯片 Skill 规格：ST7789（1.3/1.54寸 TFT，240x240）
+# 逐行式(row) + MSB 位序（沿数据手册惯例），**未真机验证**，保持 unverified。
+schema: luxar/chip-skill/2
+controller: st7789
+aliases: []
+family: st77xx
+facts:
+  vendor: Sitronix
+  interfaces:
+  - spi
+  - '8080'
+  default_address: ''
+  resolutions:
+  - - 240
+    - 240
+  - - 240
+    - 320
+  memory_layout: row
+  sources:
+  - kind: library
+    name: Adafruit-ST7735-Library
+    ref: Adafruit_ST7789.cpp
+    confidence: high
+    note: 逐行式布局；位序 MSB
+  - kind: approximation
+    name: st7735
+    ref: ''
+    confidence: high
+    note: 同族命令集，寄存器地址/初始化序列略有差异
+spec:
+  init:
+  - cmd: '0x01'
+  - cmd: '0x11'
+  - cmd: '0x29'
+  driver_template: st7789_spi
+diagnostics:
+- id: corners_bbox
+  description: 四角实心方块 + 横线探针：确认逐行式布局与位序
+  draw: '实心方块 (0,0) 与 (232,232)；横线 row=0 全列 0x80
+
+    '
+  probes:
+  - kind: block
+    x: 0
+    y: 0
+    w: 8
+    h: 8
+  - kind: block
+    x: 232
+    y: 232
+    w: 8
+    h: 8
+  - kind: hline
+    row: 0
+    mask: '0x80'
+  expect: 位7=行首(MSB) 时 0x80 横线出现在行内最左像素；位0=行首(LSB) 时最右像素
+verified: unverified
+verification: []
+display:
+  layout:
+    scan: row
+    bit_order: msb
+    invert: false
+  screen:
+    width: 240
+    height: 240
+  column_offset: 0
+  display_options: {}

@@ -1,0 +1,70 @@
+# LUXAR 芯片 Skill 规格：PCD8544（Nokia 5110 屏，84x48）
+# 逐行式(row) + MSB 位序（沿数据手册惯例），**未真机验证**，保持 unverified。
+# 注意：这是与 SSD13xx 系列相反的布局族——接入前必须先真机核对位序。
+schema: luxar/chip-skill/2
+controller: pcd8544
+aliases:
+- nokia5110
+family: pcd8544
+facts:
+  vendor: NXP / Philips
+  interfaces:
+  - spi
+  default_address: ''
+  resolutions:
+  - - 84
+    - 48
+  memory_layout: row
+  sources:
+  - kind: library
+    name: u8g2
+    ref: u8x8_d_pcd8544_84x48.c
+    confidence: high
+    note: PCD8544 是逐行式（横向取模）布局，与 SSD13xx 的逐列式相反
+  - kind: pdf
+    name: PCD8544 datasheet
+    ref: PCD8544_1.pdf
+    confidence: medium
+    note: 数据手册 8.4 节：一字节对应同一行内 8 个水平像素
+spec:
+  init:
+  - cmd: '0x21'
+  - cmd: '0xC8'
+  - cmd: '0x06'
+  - cmd: '0x13'
+  - cmd: '0x20'
+  - cmd: '0x0C'
+  driver_template: pcd8544_spi
+diagnostics:
+- id: corners_bbox
+  description: 四角实心方块 + 横线探针：确认逐行式布局与位序
+  draw: '实心方块 (0,0) 与 (76,40)；横线 row=0 全列 0x80
+
+    '
+  probes:
+  - kind: block
+    x: 0
+    y: 0
+    w: 8
+    h: 8
+  - kind: block
+    x: 76
+    y: 40
+    w: 8
+    h: 8
+  - kind: hline
+    row: 0
+    mask: '0x80'
+  expect: 位7=行首(MSB) 时 0x80 横线出现在行内最左像素；位0=行首(LSB) 时最右像素
+verified: unverified
+verification: []
+display:
+  layout:
+    scan: row
+    bit_order: msb
+    invert: false
+  screen:
+    width: 84
+    height: 48
+  column_offset: 0
+  display_options: {}

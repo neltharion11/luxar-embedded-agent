@@ -70,6 +70,24 @@ class KnowledgePersistence(TransientPersistence):
     def delete_knowledge_document(self, **_: object) -> bool:
         return False
 
+    def register_entity(self, **_: object) -> bool:
+        return True
+
+    def list_entities(self, **_: object) -> list[object]:
+        return []
+
+    def find_entity(self, **_: object) -> object | None:
+        return None
+
+    def device_tree(self, **_: object) -> list[object]:
+        return []
+
+    def search_by_entity(self, **_: object) -> list[KnowledgeMatch]:
+        return []
+
+    def entity_candidates(self, **_: object) -> list[dict[str, object]]:
+        return []
+
 
 def test_ingest_chunks_embeds_and_persists_document() -> None:
     persistence = KnowledgePersistence()

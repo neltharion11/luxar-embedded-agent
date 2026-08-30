@@ -39,6 +39,10 @@ def normalize_project_relative_path(value: str) -> str:
 class ProjectFile(BaseModel):
     path: str
     content: str
+    #: 磁盘原始字节的 SHA-256（小写 hex）。供上层（workspace.read_project /
+    #: apply_change_bundle 的 expected_sha256）按 executor 的同一字节基准校验。
+    #: 空串表示调用方未提供（仅测试替身/旧路径会出现）。
+    sha256: str = ""
 
     @field_validator("path")
     @classmethod

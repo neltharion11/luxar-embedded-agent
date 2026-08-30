@@ -92,10 +92,12 @@ from luxar.adapters.deepseek.continuous_agent_step import (
 from luxar.adapters.deepseek.client import OpenAICompatibleJsonClient
 from luxar.adapters.espidf_cli import EspIdfCliAdapter
 from luxar.adapters.espidf_device import EspIdfDeviceAdapter
+from luxar.adapters.local_driver_library import DriverLibraryError, LocalDriverLibrary
 from luxar.adapters.local_workspace import LocalWorkspaceAdapter
 from luxar.adapters.transactional_code_executor import LocalChangeBundleExecutor
 from luxar.adapters.project_change_workflow import ProjectChangeWorkflow
 from luxar.web_continuous_agent import (
+    _recoverable_stream_content,
     resume_continuous_agent_http_approval,
     run_continuous_agent_http_turn,
     wait_for_continuous_agent_workers,
@@ -141,6 +143,7 @@ from luxar.domain.conversation import (
     is_explicit_pdf_read_request,
 )
 from luxar.domain.devices import SerialPortInfo
+from luxar.domain.drivers import DriverPublishSpec, driver_verification_from_result
 from luxar.adapters.espidf_project import EspIdfProjectAdapter
 from luxar.database import (
     LocalStorageRuntime,
@@ -168,7 +171,9 @@ from luxar.sdk_knowledge import SdkExampleKnowledgeBase
 from luxar.ports.espidf_errors import EspIdfError
 from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.conversation_router import ConversationRouter
+from luxar.ports.driver_library import DriverLibraryPort
 from luxar.ports.errors import CapabilityError
+from luxar.serial_terminal import SerialTerminalError, SerialTerminalService
 from luxar.toolchain import EspIdfToolchainManager, EspIdfToolchainStatus
 from luxar.web_contracts import (
     WebAgentCapability,
@@ -189,6 +194,8 @@ from luxar.web_contracts import (
     WebProjectRoot,
     WebSerialPort,
     WebSerialPortList,
+    WebSerialOpenRequest,
+    WebSerialWriteRequest,
     WebTaskRequest,
     WebSteeringRequest,
     WebCancelRequest,
@@ -199,6 +206,7 @@ from luxar.web_contracts import (
     WebModelConfigUpdate,
     WebModelEndpointUpdate,
     WebEmbeddingUpdate,
+    WebDriverPublishRequest,
 )
 from luxar.web_agent import agent_snapshot_contract, workbench_snapshot_contract
 from luxar.web_projects import WebProjectCatalog, WebProjectError
@@ -409,6 +417,8 @@ def create_app(
     conversation_router: ConversationRouter | None = None,
     project_trash: ProjectTrash = _move_project_to_trash,
     model_config_store: ModelConfigStore | None = None,
+    serial_terminal_service: SerialTerminalService | None = None,
+    driver_library_service: DriverLibraryPort | None = None,
 ) -> FastAPI:
     """创建可测试的 Web 应用；测试可注入 Fake Bootstrap 与 Runner。
 
@@ -435,6 +445,8 @@ def create_app(
         config_path=roots[0] / ".luxar" / "toolchain.json",
     )
     selected_project_creator = project_creator
+    selected_serial_terminal = serial_terminal_service or SerialTerminalService()
+    selected_driver_library = driver_library_service
     production_bootstrap = bootstrap_factory is build_deepseek_runtime_context
     production_agent_bootstrap = (
         agent_bootstrap_factory is build_deepseek_agent_runtime_context
@@ -595,6 +607,9 @@ def create_app(
             workspace=workspace,
             code_executor=LocalChangeBundleExecutor(workspace),
             knowledge=app.state.knowledge_service,
+            knowledge_writer=app.state.knowledge_service,
+            driver_library=selected_driver_library,
+            pdf_reader=_configured_pdf_reader(),
             builder=builder,
             flasher=device,
             monitor=device,
@@ -620,6 +635,7 @@ def create_app(
                 idf_command=(
                     selected_toolchain_manager.command or ("idf.py",)
                 ),
+                driver_library=selected_driver_library,
             )
             domain_workflows.register(
                 ProjectChangeWorkflow(
@@ -787,6 +803,14 @@ def create_app(
             )
         local_runtime = LocalStorageRuntime(local_settings)
 
+    if selected_driver_library is None:
+        driver_library_path = (
+            local_runtime.settings.driver_library_path
+            if local_runtime is not None
+            else roots[0] / ".luxar" / "driver-library"
+        )
+        selected_driver_library = LocalDriverLibrary(driver_library_path)
+
     manage_knowledge_service = knowledge_service is None
 
     def _build_configured_knowledge_service(
@@ -848,6 +872,7 @@ def create_app(
             yield
         finally:
             wait_for_continuous_agent_workers()
+            selected_serial_terminal.close_all()
             if local_runtime is not None:
                 local_runtime.close()
 
@@ -874,6 +899,8 @@ def create_app(
     app.state.continuous_agent_selection = selected_continuous_agent
     app.state.continuous_agent_rollout = selected_continuous_rollout
     app.state.continuous_active_sessions = continuous_active_sessions
+    app.state.serial_terminal_service = selected_serial_terminal
+    app.state.driver_library_service = selected_driver_library
 
     def _toolchain_contract(
         status: EspIdfToolchainStatus,
@@ -930,6 +957,8 @@ def create_app(
             model=body.model.strip(),
             repair_model=body.model.strip(),
             timeout_seconds=body.timeout_seconds,
+            thinking_enabled=body.thinking_enabled,
+            thinking_effort=body.thinking_effort,
             context_window_tokens=(
                 body.context_window_tokens
                 if body.context_window_tokens is not None
@@ -1033,6 +1062,15 @@ def create_app(
             if (
                 workbench is not None
                 and workbench.workflow_family == "knowledge_task"
+            ):
+                return workbench_snapshot_contract(
+                    project=project,
+                    root_index=root_index,
+                    record=workbench,
+                )
+            if (
+                workbench is not None
+                and workbench.workflow_family == "continuous_agent"
             ):
                 return workbench_snapshot_contract(
                     project=project,
@@ -1203,6 +1241,9 @@ def create_app(
                     ),
                     "sdk_knowledge_path": str(
                         local_runtime.settings.sdk_knowledge_path
+                    ),
+                    "driver_library_path": str(
+                        local_runtime.settings.driver_library_path
                     ),
                 }
                 if local_runtime is not None
@@ -1504,6 +1545,155 @@ def create_app(
             ]
         )
 
+    def _raise_driver_library_error(error: DriverLibraryError) -> None:
+        status = {
+            "not_found": 404,
+            "version_conflict": 409,
+            "invalid_limit": 422,
+            "invalid_path": 422,
+            "invalid_file_type": 422,
+            "invalid_project": 422,
+            "invalid_source": 422,
+            "package_too_large": 413,
+            "corrupt_package": 500,
+            "unsafe_package": 500,
+            "unsafe_root": 500,
+            "write_failed": 500,
+        }.get(error.code, 500)
+        raise HTTPException(status_code=status, detail=str(error)) from error
+
+    @app.get("/api/drivers")
+    def list_public_drivers(
+        query: str = "",
+        hardware: str = "",
+        protocol: str = "",
+        target_chip: str = "",
+        limit: int = 100,
+    ) -> dict[str, object]:
+        try:
+            drivers = selected_driver_library.search(
+                query=query,
+                hardware=hardware,
+                protocol=protocol,
+                target_chip=target_chip,
+                limit=limit,
+            )
+        except DriverLibraryError as error:
+            _raise_driver_library_error(error)
+        return {
+            "count": len(drivers),
+            "drivers": [item.model_dump(mode="json") for item in drivers],
+        }
+
+    @app.get("/api/drivers/{driver_id}")
+    def get_public_driver(
+        driver_id: str,
+        version: str | None = None,
+        include_source: bool = False,
+    ) -> dict[str, object]:
+        try:
+            package = selected_driver_library.read(driver_id, version)
+        except DriverLibraryError as error:
+            _raise_driver_library_error(error)
+        payload: dict[str, object] = {
+            "manifest": package.manifest.model_dump(mode="json")
+        }
+        if include_source:
+            payload["sources"] = dict(package.sources)
+        return payload
+
+    @app.post("/api/projects/{project}/drivers", status_code=201)
+    def publish_public_driver(
+        project: str,
+        body: WebDriverPublishRequest,
+    ) -> dict[str, object]:
+        project_path = resolve_project(project, body.root_index)
+        project_key = _task_key(body.root_index, project)
+        current: PersistencePort = app.state.persistence
+        latest = current.get_latest_completed_run(project_key)
+        verification = driver_verification_from_result(
+            latest.result if latest is not None else None
+        )
+        spec = DriverPublishSpec.model_validate(
+            body.model_dump(exclude={"root_index"})
+        )
+        try:
+            manifest = selected_driver_library.publish(
+                project_path=project_path,
+                project_key=project_key,
+                spec=spec,
+                verification=verification,
+            )
+        except DriverLibraryError as error:
+            _raise_driver_library_error(error)
+        return {
+            "status": "published",
+            "driver": manifest.model_dump(mode="json"),
+        }
+
+    def _raise_serial_terminal_error(error: SerialTerminalError) -> None:
+        status = {
+            "not_found": 404,
+            "busy": 409,
+            "limit": 409,
+            "closed": 409,
+            "invalid_payload": 422,
+            "open_failed": 503,
+            "write_failed": 503,
+        }.get(error.code, 500)
+        raise HTTPException(status_code=status, detail=str(error)) from error
+
+    @app.post("/api/serial/sessions", status_code=201)
+    def open_serial_session(body: WebSerialOpenRequest) -> dict[str, object]:
+        _validate_task_port(body.port)
+        try:
+            return selected_serial_terminal.open(
+                port=body.port,
+                baud_rate=body.baud_rate,
+                data_bits=body.data_bits,
+                parity=body.parity,
+                stop_bits=body.stop_bits,
+            )
+        except SerialTerminalError as error:
+            _raise_serial_terminal_error(error)
+
+    @app.get("/api/serial/sessions/{session_id}")
+    def poll_serial_session(
+        session_id: str,
+        after_sequence: int = 0,
+    ) -> dict[str, object]:
+        if after_sequence < 0:
+            raise HTTPException(status_code=422, detail="串口事件序号无效")
+        try:
+            return selected_serial_terminal.snapshot(
+                session_id,
+                after_sequence=after_sequence,
+            )
+        except SerialTerminalError as error:
+            _raise_serial_terminal_error(error)
+
+    @app.post("/api/serial/sessions/{session_id}/write")
+    def write_serial_session(
+        session_id: str,
+        body: WebSerialWriteRequest,
+    ) -> dict[str, object]:
+        try:
+            return selected_serial_terminal.write(
+                session_id,
+                mode=body.mode,
+                payload=body.payload,
+                line_ending=body.line_ending,
+            )
+        except SerialTerminalError as error:
+            _raise_serial_terminal_error(error)
+
+    @app.delete("/api/serial/sessions/{session_id}")
+    def close_serial_session(session_id: str) -> dict[str, object]:
+        try:
+            return selected_serial_terminal.close(session_id)
+        except SerialTerminalError as error:
+            _raise_serial_terminal_error(error)
+
     @app.get(
         "/api/projects/{project}/agent",
         response_model=WebAgentSnapshot,
@@ -1624,6 +1814,24 @@ def create_app(
             else None
         )
         active_stream = current.get_active_conversation_stream(key)
+        # 失败/取消的流不会被 get_active_conversation_stream() 返回。若该
+        # Turn 尚未成功固化历史，仍把流中已展示的内容投影成一次对话，避免
+        # 页面退回空白欢迎页。
+        if active_stream is None and not messages:
+            latest_stream = current.get_latest_conversation_stream(key)
+            if latest_stream is not None and latest_stream.status in {
+                "failed",
+                "cancelled",
+            }:
+                recovered_content = _recoverable_stream_content(
+                    current,
+                    thread_id=latest_stream.thread_id,
+                ).strip()
+                if recovered_content:
+                    messages = [
+                        {"role": "user", "content": latest_stream.user_message},
+                        {"role": "assistant", "content": recovered_content},
+                    ]
         active_run: dict[str, object] | None = None
         if active_stream is not None:
             with active_lock:
@@ -2312,7 +2520,7 @@ def create_app(
         if knowledge_service is None:
             knowledge_status = (
                 "项目外部知识库未启用（缺少 embedding 配置），"
-                "当前没有可检索的项目 LanceDB 知识文档。ESP-IDF SDK 例程知识库"
+                "当前没有可检索的共享 LanceDB 知识文档。ESP-IDF SDK 例程知识库"
                 "是独立作用域，不能把其中内容当作当前项目资料。"
                 "本地 PDF 分批读取器仍然可用；读取 PDF 不依赖外部知识库，"
                 "只有把读取结果写入 RAG 才需要 embedding 配置。"
@@ -2321,9 +2529,10 @@ def create_app(
             try:
                 count = knowledge_service.document_count(task_key)
                 knowledge_status = (
-                    "项目外部知识库已启用，且当前项目已有知识文档。"
+                    "项目外部知识库已启用，且已有知识文档；"
+                    "知识库全局共享，任意项目都可检索全部文档。"
                     if count > 0
-                    else "项目外部知识库已启用，但当前项目没有任何知识文档（为空）。"
+                    else "项目外部知识库已启用，但知识库还没有任何文档（为空）。"
                 )
             except Exception:
                 knowledge_status = (
@@ -2877,6 +3086,9 @@ def create_app(
                         if production_agent_bootstrap:
                             agent_bootstrap_options["settings"] = (
                                 selected_model_store.load().conversation.resolved()
+                            )
+                            agent_bootstrap_options["driver_library"] = (
+                                selected_driver_library
                             )
                         context = agent_bootstrap_factory(
                             **agent_bootstrap_options
@@ -3615,6 +3827,9 @@ def create_app(
                 if production_agent_bootstrap:
                     agent_recovery_options["settings"] = (
                         selected_model_store.load().conversation.resolved()
+                    )
+                    agent_recovery_options["driver_library"] = (
+                        selected_driver_library
                     )
                 context = agent_bootstrap_factory(**agent_recovery_options)
                 run_result = agent_workflow_resumer(

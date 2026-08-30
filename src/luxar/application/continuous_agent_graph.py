@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Callable
@@ -26,6 +28,7 @@ from luxar.domain.continuous_agent.steps import (
     AssistantReply,
     DomainWorkflowCall,
     FinishObjective,
+    ToolCall,
     ToolCallBatch,
 )
 from luxar.domain.agent.objectives import ProjectObjective
@@ -35,6 +38,11 @@ from luxar.ports.agent_tool import AgentToolExecutionContext
 from luxar.ports.domain_workflow import DomainWorkflowExecutionContext
 from luxar.ports.context_compactor import AgentContextCompactorPort
 from luxar.ports.errors import CapabilityError
+
+
+_MODEL_TOOL_RESULT_LIMIT = 8_192
+_MODEL_TOOL_RESULT_HEAD = 4_096
+_MODEL_TOOL_RESULT_TAIL = 1_024
 
 
 @dataclass(frozen=True)
@@ -160,6 +168,86 @@ def _next_sequence(state: ContinuousAgentState) -> int:
     return max((item.sequence for item in state.get("events", [])), default=0) + 1
 
 
+def _model_recent_events(state: ContinuousAgentState) -> list[ConversationEvent]:
+    """本轮可见事件 + 本轮注入的历史对话，作为模型的上文。
+
+    历史（conversation_history，每轮覆盖）在前，本轮执行事件在后，整体
+    截断到最近 100 条，避免上下文无限增长。
+    """
+    cursor = state.get("compaction_cursor", 0)
+    visible = [
+        event
+        for event in state.get("events", [])
+        if cursor <= 0 or event.sequence > cursor
+    ][-100:]
+    history = list(state.get("conversation_history") or [])
+    recent = [*history, *visible][-100:]
+    bounded: list[ConversationEvent] = []
+    for event in recent:
+        if event.kind != "tool_result" or "result" not in event.payload:
+            bounded.append(event)
+            continue
+        payload = dict(event.payload)
+        payload["result"] = _bounded_model_value(payload["result"])
+        bounded.append(event.model_copy(update={"payload": payload}))
+    return bounded
+
+
+def _bounded_model_value(value: object) -> object:
+    """Bound a model-facing value while retaining the full audited value in state."""
+
+    try:
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            default=str,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        serialized = str(value)
+    if len(serialized) <= _MODEL_TOOL_RESULT_LIMIT:
+        return value
+    omitted = len(serialized) - _MODEL_TOOL_RESULT_HEAD - _MODEL_TOOL_RESULT_TAIL
+    return {
+        "_luxar_truncated": True,
+        "original_characters": len(serialized),
+        "content": (
+            serialized[:_MODEL_TOOL_RESULT_HEAD]
+            + f"\n...[模型上下文已省略 {omitted} 个字符；完整结果保留在事件账本]...\n"
+            + serialized[-_MODEL_TOOL_RESULT_TAIL:]
+        ),
+    }
+
+
+def _model_tool_results(state: ContinuousAgentState) -> list[dict[str, object]]:
+    return [
+        {
+            "call_id": call.call_id,
+            "tool_name": call.tool_name,
+            "status": call.status,
+            "result": _bounded_model_value(call.result),
+            "evidence_ids": call.evidence_ids,
+            "failure": (
+                call.failure.model_dump(mode="json")
+                if call.failure is not None
+                else None
+            ),
+        }
+        for call in state.get("tool_calls", {}).values()
+        if call.status in {"succeeded", "failed", "rejected", "indeterminate"}
+    ][-20:]
+
+
+def _model_domain_results(state: ContinuousAgentState) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for item in list(state.get("domain_calls", {}).values())[-10:]:
+        bounded = _bounded_model_value(item)
+        results.append(
+            bounded if isinstance(bounded, dict) else {"result": bounded}
+        )
+    return results
+
+
 def _event(
     state: ContinuousAgentState,
     *,
@@ -205,34 +293,22 @@ def decide_next_step(
             ),
         }
 
+    decision_started_at = time.monotonic()
+    decision_event_id = f"{state.get('turn_id', 'turn')}:decision:{step_count}"
     _report_runtime_event(
         runtime,
         "phase_changed",
-        {"phase": "agent_decision", "message": "正在理解需求并决定下一步"},
-    )
-    tool_results = [
         {
-            "call_id": call.call_id,
-            "tool_name": call.tool_name,
-            "status": call.status,
-            "result": call.result,
-            "evidence_ids": call.evidence_ids,
-            "failure": (
-                call.failure.model_dump(mode="json")
-                if call.failure is not None
-                else None
-            ),
-        }
-        for call in state.get("tool_calls", {}).values()
-        if call.status in {"succeeded", "failed", "rejected", "indeterminate"}
-    ][-20:]
+            "conversation_event_id": f"{decision_event_id}:started",
+            "phase": "agent_decision",
+            "message": "正在理解需求并决定下一步",
+            "step": step_count,
+        },
+    )
+    tool_results = _model_tool_results(state)
     pending = state.get("pending_request")
     compaction_cursor = state.get("compaction_cursor", 0)
-    visible_events = [
-        event
-        for event in state.get("events", [])
-        if compaction_cursor <= 0 or event.sequence > compaction_cursor
-    ][-100:]
+    visible_events = _model_recent_events(state)
     context = AgentStepContext(
         session_id=state["session_id"],
         turn_id=state["turn_id"],
@@ -248,22 +324,94 @@ def decide_next_step(
             for item in runtime.context.domain_workflows.descriptors()
         ],
         latest_tool_results=tool_results,
-        latest_domain_results=list(state.get("domain_calls", {}).values())[-10:],
+        latest_domain_results=_model_domain_results(state),
     )
+    commentary_parts: list[str] = []
+    commentary_sequence = 0
+
+    def report_commentary(chunk: str) -> None:
+        nonlocal commentary_sequence
+        if not chunk:
+            return
+        commentary_parts.append(chunk)
+        commentary_sequence += 1
+        _report_runtime_event(
+            runtime,
+            "commentary",
+            {
+                "conversation_event_id": (
+                    f"{decision_event_id}:commentary:{commentary_sequence}"
+                ),
+                "commentary_id": f"{decision_event_id}:commentary",
+                "phase": "commentary",
+                "token": chunk,
+            },
+        )
+
     try:
-        step = runtime.context.stepper.decide_next_step(context)
+        streaming_decider = getattr(
+            runtime.context.stepper,
+            "decide_next_step_streaming",
+            None,
+        )
+        if callable(streaming_decider):
+            step = streaming_decider(
+                context,
+                on_commentary=report_commentary,
+            )
+        else:
+            step = runtime.context.stepper.decide_next_step(context)
     except CapabilityError as error:
+        _report_runtime_event(
+            runtime,
+            "phase_changed",
+            {
+                "conversation_event_id": f"{decision_event_id}:failed",
+                "phase": "agent_decision_failed",
+                "message": "模型决策失败",
+                "step": step_count,
+                "elapsed_ms": round((time.monotonic() - decision_started_at) * 1000),
+            },
+        )
+        failure_messages = {
+            "invalid_json": "模型返回的下一步 JSON 不完整或格式错误",
+            "invalid_schema": "模型返回的下一步字段不符合 Agent 决策协议",
+            "empty_response": "模型没有返回下一步决策内容",
+            "timeout": "模型生成下一步决策时超时",
+            "rate_limit": "模型服务触发限流，暂时无法生成下一步",
+            "service": "模型服务异常，下一步决策未完成",
+            "authentication": "模型服务认证失败，无法生成下一步",
+            "truncated": "模型输出达到长度上限被截断，请缩小单步任务或分步执行",
+        }
         return {
             "step_count": step_count,
             "turn_status": "failed",
             "last_failure": ContinuousAgentFailure(
                 category="model",
                 code=error.category,
-                message="模型无法生成有效的下一步决策",
+                message=failure_messages.get(
+                    error.category,
+                    "模型下一步决策失败",
+                ),
                 retryable=error.retryable,
+                details={
+                    "adapter_message": error.message,
+                    **error.details,
+                },
             ),
         }
     except Exception:
+        _report_runtime_event(
+            runtime,
+            "phase_changed",
+            {
+                "conversation_event_id": f"{decision_event_id}:failed",
+                "phase": "agent_decision_failed",
+                "message": "模型决策失败",
+                "step": step_count,
+                "elapsed_ms": round((time.monotonic() - decision_started_at) * 1000),
+            },
+        )
         return {
             "step_count": step_count,
             "turn_status": "failed",
@@ -274,12 +422,34 @@ def decide_next_step(
                 retryable=True,
             ),
         }
-    return {
+    _report_runtime_event(
+        runtime,
+        "phase_changed",
+        {
+            "conversation_event_id": f"{decision_event_id}:completed",
+            "phase": "agent_decision_completed",
+            "message": "已确定下一步",
+            "step": step_count,
+            "elapsed_ms": round((time.monotonic() - decision_started_at) * 1000),
+        },
+    )
+    update: dict[str, object] = {
         "step_count": step_count,
         "next_step": step,
         "turn_status": "running",
         "last_failure": None,
     }
+    commentary = "".join(commentary_parts).strip()
+    if commentary:
+        update["events"] = [
+            _event(
+                state,
+                suffix=f"commentary:{step_count}",
+                kind="assistant_commentary",
+                payload={"content": commentary, "phase": "commentary"},
+            )
+        ]
+    return update
 
 
 def route_after_decision(
@@ -313,29 +483,10 @@ def render_streaming_reply(
     if streamer is None:
         chunks = [step.content]
     else:
-        tool_results = [
-            {
-                "call_id": call.call_id,
-                "tool_name": call.tool_name,
-                "status": call.status,
-                "result": call.result,
-                "evidence_ids": call.evidence_ids,
-                "failure": (
-                    call.failure.model_dump(mode="json")
-                    if call.failure is not None
-                    else None
-                ),
-            }
-            for call in state.get("tool_calls", {}).values()
-            if call.status in {"succeeded", "failed", "rejected", "indeterminate"}
-        ][-20:]
+        tool_results = _model_tool_results(state)
         pending = state.get("pending_request")
         compaction_cursor = state.get("compaction_cursor", 0)
-        visible_events = [
-            event
-            for event in state.get("events", [])
-            if compaction_cursor <= 0 or event.sequence > compaction_cursor
-        ][-100:]
+        visible_events = _model_recent_events(state)
         reply_context = AgentStepContext(
             session_id=state["session_id"],
             turn_id=state["turn_id"],
@@ -353,7 +504,7 @@ def render_streaming_reply(
                 for item in runtime.context.domain_workflows.descriptors()
             ],
             latest_tool_results=tool_results,
-            latest_domain_results=list(state.get("domain_calls", {}).values())[-10:],
+            latest_domain_results=_model_domain_results(state),
         )
         chunks = streamer.stream_reply(draft=step.content, context=reply_context)
     try:
@@ -422,11 +573,17 @@ def execute_tools(
         return {"cancel_requested": True, "turn_status": "running"}
     step = state["next_step"]
     assert isinstance(step, ToolCallBatch)
+    runtime_reporter = runtime.context.event_reporter
     tool_context = AgentToolExecutionContext(
         session_id=state["session_id"],
         turn_id=state["turn_id"],
         project_key=state["project_key"],
         project_path=runtime.context.project_path,
+        progress_reporter=(
+            (lambda event, data: _report_runtime_event(runtime, event, data))
+            if runtime_reporter is not None
+            else None
+        ),
     )
     approvals = state.get("tool_approvals", {})
     calls = dict(state.get("tool_calls", {}))
@@ -434,7 +591,34 @@ def execute_tools(
     evidence_ids = list(state.get("evidence_ids", []))
     pending = None
     base_offset = 0
-    for call in step.calls:
+    step_count = state.get("step_count", 0)
+    # 模型每批 ToolCallBatch 里 call_id 都从 1 重新编号，turn 内跨 step 不唯一；
+    # ToolRegistry 幂等键按 {session,turn,call_id} 去重，跨 step 复用会撞号抛错
+    # （历史上 tool_registry.dispatch 直接 raise ValueError，被 web 兜底桶吞成
+    # "持续 Agent 执行失败"）。这里把 call_id 重映射为 turn 内全局唯一
+    # f"step{step_count}:{call_id}"（同批内再去重），使事件 ID、状态键、审批键、
+    # 幂等键与 ledger 键全部不撞。审批恢复重放时 step_count 不变，重映射
+    # 确定性一致，不破坏 exactly-once。
+    remapped_calls: list[tuple[ToolCall, str]] = []
+    used_call_ids: set[str] = set()
+    for raw_call in step.calls:
+        candidate = f"step{step_count}:{raw_call.call_id}"
+        suffix = 2
+        while candidate in used_call_ids:
+            candidate = f"step{step_count}:{raw_call.call_id}:{suffix}"
+            suffix += 1
+        used_call_ids.add(candidate)
+        remapped_calls.append(
+            (
+                ToolCall(
+                    call_id=candidate,
+                    tool_name=raw_call.tool_name,
+                    arguments=raw_call.arguments,
+                ),
+                raw_call.call_id,
+            )
+        )
+    for call, raw_call_id in remapped_calls:
         _report_runtime_event(
             runtime,
             "tool_call",
@@ -451,7 +635,9 @@ def execute_tools(
         outcome = runtime.context.tools.dispatch(
             call,
             tool_context,
-            approved=approvals.get(call.call_id),
+            # 新审批键按重映射后的 call_id 存储；旧 checkpoint 里遗留的
+            # 审批键是原始 call_id，做回退查找，避免部署后恢复审批循环。
+            approved=approvals.get(call.call_id, approvals.get(raw_call_id)),
         )
         calls[call.call_id] = outcome.call
         if outcome.pending_approval is None:

@@ -131,3 +131,74 @@ def test_agent_planner_rejects_excluded_project_roots(
         )
 
     assert captured.value.category == "invalid_schema"
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "只允许修改 main/CMakeLists.txt 文件内容",
+        "只能修改 main/pdf1.c",
+        "禁止修改 components/ssd1306/ssd1306.c 之外的任何文件",
+    ],
+)
+def test_agent_planner_rejects_file_path_lock_constraints(
+    constraint: str,
+) -> None:
+    """路径锁约束会把验证驱动的修复锁死，规划时必须拒绝。"""
+
+    response = _valid_plan()
+    response["objective"]["constraints"] = [constraint]
+    planner = DeepSeekAgentPlanner(
+        FakeJsonCompletionClient([response]),
+        "deepseek-chat",
+    )
+
+    with pytest.raises(CapabilityError) as captured:
+        planner.interpret_goal(
+            "创建环境节点",
+            ProjectModelExtractor().extract([]),
+        )
+
+    assert captured.value.category == "invalid_schema"
+    assert "path lock" in captured.value.message
+
+
+def test_agent_planner_widens_scope_with_capability_source_files() -> None:
+    """allowed_paths 下限必须是能力的全部实现文件，而不是本轮变更包的文件。"""
+
+    model = ProjectModelExtractor().extract(
+        [
+            ProjectFile(path="main/i2c.c", content="i2c_master_start()"),
+            ProjectFile(path="main/i2c_extra.c", content="i2c_param_config()"),
+        ]
+    )
+    response = {
+        "intent": "change_objective",
+        "objective": {
+            "objective_id": "i2c-fix",
+            "title": "修复 I2C 总线",
+            "description": "修复 I2C 总线实现",
+        },
+        "change_set": {
+            "changes": [
+                {
+                    "operation": "modify",
+                    "capability_id": "bus.i2c",
+                    "desired_state": {"speed": 100000},
+                }
+            ]
+        },
+        "allowed_paths_by_capability": {"bus.i2c": ["main/i2c.c"]},
+        "objective_changed": True,
+    }
+    planner = DeepSeekAgentPlanner(
+        FakeJsonCompletionClient([response]),
+        "deepseek-chat",
+    )
+
+    interpretation = planner.interpret_goal("修复 I2C 总线", model)
+
+    assert interpretation.allowed_paths_by_capability["bus.i2c"] == [
+        "main/i2c.c",
+        "main/i2c_extra.c",
+    ]

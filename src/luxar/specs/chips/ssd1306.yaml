@@ -1,0 +1,98 @@
+# LUXAR 芯片 Skill 规格：SSD1306（0.96寸 OLED，128x64）
+# 位序按 Adafruit/u8g2 惯例为 LSB（与 SH1106 同族），但**未真机验证**，保持 unverified。
+schema: luxar/chip-skill/2
+controller: ssd1306
+aliases:
+- ssd1306z
+family: ssd13xx
+facts:
+  vendor: Solomon Systech
+  interfaces:
+  - i2c
+  - spi
+  - '8080'
+  default_address: '0x3C'
+  resolutions:
+  - - 128
+    - 64
+  - - 128
+    - 32
+  memory_layout: page
+  sources:
+  - kind: library
+    name: u8g2
+    ref: u8x8_d_ssd1306_128x64_noname.c
+    confidence: high
+    note: pixel = 1 << (y & 7)：位0=页顶(LSB)，与 sh1106 同族
+  - kind: library
+    name: Adafruit_SSD1306
+    ref: Adafruit_SSD1306.cpp
+    confidence: high
+    note: drawPixel 用 1 << (y & 7)
+spec:
+  init:
+  - cmd: '0xAE'
+  - cmd: '0xD5'
+    args:
+    - '0x80'
+  - cmd: '0xA8'
+    args:
+    - '0x3F'
+  - cmd: '0xD3'
+    args:
+    - '0x00'
+  - cmd: '0x40'
+  - cmd: '0xDA'
+    args:
+    - '0x12'
+  - cmd: '0x81'
+    args:
+    - '0xCF'
+  - cmd: '0xD9'
+    args:
+    - '0xF1'
+  - cmd: '0xDB'
+    args:
+    - '0x40'
+  - cmd: '0xA4'
+  - cmd: '0xA6'
+  - cmd: '0xAF'
+  driver_template: ssd1306_i2c
+diagnostics:
+- id: corners_bbox
+  description: 四角实心方块 + 竖线/横线探针（同 sh1106，确认位序/镜像）
+  draw: '实心方块 (0,0) 与 (120,56)；竖线 col=10 整页 0x80；横线 page=0 全列 0x80
+
+    '
+  probes:
+  - kind: block
+    x: 0
+    y: 0
+    w: 8
+    h: 8
+  - kind: block
+    x: 120
+    y: 56
+    w: 8
+    h: 8
+  - kind: vline
+    col: 10
+    byte: '0x80'
+  - kind: hline
+    page: 0
+    mask: '0x80'
+  expect: 位0=页顶(LSB) 时 0x80 在页内最上一行；位7=页顶(MSB) 时在最下一行
+verified: unverified
+verification: []
+display:
+  layout:
+    scan: column
+    bit_order: lsb
+    invert: false
+  screen:
+    width: 128
+    height: 64
+  column_offset: 0
+  display_options:
+    seg_remap: true
+    com_scan_remap: true

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ConversationEventKind = Literal[
     "user_message",
+    "assistant_commentary",
     "assistant_message",
     "tool_call",
     "tool_result",
@@ -36,11 +37,25 @@ def merge_conversation_events(
     current: list[ConversationEvent] | None,
     updates: list[ConversationEvent] | None,
 ) -> list[ConversationEvent]:
-    """Append unseen events and reject conflicting reuse of an event ID."""
+    """Append unseen events and reject conflicting reuse of an event ID.
 
-    merged = list(current or [])
+    每轮开头的普通 user 消息（payload 无 ``steering`` 标记）代表新一轮次的
+    起始：此时丢弃上一轮累积的事件，确保工具调用/结果等执行证据不跨轮泄漏，
+    也避免历史注入事件把 events channel 无限撑大。steering 运行中指令带
+    ``steering: True`` 标记，不会被误判为新一轮次。
+    """
+    if not updates:
+        return list(current or [])
+    merged: list[ConversationEvent] = []
+    reset = any(
+        event.kind == "user_message"
+        and not event.payload.get("steering")
+        for event in updates
+    )
+    if not reset:
+        merged = list(current or [])
     positions = {item.event_id: index for index, item in enumerate(merged)}
-    for event in updates or []:
+    for event in updates:
         existing_index = positions.get(event.event_id)
         if existing_index is None:
             positions[event.event_id] = len(merged)

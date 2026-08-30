@@ -200,8 +200,9 @@ def test_semantic_failure_feedback_is_sent_to_regenerated_bundle() -> None:
             project_files,
             build_evidence=None,
             failure_feedback=None,
+            reuse_candidates=None,
         ):
-            del objective, project_model, project_files, build_evidence
+            del objective, project_model, project_files, build_evidence, reuse_candidates
             self.feedback.append(list(failure_feedback or []))
             return {
                 "bundle_id": f"regenerated-{len(self.feedback)}",

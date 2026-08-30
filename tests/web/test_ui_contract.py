@@ -73,16 +73,60 @@ def test_chat_renders_and_restores_pdf_page_progress() -> None:
     assert ".task-progress-fill" in source
 
 
-def test_chat_shows_collapsed_auditable_reasoning_summary() -> None:
+def test_chat_shows_collapsed_auditable_run_details() -> None:
     source = ui_source()
 
     assert "createReasoningSummaryController" in source
     assert "reasoning-summary" in source
-    assert "view.reasoningController.update(data)" in source
-    assert "reasoningController.update(progressChunk)" in source
-    assert "推理摘要" in source
+    assert "view.reasoningController.update(data, eventName)" in source
+    assert "reasoningController.update(progressChunk, 'progress')" in source
+    assert "运行详情" in source
     assert "不包含模型私密逐字思维链" in source
     assert "document.createElement('details')" in source
+
+
+def test_chat_shows_live_semantic_activity_without_heartbeat_masking_stalls() -> None:
+    source = ui_source()
+
+    assert "eventName === 'commentary'" in source
+    assert "reasoningController.update(data, eventName)" in source
+    assert "createCommentaryController" in source
+    assert "commentaryController.update(commentaryChunk)" in source
+    assert "view.commentaryController.update(data)" in source
+    assert "reasoningController.heartbeat(data)" in source
+    assert "statusController.markHeartbeat()" in source
+    assert ".commentary-message{" in source
+
+
+def test_chat_surface_failures_as_expandable_error_cards() -> None:
+    """工具失败/模型决策失败/审批拒绝必须在前端显式呈现为可排查的错误卡片。"""
+    source = ui_source()
+
+    assert "function renderFailureCard" in source
+    assert "function appendFailureCard" in source
+    assert "data-failure-card" in source
+    # 样式
+    assert ".failure-card{" in source or ".failure-card{" in source.replace(" ", "")
+    assert ".failure-code{" in source
+    assert ".failure-details pre" in source
+    # 可展开的错误详情（排查依据）
+    assert "错误详情（排查依据）" in source
+    assert "JSON.stringify(details, null, 2)" in source
+    # 恢复路径：tool_result 失败/拒绝 -> 卡片
+    assert "data.status === 'failed' || data.status === 'rejected'" in source
+    assert "appendFailureCard(view.bubbleDiv, data.failure" in source
+    # 恢复路径：error 事件结构化
+    assert "data && (data.code || data.category || data.message)" in source
+    # 主流路径：tool_result 失败/拒绝 -> 卡片
+    assert "toolChunk.status === 'failed' || toolChunk.status === 'rejected'" in source
+    assert "appendFailureCard(bubbleDiv, toolChunk.failure" in source
+    # 主流路径：error 事件结构化
+    assert "chunk && (chunk.code || chunk.category || chunk.message)" in source
+    # turn 结果卡片内嵌结构化失败
+    assert "renderFailureCard(continuousFailure, {})" in source
+    # 分类与错误码展示
+    assert "failureCategoryLabel" in source
+    assert "failure-code" in source
 
 
 def test_chat_heartbeat_preserves_the_active_tool_name() -> None:
@@ -118,7 +162,8 @@ def test_migrated_ui_supports_flash_approval_flow() -> None:
     assert "decide('reject')" in source
     assert "JSON.stringify({decision: decision, feedback: feedback, root_index: selectedRootIndex})" in source
     assert "payload.status === 'resuming'" in source
-    assert "loadConversation(project)" in source
+    assert "resumeConversationRunAfterApproval(project, selectedRootIndex, bubbleDiv)" in source
+    assert "bubbleDiv.__luxarStreamView" in source
 
 
 def test_migrated_ui_uses_project_chip_and_selects_port_per_task() -> None:
@@ -141,7 +186,7 @@ def test_migrated_ui_uses_project_chip_and_selects_port_per_task() -> None:
 def test_migrated_ui_enabled_startup_calls_only_supported_endpoints() -> None:
     source = ui_source()
 
-    assert "var pdata = await apiGet('/api/workspace/projects')" in source
+    assert "apiGet('/api/workspace/projects')" in source
     assert "var r = await fetch('/api/health')" in source
     assert "['drivers', 'skills', 'model-config']" in source
     assert "attachButton.style.display = 'none'" in source
@@ -219,3 +264,27 @@ def test_agent_workspace_uses_safe_snapshot_and_interaction_apis() -> None:
     assert "data.knowledge_task || {}" in source
     assert "data.knowledge_result || {}" in source
     assert "data.supports_interactions === false" in source
+
+
+def test_serial_terminal_is_a_fourth_primary_page_with_safe_session_api() -> None:
+    source = ui_source()
+
+    assert 'data-page-link="serial"' in source
+    assert 'data-page="serial"' in source
+    assert 'id="serial-tool-port"' in source
+    assert 'id="serial-tool-console"' in source
+    assert 'id="serial-send-mode"' in source
+    assert '<option value="hex">HEX</option>' in source
+    assert "apiGet('/api/devices/ports')" in source
+    assert "fetch('/api/serial/sessions'" in source
+    assert "'/write'" in source
+    assert "method: 'DELETE'" in source
+    assert "line.textContent =" in source
+    assert "serialTerminalEvents = serialTerminalEvents.concat(events).slice(-1000)" in source
+
+
+def test_dashboard_driver_count_uses_the_public_driver_library() -> None:
+    source = ui_source()
+
+    assert "apiGet('/api/drivers?limit=100')" in source
+    assert "Number(driverData.count || 0)" in source

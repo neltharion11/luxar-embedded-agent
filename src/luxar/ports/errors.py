@@ -14,6 +14,8 @@ CapabilityErrorCategory = Literal[
     "empty_response",
     "invalid_json",
     "invalid_schema",
+    # 输出达到 max_tokens 上限被截断（finish_reason=length），与格式错误区分。
+    "truncated",
 ]
 
 
@@ -24,6 +26,7 @@ class CapabilityError(RuntimeError):
         category: CapabilityErrorCategory,
         message: str,
         retryable: bool,
+        details: dict[str, object] | None = None,
     ) -> None:
         # 初始化标准异常部分，使 str(error) 和正常的 raise/except 行为可用。
         super().__init__(message)
@@ -31,3 +34,4 @@ class CapabilityError(RuntimeError):
         self.category = category
         self.message = message
         self.retryable = retryable
+        self.details = dict(details or {})

@@ -21,6 +21,7 @@ class LocalStorageSettings(BaseSettings):
     checkpoint_filename: str = "checkpoints.sqlite3"
     knowledge_directory_name: str = "knowledge.lance"
     sdk_knowledge_directory_name: str = "sdk-knowledge.lance"
+    driver_library_directory_name: str = "driver-library"
 
     @classmethod
     def for_projects_root(cls, projects_root: Path) -> "LocalStorageSettings":
@@ -57,3 +58,7 @@ class LocalStorageSettings(BaseSettings):
     @property
     def sdk_knowledge_path(self) -> Path:
         return self.root / self.sdk_knowledge_directory_name
+
+    @property
+    def driver_library_path(self) -> Path:
+        return self.root / self.driver_library_directory_name

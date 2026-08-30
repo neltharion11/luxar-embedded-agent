@@ -13,6 +13,7 @@ class FakeJsonCompletionClient:
         # 复制输入序列，使内部响应队列不受调用方后续修改影响。
         self.responses = list(responses)
         self.calls: list[tuple[str, str, str]] = []
+        self.options: list[dict[str, object]] = []
 
     def complete_json(
         self,
@@ -20,8 +21,11 @@ class FakeJsonCompletionClient:
         system_prompt: str,
         user_prompt: str,
         model: str,
+        repair: bool = False,
+        max_tokens: int | None = None,
     ) -> dict[str, object]:
         # 先记录调用；即使响应耗尽，测试仍能看到出错前传入了什么。
+        self.options.append({"repair": repair, "max_tokens": max_tokens})
         self.calls.append(
             (
                 system_prompt,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -23,6 +24,9 @@ class AgentToolExecutionContext:
     turn_id: str
     project_key: str
     project_path: Path | None = None
+    # 长耗时工具（如知识库导入）通过它把阶段进度发回会话流，避免 UI
+    # 长时间无事件。签名与 event_reporter 一致：(event_name, data)。
+    progress_reporter: Callable[[str, dict[str, object]], None] | None = None
 
 
 class AgentToolPort(Protocol):
@@ -56,6 +60,13 @@ class ToolExecutionLedgerPort(Protocol):
         result: dict[str, object] | None = None,
         failure: ContinuousAgentFailure | None = None,
     ) -> ToolExecutionRecord: ...
+
+    def get_tool_execution(
+        self,
+        idempotency_key: str,
+    ) -> ToolExecutionRecord | None:
+        """Read-only probe: return the ledger record for a key, or None."""
+        ...
 
 
 __all__ = [

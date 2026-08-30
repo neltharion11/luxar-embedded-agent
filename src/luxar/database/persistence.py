@@ -62,6 +62,8 @@ class KnowledgeMatch:
     applicable_conditions: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
     metadata: dict[str, object] | None = None
+    #: 硬件实体归属（chip/device entity_id）；未关联时为空。
+    entity_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -259,6 +261,11 @@ class PersistencePort(Protocol):
         failure: ContinuousAgentFailure | None = None,
     ) -> ToolExecutionRecord: ...
 
+    def get_tool_execution(
+        self,
+        idempotency_key: str,
+    ) -> ToolExecutionRecord | None: ...
+
     def get_messages(self, task_key: str) -> list[dict[str, str]]: ...
 
     def append_exchange(
@@ -268,7 +275,9 @@ class PersistencePort(Protocol):
         thread_id: str,
         user_message: str,
         assistant_message: str,
-    ) -> None: ...
+    ) -> None:
+        """Persist one exchange idempotently for ``thread_id``."""
+        ...
 
     def reset_conversation(self, task_key: str) -> None: ...
 
@@ -289,6 +298,11 @@ class PersistencePort(Protocol):
     ) -> int: ...
 
     def get_active_conversation_stream(
+        self,
+        task_key: str,
+    ) -> ConversationStreamRecord | None: ...
+
+    def get_latest_conversation_stream(
         self,
         task_key: str,
     ) -> ConversationStreamRecord | None: ...
@@ -405,6 +419,8 @@ class PersistencePort(Protocol):
     ) -> list[KnowledgeMatch]: ...
 
     def count_knowledge_documents(self, project_key: str) -> int: ...
+
+    def count_all_knowledge_documents(self) -> int: ...
 
     def save_agent_project(
         self,
@@ -741,9 +757,19 @@ class TransientPersistence:
             self._tool_executions[idempotency_key] = updated
             return updated
 
+    def get_tool_execution(
+        self,
+        idempotency_key: str,
+    ) -> ToolExecutionRecord | None:
+        with self._lock:
+            return self._tool_executions.get(idempotency_key)
+
     def get_messages(self, task_key: str) -> list[dict[str, str]]:
         with self._lock:
-            return [dict(item) for item in self._messages.get(task_key, [])]
+            return [
+                {"role": item["role"], "content": item["content"]}
+                for item in self._messages.get(task_key, [])
+            ]
 
     def append_exchange(
         self,
@@ -753,14 +779,29 @@ class TransientPersistence:
         user_message: str,
         assistant_message: str,
     ) -> None:
-        del thread_id
         with self._lock:
-            self._messages.setdefault(task_key, []).extend(
-                [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": assistant_message},
-                ]
-            )
+            messages = self._messages.setdefault(task_key, [])
+            matching = [
+                index
+                for index, item in enumerate(messages)
+                if item.get("thread_id") == thread_id
+            ]
+            insertion_index = matching[0] if matching else len(messages)
+            messages[:] = [
+                item for item in messages if item.get("thread_id") != thread_id
+            ]
+            messages[insertion_index:insertion_index] = [
+                {
+                    "role": "user",
+                    "content": user_message,
+                    "thread_id": thread_id,
+                },
+                {
+                    "role": "assistant",
+                    "content": assistant_message,
+                    "thread_id": thread_id,
+                },
+            ]
 
     def reset_conversation(self, task_key: str) -> None:
         with self._lock:
@@ -863,6 +904,16 @@ class TransientPersistence:
                     "running",
                     "pending_approval",
                 }:
+                    return self._stream_record(values)
+        return None
+
+    def get_latest_conversation_stream(
+        self,
+        task_key: str,
+    ) -> ConversationStreamRecord | None:
+        with self._lock:
+            for values in reversed(list(self._conversation_streams.values())):
+                if values.get("task_key") == task_key:
                     return self._stream_record(values)
         return None
 
@@ -1111,6 +1162,10 @@ class TransientPersistence:
         return []
 
     def count_knowledge_documents(self, project_key: str) -> int:
+        del project_key
+        return 0
+
+    def count_all_knowledge_documents(self) -> int:
         return 0
 
     def save_agent_project(
@@ -1665,6 +1720,25 @@ class PostgresPersistence:
             raise KeyError("Tool execution 不存在")
         return self._postgres_tool_execution(row)
 
+    def get_tool_execution(
+        self,
+        idempotency_key: str,
+    ) -> ToolExecutionRecord | None:
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT idempotency_key, session_id, turn_id, call_id,
+                       tool_name, arguments_fingerprint, status,
+                       result, failure
+                FROM luxar_tool_executions
+                WHERE idempotency_key = %s
+                """,
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._postgres_tool_execution(row)
+
     def get_messages(self, task_key: str) -> list[dict[str, str]]:
         with self._pool.connection() as connection:
             rows = connection.execute(
@@ -1687,6 +1761,13 @@ class PostgresPersistence:
         with self._pool.connection() as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        DELETE FROM luxar_conversation_messages
+                        WHERE task_key = %s AND thread_id = %s
+                        """,
+                        (task_key, thread_id),
+                    )
                     cursor.executemany(
                         """
                         INSERT INTO luxar_conversation_messages
@@ -1825,6 +1906,23 @@ class PostgresPersistence:
                 FROM luxar_conversation_streams
                 WHERE task_key = %s
                   AND status IN ('running', 'pending_approval')
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (task_key,),
+            ).fetchone()
+        return self._postgres_stream_record(row) if row is not None else None
+
+    def get_latest_conversation_stream(
+        self,
+        task_key: str,
+    ) -> ConversationStreamRecord | None:
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT thread_id, task_key, user_message, assistant_content,
+                       status, last_sequence, last_event, updated_at
+                FROM luxar_conversation_streams
+                WHERE task_key = %s
                 ORDER BY updated_at DESC LIMIT 1
                 """,
                 (task_key,),
@@ -2513,6 +2611,7 @@ class PostgresPersistence:
         query_embedding: list[float],
         limit: int = 6,
     ) -> list[KnowledgeMatch]:
+        del project_key
         vector = "[" + ",".join(str(value) for value in query_embedding) + "]"
         with self._pool.connection() as connection:
             rows = connection.execute(
@@ -2524,11 +2623,10 @@ class PostgresPersistence:
                               plainto_tsquery('simple', %s))) AS score
                 FROM luxar_knowledge_chunks c
                 JOIN luxar_knowledge_documents d ON d.id = c.document_id
-                WHERE d.project_key = %s
                 ORDER BY score DESC
                 LIMIT %s
                 """,
-                (vector, query_text, project_key, limit),
+                (vector, query_text, limit),
             ).fetchall()
         return [
             KnowledgeMatch(
@@ -2565,12 +2663,16 @@ class PostgresPersistence:
         ]
 
     def count_knowledge_documents(self, project_key: str) -> int:
+        del project_key
         with self._pool.connection() as connection:
             row = connection.execute(
-                """
-                SELECT COUNT(*) FROM luxar_knowledge_documents
-                WHERE project_key = %s
-                """,
-                (project_key,),
+                "SELECT COUNT(*) FROM luxar_knowledge_documents"
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def count_all_knowledge_documents(self) -> int:
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM luxar_knowledge_documents"
             ).fetchone()
         return int(row[0]) if row else 0

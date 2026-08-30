@@ -82,6 +82,30 @@ class _ApprovalTool(_ReadTool):
     )
 
 
+class _LargeReadTool(_ReadTool):
+    descriptor = AgentToolDescriptor(
+        name="workspace.read_large",
+        description="读取大型工具结果",
+        input_schema=_ReadInput.model_json_schema(),
+        read_only=True,
+        requires_approval=False,
+    )
+
+    def execute(
+        self,
+        arguments: BaseModel,
+        context: AgentToolExecutionContext,
+    ) -> ToolResult:
+        del context
+        self.calls += 1
+        assert isinstance(arguments, _ReadInput)
+        return ToolResult(
+            success=True,
+            output={"path": arguments.path, "content": "x" * 20_000},
+            evidence_ids=["source:large.txt"],
+        )
+
+
 class _Stepper:
     def __init__(self, steps: list[AgentStep]) -> None:
         self.steps = list(steps)
@@ -109,6 +133,26 @@ class _BlockingReplyStreamer(_Stepper):
         self.first_chunk.set()
         assert self.release.wait(timeout=5)
         yield "第二段"
+
+
+class _BlockingCommentaryStepper:
+    def __init__(self) -> None:
+        self.commentary_emitted = threading.Event()
+        self.release = threading.Event()
+
+    def decide_next_step_streaming(
+        self,
+        context: AgentStepContext,
+        *,
+        on_commentary: object,
+    ) -> AgentStep:
+        del context
+        assert callable(on_commentary)
+        on_commentary("我先检查显示驱动的寻址和偏移设置，")
+        self.commentary_emitted.set()
+        assert self.release.wait(timeout=5)
+        on_commentary("再结合屏幕现象确认根因。")
+        return AssistantReply(content="检查完成。")
 
 
 def _initial_state() -> dict[str, object]:
@@ -167,6 +211,42 @@ def test_graph_runs_read_tool_then_returns_model_reply() -> None:
     ]
 
 
+def test_graph_prunes_large_tool_results_only_in_model_context() -> None:
+    tool = _LargeReadTool()
+    stepper = _Stepper(
+        [
+            ToolCallBatch(
+                calls=[
+                    ToolCall(
+                        call_id="read-large",
+                        tool_name="workspace.read_large",
+                        arguments={"path": "large.txt"},
+                    )
+                ]
+            ),
+            AssistantReply(content="大型结果已检查。"),
+        ]
+    )
+
+    result = build_continuous_agent_graph().invoke(
+        _initial_state(),
+        context=ContinuousAgentRuntimeContext(
+            stepper=stepper,
+            tools=ToolRegistry([tool]),
+        ),
+    )
+
+    model_result = stepper.contexts[1].latest_tool_results[0]["result"]
+    assert model_result["_luxar_truncated"] is True
+    assert model_result["original_characters"] > 8_192
+    recent_tool_result = next(
+        item for item in stepper.contexts[1].recent_events if item.kind == "tool_result"
+    )
+    assert recent_tool_result.payload["result"]["_luxar_truncated"] is True
+    # The checkpoint/tool ledger remains the source of truth and retains full evidence.
+    assert len(result["tool_calls"]["step1:read-large"].result["content"]) == 20_000
+
+
 def test_graph_forwards_reply_tokens_before_full_reply_is_ready() -> None:
     streamer = _BlockingReplyStreamer(AssistantReply(content="模型草稿"))
     reported: list[tuple[str, dict[str, object]]] = []
@@ -189,6 +269,8 @@ def test_graph_forwards_reply_tokens_before_full_reply_is_ready() -> None:
     worker.start()
     assert streamer.first_chunk.wait(timeout=5)
     assert ("token", {"token": "第一段"}) in reported
+    phases = [data["phase"] for event, data in reported if event == "phase_changed"]
+    assert phases[:2] == ["agent_decision", "agent_decision_completed"]
     assert not results
 
     streamer.release.set()
@@ -203,6 +285,93 @@ def test_graph_forwards_reply_tokens_before_full_reply_is_ready() -> None:
         item for item in results[0]["events"] if item.kind == "assistant_message"
     ][-1]
     assert assistant.payload["content"] == "第一段第二段"
+
+
+def test_graph_forwards_model_commentary_before_decision_is_ready() -> None:
+    stepper = _BlockingCommentaryStepper()
+    reported: list[tuple[str, dict[str, object]]] = []
+    results: list[dict[str, object]] = []
+
+    worker = threading.Thread(
+        target=lambda: results.append(
+            build_continuous_agent_graph().invoke(
+                _initial_state(),
+                context=ContinuousAgentRuntimeContext(
+                    stepper=stepper,  # type: ignore[arg-type]
+                    tools=ToolRegistry(),
+                    event_reporter=lambda event, data: reported.append((event, data)),
+                ),
+            )
+        )
+    )
+    worker.start()
+
+    assert stepper.commentary_emitted.wait(timeout=5)
+    assert not results
+    assert [data["token"] for event, data in reported if event == "commentary"] == [
+        "我先检查显示驱动的寻址和偏移设置，"
+    ]
+
+    stepper.release.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert "".join(
+        str(data["token"])
+        for event, data in reported
+        if event == "commentary"
+    ) == "我先检查显示驱动的寻址和偏移设置，再结合屏幕现象确认根因。"
+    commentary_event = next(
+        item for item in results[0]["events"] if item.kind == "assistant_commentary"
+    )
+    assert commentary_event.payload["phase"] == "commentary"
+
+
+def test_graph_replays_commentary_into_the_next_model_step() -> None:
+    class CommentaryToolStepper:
+        def __init__(self) -> None:
+            self.contexts: list[AgentStepContext] = []
+
+        def decide_next_step_streaming(
+            self,
+            context: AgentStepContext,
+            *,
+            on_commentary: object,
+        ) -> AgentStep:
+            assert callable(on_commentary)
+            self.contexts.append(context)
+            if not context.latest_tool_results:
+                on_commentary("我先读取 main.c，确认当前显示逻辑。")
+                return ToolCallBatch(
+                    calls=[
+                        ToolCall(
+                            call_id="read-after-commentary",
+                            tool_name="workspace.read",
+                            arguments={"path": "main/main.c"},
+                        )
+                    ]
+                )
+            return AssistantReply(content="已经确认当前显示逻辑。")
+
+    stepper = CommentaryToolStepper()
+    result = build_continuous_agent_graph().invoke(
+        _initial_state(),
+        context=ContinuousAgentRuntimeContext(
+            stepper=stepper,  # type: ignore[arg-type]
+            tools=ToolRegistry([_ReadTool()]),
+        ),
+    )
+
+    assert result["turn_status"] == "completed"
+    replayed = [
+        event
+        for event in stepper.contexts[1].recent_events
+        if event.kind == "assistant_commentary"
+    ]
+    assert replayed[0].payload == {
+        "content": "我先读取 main.c，确认当前显示逻辑。",
+        "phase": "commentary",
+    }
 
 
 def test_finish_objective_uses_the_same_streaming_reply_path() -> None:
@@ -269,6 +438,7 @@ class _FailingStepper:
             category="invalid_schema",
             message="bad model payload",
             retryable=False,
+            details={"repair_validation_errors": [{"loc": ["step", "type"]}]},
         )
 
 
@@ -283,6 +453,11 @@ def test_graph_classifies_model_failure_without_asking_user() -> None:
 
     assert result["turn_status"] == "failed"
     assert result["last_failure"].category == "model"
+    assert result["last_failure"].message == (
+        "模型返回的下一步字段不符合 Agent 决策协议"
+    )
+    assert result["last_failure"].details["adapter_message"] == "bad model payload"
+    assert result["last_failure"].details["repair_validation_errors"]
     assert result.get("pending_request") is None
 
 
@@ -494,7 +669,7 @@ def test_graph_interrupts_before_approval_tool_and_resumes_once() -> None:
 
     assert tool.calls == 1
     assert resumed["turn_status"] == "completed"
-    assert resumed["tool_calls"]["flash-device"].status == "succeeded"
+    assert resumed["tool_calls"]["step1:flash-device"].status == "succeeded"
     assert any(item.kind == "approval_decision" for item in resumed["events"])
 
 
@@ -570,3 +745,232 @@ def test_graph_cancels_before_tool_side_effect_at_safe_boundary() -> None:
     assert result["session_status"] == "active"
     assert tool.calls == 0
     assert result["events"][-1].kind == "assistant_message"
+
+
+def test_assistant_message_never_replays_previous_turn_content() -> None:
+    """当前 turn 未生成回复时，不得回退复读历史 turn 的 assistant 内容。"""
+
+    from luxar.application.continuous_agent_runner import ContinuousAgentRunResult
+    from luxar.web_continuous_agent import _assistant_message
+
+    result = ContinuousAgentRunResult(
+        thread_id="session",
+        state={
+            "turn_id": "turn-b",
+            "turn_status": "completed",
+            "objective_status": "active",
+            "events": [
+                ConversationEvent(
+                    event_id="turn-a:assistant",
+                    turn_id="turn-a",
+                    kind="assistant_message",
+                    sequence=1,
+                    payload={"content": "上一轮的旧回复（ESP_FAIL 分析）"},
+                ),
+                ConversationEvent(
+                    event_id="turn-b:user",
+                    turn_id="turn-b",
+                    kind="user_message",
+                    sequence=2,
+                    payload={"content": "我看到字体显示了"},
+                ),
+                ConversationEvent(
+                    event_id="turn-b:tool_result",
+                    turn_id="turn-b",
+                    kind="tool_result",
+                    sequence=3,
+                    payload={"status": "blocked"},
+                ),
+            ],
+        },
+    )
+
+    message = _assistant_message(result)
+
+    assert "ESP_FAIL" not in message
+    assert message == "本轮没有产生可展示的回复。"
+
+
+def test_assistant_message_reports_rejected_approval_with_user_feedback() -> None:
+    """审批被拒且当前 turn 无回复时，输出含用户反馈的语义化说明。"""
+
+    from luxar.application.continuous_agent_runner import ContinuousAgentRunResult
+    from luxar.web_continuous_agent import _assistant_message
+
+    result = ContinuousAgentRunResult(
+        thread_id="session",
+        state={
+            "turn_id": "turn-b",
+            "turn_status": "running",
+            "objective_status": "blocked",
+            "domain_approvals": {"wf_4": False},
+            "domain_approval_feedback": {"wf_4": "初始化已经成功了，问题是右侧两列杂像素"},
+            "events": [
+                ConversationEvent(
+                    event_id="turn-b:user",
+                    turn_id="turn-b",
+                    kind="user_message",
+                    sequence=0,
+                    payload={"content": "右侧两列杂像素"},
+                ),
+                ConversationEvent(
+                    event_id="turn-b:domain-result",
+                    turn_id="turn-b",
+                    kind="tool_result",
+                    sequence=1,
+                    payload={"status": "blocked"},
+                ),
+            ],
+        },
+    )
+
+    message = _assistant_message(result)
+
+    assert "拒绝" in message
+    assert "右侧两列杂像素" in message
+
+
+def test_assistant_message_uses_current_turn_content_when_present() -> None:
+    """当前 turn 有回复时取当前回复，不受历史影响。"""
+
+    from luxar.application.continuous_agent_runner import ContinuousAgentRunResult
+    from luxar.web_continuous_agent import _assistant_message
+
+    result = ContinuousAgentRunResult(
+        thread_id="session",
+        state={
+            "turn_id": "turn-b",
+            "events": [
+                ConversationEvent(
+                    event_id="turn-a:assistant",
+                    turn_id="turn-a",
+                    kind="assistant_message",
+                    sequence=1,
+                    payload={"content": "旧回复"},
+                ),
+                ConversationEvent(
+                    event_id="turn-b:assistant",
+                    turn_id="turn-b",
+                    kind="assistant_message",
+                    sequence=2,
+                    payload={"content": "当前回复"},
+                ),
+            ],
+        },
+    )
+
+    assert _assistant_message(result) == "当前回复"
+
+
+class _FontLikeTool:
+    """模拟 font.extract：按 path 返回对应字形，记录每次被调用的参数。"""
+
+    input_model = _ReadInput
+    descriptor = AgentToolDescriptor(
+        name="font.extract",
+        description="生成字模",
+        input_schema=_ReadInput.model_json_schema(),
+        read_only=True,
+        requires_approval=False,
+    )
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute(
+        self,
+        arguments: BaseModel,
+        context: AgentToolExecutionContext,
+    ) -> ToolResult:
+        del context
+        assert isinstance(arguments, _ReadInput)
+        self.calls.append(arguments.path)
+        return ToolResult(
+            success=True,
+            output={"path": arguments.path, "glyph": arguments.path[:1]},
+            evidence_ids=[f"font:{arguments.path}"],
+        )
+
+
+class _CollidingCallIdStepper:
+    """第一步用 call_id 1/2，第二步又用 call_id 1..3（重现 oled4 撞号场景）。"""
+
+    def __init__(self) -> None:
+        self.decisions = 0
+
+    def decide_next_step(self, context: AgentStepContext) -> AgentStep:
+        del context
+        self.decisions += 1
+        if self.decisions == 1:
+            return ToolCallBatch(
+                calls=[
+                    ToolCall(
+                        call_id="1",
+                        tool_name="font.extract",
+                        arguments={"path": "driver.search"},
+                    ),
+                    ToolCall(
+                        call_id="2",
+                        tool_name="font.extract",
+                        arguments={"path": "knowledge.search"},
+                    ),
+                ]
+            )
+        if self.decisions == 2:
+            return ToolCallBatch(
+                calls=[
+                    ToolCall(
+                        call_id="1",
+                        tool_name="font.extract",
+                        arguments={"path": "A"},
+                    ),
+                    ToolCall(
+                        call_id="2",
+                        tool_name="font.extract",
+                        arguments={"path": "B"},
+                    ),
+                    ToolCall(
+                        call_id="3",
+                        tool_name="font.extract",
+                        arguments={"path": "C"},
+                    ),
+                ]
+            )
+        return AssistantReply(content="字模生成完成。")
+
+
+def test_tool_call_ids_reused_across_steps_do_not_collide() -> None:
+    """回归：同 turn 两步复用 call_id 不再撞号崩溃（修复 oled4 持续 Agent 失败）。"""
+    tool = _FontLikeTool()
+    result = build_continuous_agent_graph().invoke(
+        _initial_state(),
+        context=ContinuousAgentRuntimeContext(
+            stepper=_CollidingCallIdStepper(),  # type: ignore[arg-type]
+            tools=ToolRegistry([tool]),
+        ),
+    )
+
+    assert result["turn_status"] == "completed"
+    assert result.get("last_failure") is None
+    assert tool.calls == [
+        "driver.search",
+        "knowledge.search",
+        "A",
+        "B",
+        "C",
+    ]
+    # 重映射后状态键 turn 内唯一：step1:1/step1:2/step2:1/step2:2/step2:3
+    state_keys = set(result["tool_calls"])
+    assert state_keys == {
+        "step1:1",
+        "step1:2",
+        "step2:1",
+        "step2:2",
+        "step2:3",
+    }
+    # 事件 ID 也按重映射后的 call_id 生成，不与第一步冲突
+    event_ids = [
+        event.event_id for event in result["events"] if event.kind == "tool_call"
+    ]
+    assert "turn-1:tool-call:step2:1" in event_ids
+    assert len(event_ids) == 5

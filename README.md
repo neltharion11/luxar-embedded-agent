@@ -184,6 +184,12 @@ the platform pattern and the discovered list, and chips are strict lowercase
 identifiers. Flash approvals surface as an in-page approval card
 (`批准烧录` / `拒绝`) backed by `POST /api/conversations/{project}/approval`.
 
+前端错误显式呈现：工具执行失败/被拒绝、模型决策失败、运行边界异常都会
+在对话流中渲染为**结构化错误卡片**——分类（模型/工具/策略/参数校验/服务/
+超时等）、稳定错误码（如 `service`、`display_selfcheck_mismatch`）、
+是否可重试，以及可展开的 `details` 排查依据；历史会话恢复时同样重建这些
+卡片。错误不再只藏在后台日志里。
+
 ### Continuous Agent V2 (default Web entry)
 
 Web conversations route through the conversation-first LangGraph Agent by
@@ -232,6 +238,72 @@ Bare `luxar` equals `luxar web` with values from `LUXAR_PROJECTS_ROOT`
 back to `./projects` and port 8000.
 
 (`luxar-web` remains as a compatible alias for `luxar web`.)
+
+## 显示屏字模取模工具（font.extract / font.export）
+
+LLM 手写显示屏驱动里的字体位图几乎必然出错（字形、位序、行列顺序都对不
+上）。LUXAR 的持续 Agent（Web 默认入口）内置了确定性取模工具，把字形
+光栅化和位打包交给代码完成，模型只负责描述需求，不再手写任何位图字节：
+
+- `font.extract`：只读。按控制器的内存布局生成字模 C 代码并返回头文件
+  内容（不写文件），供模型预览或嵌入小字体内联数组。
+- `font.export`：写文件（需审批）。把生成的字模头文件直接写入当前工程
+  指定路径（限 `.h/.hpp/.c/.cpp`，必须位于工程内），避免模型转抄长十六
+  进制数组时出错。
+
+参数要点（与 PCtoLCD 等取模软件对应）：
+
+- `text`：要取模的字符，自动去重并按首次出现排序；纯 ASCII 默认 8x16，
+  含中文默认 16x16（可显式指定 `width`/`height`）。
+- `font`：默认 `msyhbd`（微软雅黑粗体，笔画粗、16px 下 'e'/'w' 等小写
+  字母清晰，最接近嵌入式点阵字体观感）；其他可选
+  `msyh`(微软雅黑)/`arialbd`(Arial 粗体)/`consolab`(等宽粗体)/`simhei`(黑体)/
+  `simsun`(宋体)/`consola`/`arial`/`cascadia_mono`/`noto_sans_sc`，或字体
+  文件绝对路径（限 Windows 字体目录或工程内）。**内置 U8g2 点阵字体**
+  （MIT，源自 olikraus/u8g2 的 BDF 源，纯 ASCII 32-127、等宽、像素级
+  清晰、嵌入式标准观感，不依赖系统字体）：`u8g2_5x7`/`u8g2_6x10`/
+  `u8g2_8x13`/`u8g2_10x20`——含中文时不可用，需改用 TTF 字体。
+- `controller`：控制器预设，如 `ssd1306`/`sh1106`=逐列(纵向)取模、
+  `pcd8544`/`st7789`/`ili9341`/`hd44780`=逐行(横向)取模；也可用
+  `scan=row|column`、`bit_order=msb|lsb`、`invert=true`(阴码) 单独覆盖。
+- `ascii_half_width=true`：混合中英文字库。ASCII 按字体实际字宽（比例
+  advance）取模并左对齐——'l' 窄、'w' 宽，拼接成单词间距均匀、字形不被
+  压扁（建议配合 msyh 等比例拉丁字体）；汉字取全宽。ASCII 字形垂直方向
+  **基线对齐**（所有字母底边落在同一条基线上，'g'/'p' 等降部向下伸），
+  中文方块字垂直居中。输出 `GLYPH_WIDTHS`/`GLYPH_OFFSETS` 表，驱动按
+  宽度累加即可在 128px 屏上正确居中混排（如 msyh 下 "helloworld" 10 字符
+  80px、x0=24；"你好世界" 64px、x0=32）。
+- 输出头文件包含每个字形的 ASCII 预览注释、Unicode 码点（含中文时附
+  `CODEPOINTS` 索引表）与取模参数，便于驱动作者核对并实现查表。
+
+取模由 PyMuPDF 确定性光栅化完成（已有硬依赖，无需新增依赖）：同一字体
+文件 + 同一参数必然产生同一输出，并以 `font.extract` 的 `c_code` 或写入
+的头文件作为构建证据。
+
+**模型强制使用规则**：持续 Agent 的决策提示（`continuous_agent_step.py`
+的 system prompt）规定——涉及显示屏字体/字模/显示字符串的驱动任务时，
+若工具目录存在 `font.extract`/`font.export`，必须先调用它们生成字模，
+禁止手写任何位图字节数组；用户未给出具体字符时先 `ask_user` 询问，不得
+猜测；委托领域工作流前也要先由顶层生成字模文件。这与 `driver.search` 的
+强制复用规则同级，从机制上杜绝模型手写字模导致的乱码。
+
+### 设备侧显示自检（display.verify / display.selfcheck_template）
+
+自动验证"驱动把正确的字模字节写到了正确的显存位置"，不再依赖模型自报：
+
+1. `font.export` 生成的字模头文件自带**每字形 crc32** 与整表
+   `data_crc32`/`data_sha256` 锚点（头文件注释中），任何手改字模文件的
+   字节都会被锚点校验当场识破。
+2. `display.selfcheck_template` 输出零依赖的 `display_selfcheck.h/.c`
+   （zlib 标准 CRC32 表 + `FONT_CHECK <name> <crc32>` 打印函数），写入
+   工程后在清屏→绘制→刷新显存后调用一次，经 UART 回传整帧 CRC。
+3. `display.verify` 解析工程内字模头文件，按 `lines=[{text,x,y},...]`
+   多行布局重建页寻址预期帧（与固件同一字节布局），与设备回传 CRC 对比：
+   一致即通过（逻辑层验证），不一致则失败并给出预期/实际 CRC 与每字形
+   锚点，供模型定位修复。
+
+该闭环不依赖摄像头或屏内 RAM 回读，仅用显存字节流校验，任何"手写字模"
+导致的位序/行列/宽度错误都会在第一次 `display.verify` 中被确定性抓住。
 
 ## Embedded SQLite durability and LanceDB knowledge
 
@@ -292,7 +364,10 @@ OpenAI-compatible vision model.
 `.luxar/model-config.json`（provider / base_url / model / timeout /
 context window），密钥只落盘、不出现在读取响应中；未保存时回退到
 `LUXAR_LLM_PROVIDER`、`LUXAR_LLM_BASE_URL`、`LUXAR_LLM_MODEL`、
-`LUXAR_LLM_API_KEY` 等环境变量。provider 支持 deepseek / openai / local
+`LUXAR_LLM_API_KEY` 等环境变量。交互式 Agent 默认关闭 DeepSeek thinking
+以缩短首条自然语言 commentary 的等待时间；可用
+`LUXAR_LLM_THINKING_ENABLED=true` 与 `LUXAR_LLM_THINKING_EFFORT` 显式开启。
+provider 支持 deepseek / openai / local
 （任意 OpenAI 兼容端点）。PDF 视觉解析支持 inherit / separate / python
 三种模式；知识库 embedding 支持 local_hash（离线）与 api 两种模式。
 

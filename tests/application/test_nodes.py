@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -308,6 +309,15 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
         error_category="source",
     )
     files = [ProjectFile(path="main/main.c", content="broken source")]
+    # FakeWorkspace 构造时会自动填充 sha256；期望值保持一致，避免全等比较失败
+    expected_files = [
+        ProjectFile(
+            path=item.path,
+            content=item.content,
+            sha256=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
+        )
+        for item in files
+    ]
     repair = RepairPlan(
         diagnosis="declare the GPIO variable",
         replacements=[
@@ -345,7 +355,7 @@ def test_repair_project_reads_plans_and_applies_repair_without_build_attempt() -
 
     assert workspace.read_calls == [project_path, project_path]
     assert repair_planner.calls == [
-        (requirement, plan, evidence, files, None)
+        (requirement, plan, evidence, expected_files, None)
     ]
     assert workspace.apply_calls == [(project_path, repair)]
     assert update == {

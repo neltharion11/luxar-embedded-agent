@@ -71,9 +71,15 @@ def test_postgres_repository_round_trip_and_pgvector_search() -> None:
             user_message="flash",
             assistant_message="completed",
         )
+        repository.append_exchange(
+            task_key,
+            thread_id=thread_id,
+            user_message="flash",
+            assistant_message="completed after retry",
+        )
         assert repository.get_messages(task_key) == [
             {"role": "user", "content": "flash"},
-            {"role": "assistant", "content": "completed"},
+            {"role": "assistant", "content": "completed after retry"},
         ]
         repository.finish_run(
             thread_id,

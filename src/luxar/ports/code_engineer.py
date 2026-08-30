@@ -21,6 +21,7 @@ class CodeEngineerPort(Protocol):
         files: list[ProjectFile],
         build_evidence: BuildEvidence | None = None,
         failure_feedback: list[str] | None = None,
+        reuse_candidates: list[dict[str, object]] | None = None,
     ) -> ChangeBundle | dict[str, object]: ...
 
 

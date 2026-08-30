@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 ModelProvider = Literal["deepseek", "openai", "local"]
+ThinkingEffort = Literal["low", "high", "max"]
 VisionMode = Literal["inherit", "separate", "python"]
 EmbeddingMode = Literal["local_hash", "api"]
 EmbeddingProvider = Literal["openai", "local"]
@@ -80,6 +81,10 @@ class ModelEndpoint(BaseModel):
     model: str = ""
     repair_model: str = ""
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    # Interactive Agent decisions default to non-thinking for a short TTFT.
+    # Users can opt into deeper reasoning explicitly through the model config.
+    thinking_enabled: bool = False
+    thinking_effort: ThinkingEffort = "high"
     context_window_tokens: int | None = Field(
         default=None,
         ge=4_096,
@@ -189,6 +194,8 @@ class RuntimeModelConfig(BaseModel):
                 "base_url": resolved.base_url,
                 "model": resolved.model,
                 "timeout_seconds": resolved.timeout_seconds,
+                "thinking_enabled": resolved.thinking_enabled,
+                "thinking_effort": resolved.thinking_effort,
                 "context_window_tokens": resolved.context_window_tokens,
                 "context_compaction_threshold": 0.95,
                 "api_key_configured": bool(
@@ -247,6 +254,8 @@ class ModelConfigStore:
                 "model": endpoint.model,
                 "repair_model": endpoint.repair_model,
                 "timeout_seconds": endpoint.timeout_seconds,
+                "thinking_enabled": endpoint.thinking_enabled,
+                "thinking_effort": endpoint.thinking_effort,
                 "context_window_tokens": endpoint.context_window_tokens,
             }
         payload = {
@@ -303,6 +312,12 @@ class ModelConfigStore:
             model=os.environ.get("LUXAR_LLM_MODEL", default_model),
             repair_model=os.environ.get("LUXAR_LLM_MODEL", default_model),
             timeout_seconds=float(os.environ.get("LUXAR_LLM_TIMEOUT_SECONDS", "60")),
+            thinking_enabled=os.environ.get(
+                "LUXAR_LLM_THINKING_ENABLED", "false"
+            ).strip().casefold() in {"1", "true", "yes", "on"},
+            thinking_effort=os.environ.get(
+                "LUXAR_LLM_THINKING_EFFORT", "high"
+            ).strip().casefold(),  # type: ignore[arg-type]
             context_window_tokens=(
                 int(os.environ["LUXAR_LLM_CONTEXT_WINDOW_TOKENS"])
                 if os.environ.get("LUXAR_LLM_CONTEXT_WINDOW_TOKENS")

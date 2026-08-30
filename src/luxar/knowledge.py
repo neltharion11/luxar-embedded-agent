@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import math
 import re
@@ -19,6 +20,7 @@ from luxar.domain.knowledge_atoms import (
     KnowledgeAtom,
     KnowledgeChunk,
     materialize_knowledge_atoms,
+    materialize_parameter_atoms,
 )
 from luxar.model_config import is_local_http_api
 from luxar.ports.knowledge_extraction import KnowledgeAtomExtractor
@@ -87,6 +89,8 @@ class KnowledgeIndex(Protocol):
 
     def count_knowledge_documents(self, project_key: str) -> int: ...
 
+    def count_all_knowledge_documents(self) -> int: ...
+
     def list_knowledge_documents(self, project_key: str) -> list[dict[str, object]]: ...
 
     def get_knowledge_document(
@@ -96,6 +100,22 @@ class KnowledgeIndex(Protocol):
     def delete_knowledge_document(
         self, *, project_key: str, document_id: str
     ) -> bool: ...
+
+    def register_entity(
+        self, *, entity: object, replace: bool = False
+    ) -> bool: ...
+
+    def list_entities(self) -> list[object]: ...
+
+    def find_entity(self, name: str) -> object | None: ...
+
+    def device_tree(self, device: object) -> list[object]: ...
+
+    def search_by_entity(
+        self, *, entity_ids: set[str], limit: int = 50
+    ) -> list[KnowledgeMatch]: ...
+
+    def entity_candidates(self) -> list[dict[str, object]]: ...
 
 
 class OpenAIEmbeddingAdapter:
@@ -250,8 +270,10 @@ class KnowledgeService:
         chunks = self._chunks(content)
         vectors = self._embeddings.embed(chunks)
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        # 文档 ID 只由来源 URI 决定：同一来源在任何项目入库都映射到同一篇
+        # 全局文档（跨项目去重）。project_key 仅记录来源项目，不参与标识。
         document_id = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, f"luxar:{project_key}:{source_uri}")
+            uuid.uuid5(uuid.NAMESPACE_URL, f"luxar:{source_uri}")
         )
         records = [
             KnowledgeChunk(
@@ -292,7 +314,13 @@ class KnowledgeService:
             raise ValueError("文档中没有可写入的具体知识")
         if len(atoms) > 5000:
             raise ValueError("单个文档抽取的知识原子超过 5000 条限制")
-        texts = [atom.searchable_text() for atom in atoms]
+        # 入库归属：参数原子按 scope 的 controller/device 名称匹配已注册实体，
+        # 命中则把 entity_id 写入原子（检索时可按实体聚合返回）。
+        indexed_atoms = [
+            self._assign_entity(atom) if atom.category == "parameter" else atom
+            for atom in atoms
+        ]
+        texts = [atom.searchable_text() for atom in indexed_atoms]
         vectors = self._embeddings.embed(texts)
         chunks = [
             KnowledgeChunk(
@@ -301,7 +329,9 @@ class KnowledgeService:
                 embedding=vector,
                 metadata=atom.metadata(),
             )
-            for atom, text, vector in zip(atoms, texts, vectors, strict=True)
+            for atom, text, vector in zip(
+                indexed_atoms, texts, vectors, strict=True
+            )
         ]
         document_id = atoms[0].source_document_id
         if not document_id or any(
@@ -323,6 +353,38 @@ class KnowledgeService:
         )
         return IngestedDocument(document_id, len(chunks), content_hash)
 
+    def _assign_entity(self, atom: KnowledgeAtom) -> KnowledgeAtom:
+        """参数原子按 scope 匹配已注册实体，返回带 entity_id 的副本。
+
+        匹配优先级：device（具体实例）> controller（芯片类）> 其他 scope 值。
+        device 优先——同一 controller 下可能有多个模组，具体实例的知识应
+        归属到最具体的实体。只匹配已注册实体（find_entity），未命中保持未归属。
+        """
+        if atom.entity_id:
+            return atom
+        scope = atom.parameter_scope or {}
+        device_name = scope.get("device")
+        controller_name = scope.get("controller")
+        ordered = []
+        if device_name:
+            ordered.append(device_name)
+        if controller_name:
+            ordered.append(controller_name)
+        ordered.extend(
+            str(value) for key, value in scope.items()
+            if key not in {"device", "controller"} and str(value).strip()
+        )
+        for candidate in ordered:
+            entity = self._index.find_entity(str(candidate))
+            if entity is not None:
+                return KnowledgeAtom(
+                    **{
+                        **dataclasses.asdict(atom),
+                        "entity_id": entity.entity_id,
+                    }
+                )
+        return atom
+
     def search(
         self,
         *,
@@ -341,7 +403,8 @@ class KnowledgeService:
         )
 
     def document_count(self, project_key: str) -> int:
-        return self._index.count_knowledge_documents(project_key)
+        del project_key
+        return self._index.count_all_knowledge_documents()
 
     def list_documents(self, project_key: str) -> list[dict[str, object]]:
         return self._index.list_knowledge_documents(project_key)
@@ -357,6 +420,50 @@ class KnowledgeService:
         return self._index.delete_knowledge_document(
             project_key=project_key, document_id=document_id
         )
+
+    # ------------------------------------------------------------------
+    # 硬件实体（跨文档聚合同一硬件）
+    # ------------------------------------------------------------------
+
+    def register_entity(self, *, entity: object, replace: bool = False) -> bool:
+        """注册硬件实体；已存在且 replace=False 拒绝（防误覆盖）。"""
+        return self._index.register_entity(entity=entity, replace=replace)
+
+    def list_entities(self) -> list[object]:
+        return self._index.list_entities()
+
+    def find_entity(self, name: str) -> object | None:
+        return self._index.find_entity(name)
+
+    def device_tree(self, device: object) -> list[object]:
+        return self._index.device_tree(device)
+
+    def search_by_entity(
+        self,
+        *,
+        entity_ids: set[str],
+        limit: int = 50,
+    ) -> list[KnowledgeMatch]:
+        """按实体聚合检索：返回归属这些实体的全部原子（不依赖向量）。"""
+        return self._index.search_by_entity(
+            entity_ids=entity_ids, limit=limit
+        )
+
+    def device_knowledge(
+        self,
+        device: object,
+        limit: int = 100,
+    ) -> list[KnowledgeMatch]:
+        """设备完整知识：device 实体 + 其 chip 链上所有实体的原子聚合。"""
+        tree = self._index.device_tree(device)
+        return self.search_by_entity(
+            entity_ids={item.entity_id for item in tree},
+            limit=limit,
+        )
+
+    def entity_candidates(self) -> list[dict[str, object]]:
+        """扫描已入库原子，返回描述同一硬件的文档组候选（供 agent 提议）。"""
+        return self._index.entity_candidates()
 
     def ingest_pdf(
         self,
@@ -402,13 +509,16 @@ class KnowledgeService:
             from luxar.knowledge_extraction import SemanticKnowledgeAtomExtractor
 
             active_extractor = SemanticKnowledgeAtomExtractor()
-        drafts = active_extractor.extract(
+        extraction = active_extractor.extract(
             title=title,
             source_uri=source_uri,
             batches=batches,
         )
+        drafts = extraction.atoms
+        parameter_drafts = extraction.parameters
+        # 文档 ID 只由来源 URI 决定（全局共享知识库，跨项目去重）。
         document_id = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, f"luxar:{project_key}:{source_uri}")
+            uuid.uuid5(uuid.NAMESPACE_URL, f"luxar:{source_uri}")
         )
         atoms = materialize_knowledge_atoms(
             drafts,
@@ -416,6 +526,13 @@ class KnowledgeService:
             source_uri=source_uri,
             source_title=title.strip() or source_uri,
         )
+        parameter_atoms = materialize_parameter_atoms(
+            parameter_drafts,
+            document_id=document_id,
+            source_uri=source_uri,
+            source_title=title.strip() or source_uri,
+        )
+        all_atoms = atoms + parameter_atoms
         if callable(progress_reporter):
             progress_reporter(PdfReadProgress(
                 "indexing",
@@ -433,7 +550,7 @@ class KnowledgeService:
             project_key=project_key,
             source_uri=source_uri,
             title=title,
-            atoms=atoms,
+            atoms=all_atoms,
             content_hash=content_hash,
             metadata={
                 "media_type": "application/pdf",
@@ -441,6 +558,7 @@ class KnowledgeService:
                 "total_pages": total_pages,
                 "extraction_sections": len(batches),
                 "segmentation": "chapter",
+                "parameter_atoms": len(parameter_atoms),
             },
         )
 
@@ -469,7 +587,7 @@ class KnowledgeService:
             total_pages,
             len(batches),
             [document],
-            len(atoms),
+            len(all_atoms),
         )
 
 

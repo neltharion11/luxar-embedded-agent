@@ -147,7 +147,10 @@ def test_fake_workspace_records_reads_and_applied_repairs() -> None:
     returned_files = workspace.read_project_files(project_path)
     changed_files = workspace.apply_repair(project_path, repair)
 
-    assert returned_files == files
+    # FakeWorkspace 与真实 LocalWorkspace 语义对齐：构造时自动填充每文件 sha256
+    assert [f.path for f in returned_files] == [f.path for f in files]
+    assert [f.content for f in returned_files] == [f.content for f in files]
+    assert returned_files[0].sha256  # 已按内容计算
     assert returned_files is not workspace.files
     assert changed_files == ["main/main.c"]
     assert workspace.read_calls == [project_path]

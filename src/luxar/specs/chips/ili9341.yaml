@@ -1,0 +1,65 @@
+# LUXAR 芯片 Skill 规格：ILI9341（2.2/2.4寸 TFT，240x320）
+# 逐行式(row) + MSB 位序（沿数据手册惯例），**未真机验证**，保持 unverified。
+schema: luxar/chip-skill/2
+controller: ili9341
+aliases: []
+family: ili93xx
+facts:
+  vendor: Ilitek
+  interfaces:
+  - spi
+  - '8080'
+  default_address: ''
+  resolutions:
+  - - 240
+    - 320
+  memory_layout: row
+  sources:
+  - kind: library
+    name: Adafruit_ILI9341
+    ref: Adafruit_ILI9341.cpp
+    confidence: high
+    note: 逐行式布局；位序 MSB
+  - kind: pdf
+    name: ILI9341 datasheet
+    ref: ILI9341_DS_V1.10.pdf
+    confidence: medium
+spec:
+  init:
+  - cmd: '0x01'
+  - cmd: '0x11'
+  - cmd: '0x29'
+  driver_template: ili9341_spi
+diagnostics:
+- id: corners_bbox
+  description: 四角实心方块 + 横线探针：确认逐行式布局与位序
+  draw: '实心方块 (0,0) 与 (232,312)；横线 row=0 全列 0x80
+
+    '
+  probes:
+  - kind: block
+    x: 0
+    y: 0
+    w: 8
+    h: 8
+  - kind: block
+    x: 232
+    y: 312
+    w: 8
+    h: 8
+  - kind: hline
+    row: 0
+    mask: '0x80'
+  expect: 位7=行首(MSB) 时 0x80 横线出现在行内最左像素；位0=行首(LSB) 时最右像素
+verified: unverified
+verification: []
+display:
+  layout:
+    scan: row
+    bit_order: msb
+    invert: false
+  screen:
+    width: 240
+    height: 320
+  column_offset: 0
+  display_options: {}

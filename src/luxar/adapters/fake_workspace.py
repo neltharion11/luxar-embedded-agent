@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Sequence
 
 from luxar.domain.repairs import ProjectFile, RepairPlan
+
+
+def _content_hash(content: str) -> str:
+    """与真实 LocalWorkspace 的语义对齐：对文件内容做 SHA-256（小写 hex）。"""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class FakeWorkspace:
@@ -16,7 +22,14 @@ class FakeWorkspace:
         files: Sequence[ProjectFile],
     ) -> None:
         # Sequence 允许 list/tuple 等输入；内部复制后由 Fake 自己管理。
-        self.files = list(files)
+        self.files = [
+            ProjectFile(
+                path=item.path,
+                content=item.content,
+                sha256=item.sha256 or _content_hash(item.content),
+            )
+            for item in files
+        ]
         self.read_calls: list[Path] = []
         self.apply_calls: list[tuple[Path, RepairPlan]] = []
 
@@ -45,11 +58,12 @@ class FakeWorkspace:
             ProjectFile(
                 path=item.path,
                 content=replacements.get(item.path, item.content),
+                sha256=_content_hash(replacements.get(item.path, item.content)),
             )
             for item in self.files
         ]
         self.files.extend(
-            ProjectFile(path=path, content=content)
+            ProjectFile(path=path, content=content, sha256=_content_hash(content))
             for path, content in replacements.items()
             if path not in existing_paths
         )

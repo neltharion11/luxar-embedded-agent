@@ -132,6 +132,46 @@ def test_conversation_snapshot_exposes_recoverable_active_run(
     assert active["pending_approval"]["title"] == "烧录审批"
 
 
+def test_conversation_snapshot_preserves_failed_stream_without_history(
+    tmp_path: Path,
+) -> None:
+    make_project(tmp_path)
+    persistence = TransientPersistence()
+    persistence.start_conversation_stream(
+        thread_id="stream-failed",
+        task_key="0:blink",
+        user_message="检索 OLED 资料并编写驱动",
+    )
+    persistence.append_conversation_stream_event(
+        "stream-failed",
+        event="commentary",
+        data={"commentary_id": "c1", "token": "已完成资料检索。"},
+    )
+    persistence.append_conversation_stream_event(
+        "stream-failed",
+        event="error",
+        data={"category": "recovery", "message": "审批恢复失败"},
+    )
+    persistence.append_conversation_stream_event(
+        "stream-failed", event="done", data="[DONE]"
+    )
+    persistence.finish_conversation_stream("stream-failed", status="failed")
+
+    client = TestClient(
+        create_app(projects_roots=[tmp_path], persistence=persistence)
+    )
+
+    response = client.get("/api/conversations/blink")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_run"] is None
+    assert payload["messages"] == [
+        {"role": "user", "content": "检索 OLED 资料并编写驱动"},
+        {"role": "assistant", "content": "已完成资料检索。"},
+    ]
+
+
 def test_conversation_stream_replay_uses_sse_event_ids(
     tmp_path: Path,
 ) -> None:
@@ -205,6 +245,8 @@ def test_dashboard_model_config_supports_openai_local_and_secret_masking(
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-test",
             "timeout_seconds": 60.0,
+            "thinking_enabled": True,
+            "thinking_effort": "low",
             "context_window_tokens": 262144,
         },
         "vision_mode": "separate",
@@ -235,6 +277,8 @@ def test_dashboard_model_config_supports_openai_local_and_secret_masking(
     assert saved.json()["vision"]["provider"] == "local"
     assert saved.json()["conversation"]["api_key_configured"] is True
     assert saved.json()["conversation"]["context_window_tokens"] == 262144
+    assert saved.json()["conversation"]["thinking_enabled"] is True
+    assert saved.json()["conversation"]["thinking_effort"] == "low"
     assert saved.json()["conversation"]["context_compaction_threshold"] == 0.95
     assert saved.json()["embedding"] == {
         "mode": "api",
@@ -2296,6 +2340,9 @@ def test_database_health_reports_sqlite_mode(tmp_path: Path) -> None:
         ),
         "sdk_knowledge_path": str(
             (tmp_path.parent / ".luxar-data" / "sdk-knowledge.lance").resolve()
+        ),
+        "driver_library_path": str(
+            (tmp_path.parent / ".luxar-data" / "driver-library").resolve()
         ),
     }
     audit = audit_response.json()

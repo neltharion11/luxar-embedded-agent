@@ -38,6 +38,7 @@ from luxar.ports.sdk_probe import SdkProbePort
 from luxar.ports.agent_planner import AgentPlannerPort
 from luxar.ports.espidf import EspIdfPort
 from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
+from luxar.ports.driver_library import DriverLibraryPort
 from luxar.ports.workspace import WorkspacePort
 from luxar.ports.verification import (
     ComponentTestPort,
@@ -72,6 +73,7 @@ class SupervisorDecision(BaseModel):
         "answer_user",
         "ask_user",
         "request_approval",
+        "repair_verification",
         "degrade_capability",
         "complete_objective",
         "fail_objective",
@@ -103,6 +105,7 @@ class AgentRuntimeContext:
     firmware_inspector: FirmwareInspectorPort | None = None
     protocol_probe: ProtocolProbePort | None = None
     runtime_scenario_runner: RuntimeScenarioPort | None = None
+    driver_library: DriverLibraryPort | None = None
 
 
 class AgentState(TypedDict, total=False):
@@ -116,6 +119,7 @@ class AgentState(TypedDict, total=False):
     change_set: ChangeSet
     interpretation: ObjectiveInterpretation
     capabilities: list[ProjectCapability]
+    driver_candidates: list[dict[str, object]]
     project_model: ProjectModel
     hardware_report: HardwareValidationReport
     hardware_validated: bool
@@ -134,6 +138,9 @@ class AgentState(TypedDict, total=False):
     schema_errors: list[dict[str, object]]
     verification_plan: VerificationPlan
     verification_runs: dict[str, VerificationRun]
+    verification_repairs: int
+    max_verification_repairs: int
+    repair_outcome: Literal["repair", "degrade"]
     build_evidence: BuildEvidence
     flash_evidence: FlashEvidence
     build_recovery: BuildRecoveryDecision

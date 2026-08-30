@@ -1,0 +1,136 @@
+# LUXAR 芯片 Skill 规格：SH1106（1.3寸 OLED，128x64）
+# schema 见 docs/superpowers/specs/2026-08-29-luxar-chip-skill-spec-schema-design.md
+schema: luxar/chip-skill/2
+controller: sh1106
+aliases: []
+family: ssd13xx
+facts:
+  vendor: 中颖电子 / Sino Wealth
+  interfaces:
+  - i2c
+  - spi
+  - '8080'
+  default_address: '0x3C'
+  resolutions:
+  - - 128
+    - 64
+  - - 132
+    - 64
+  memory_layout: page
+  sources:
+  - kind: library
+    name: u8g2
+    ref: u8x8_d_sh1106_128x64_noname.c
+    confidence: high
+    note: Adafruit/u8g2 均按 pixel = 1 << (y & 7) 绘制：位0=页顶(LSB)
+  - kind: library
+    name: Adafruit_SH1106
+    ref: Adafruit_SH1106.cpp
+    confidence: high
+    note: drawPixel 用 buffer[x + (y/8)*WIDTH] |= 1 << (y%8)
+  - kind: approximation
+    name: ssd1306
+    ref: ''
+    confidence: medium
+    note: SH1106 与 SSD1306 命令集高度相似，但内部 132 列、段偏移 2，切勿照搬列地址
+spec:
+  init:
+  - cmd: '0xAE'
+  - cmd: '0xD5'
+    args:
+    - '0x80'
+  - cmd: '0xA8'
+    args:
+    - '0x3F'
+  - cmd: '0xD3'
+    args:
+    - '0x00'
+  - cmd: '0x40'
+  - cmd: '0xDA'
+    args:
+    - '0x12'
+  - cmd: '0x81'
+    args:
+    - '0xFF'
+  - cmd: '0xD9'
+    args:
+    - '0xF1'
+  - cmd: '0xDB'
+    args:
+    - '0x40'
+  - cmd: '0xA4'
+  - cmd: '0xA6'
+  - cmd: '0xAF'
+  driver_template: sh1106_i2c
+diagnostics:
+- id: corners_bbox
+  description: 四角实心方块 + 竖线/横线探针：一次烧录同时确认位序、页序、镜像、列偏移
+  draw: '实心方块 (0,0) 与 (120,56)（8x8）；竖线 col=10 整页；横线 page=0 全列 0x80
+
+    '
+  probes:
+  - kind: block
+    x: 0
+    y: 0
+    w: 8
+    h: 8
+  - kind: block
+    x: 120
+    y: 56
+    w: 8
+    h: 8
+  - kind: vline
+    col: 10
+    byte: '0x80'
+  - kind: hline
+    page: 0
+    mask: '0x80'
+  expect: '位0=页顶(LSB) 时 0x80 竖线/横线出现在页内最上一行；位7=页顶(MSB) 时
+
+    出现在最下一行。方块位置正确 + 探针在方块右/下方 => 位序正确（oled9 实测）。
+
+    '
+- id: segment_probe
+  description: 判别列偏移：col=0 画竖线，确认 SH1106 段偏移 2 的生效方式
+  draw: col=0 整页竖线；若显示在屏内第 2 列起始，说明列地址需 +2
+  probes:
+  - kind: vline
+    col: 0
+    byte: '0xFF'
+  expect: 首列可见 => 偏移 0；首 2 列空白 => 偏移 2
+verified: candidate
+verification:
+- level: L3
+  date: '2026-08-29'
+  project: oled9
+  task: 四角 A/B/C/D + helloworld + 你好世界
+  pattern: corners_bbox
+  result: pass
+  user_confirmed: true
+  evidence: 'oled9 取模参数 controller=sh1106 bit_order=lsb；第一版 diag（0x80 探针）
+
+    反馈"竖线在方块右边、横线在方块下方"推断位0=页顶；改 LSB 后用户确认
+
+    A/B/C/D + helloworld + 你好世界 显示完美。
+
+    '
+  hardware: ESP32-D0WD-V3, 1.3寸 SH1106 128x64 I2C 0x3C, SDA=21 SCL=22
+- level: L2
+  date: '2026-08-29'
+  project: oled9
+  task: 四角 A/B/C/D + helloworld + 你好世界
+  result: pass
+  evidence: 设备 FONT_CHECK 与 display.verify 重建帧 CRC 一致（match=True）
+  hardware: ESP32-D0WD-V3, 1.3寸 SH1106 128x64 I2C 0x3C
+display:
+  layout:
+    scan: column
+    bit_order: lsb
+    invert: false
+  screen:
+    width: 128
+    height: 64
+  column_offset: 2
+  display_options:
+    seg_remap: true
+    com_scan_remap: true

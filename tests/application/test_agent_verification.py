@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from luxar.application.agent_graph import build_agent_graph
@@ -7,7 +8,11 @@ from luxar.application.agent_state import AgentRuntimeContext
 from luxar.domain.agent.changes import CapabilityChange, ChangeSet
 from luxar.domain.agent.objectives import ProjectObjective
 from luxar.domain.agent.project_inspector import ProjectModelExtractor
-from luxar.domain.agent.code_changes import ChangeBundleValidation
+from luxar.domain.agent.code_changes import (
+    ChangeBundle,
+    ChangeBundleValidation,
+    FileChange,
+)
 from luxar.domain.agent.runtime_verification import (
     ProtocolProbeEvidence,
     ProtocolProbeSpec,
@@ -889,8 +894,9 @@ def test_source_build_failure_is_reflected_into_code_repair_before_retry() -> No
             files,
             build_evidence=None,
             failure_feedback=None,
+            reuse_candidates=None,
         ):
-            del objective, project_model, files
+            del objective, project_model, files, reuse_candidates
             self.calls += 1
             self.feedback = list(failure_feedback or [])
             self.build_evidence = build_evidence
@@ -951,3 +957,263 @@ def test_source_build_failure_is_reflected_into_code_repair_before_retry() -> No
         if task.task_id == code_task.task_id
     )
     assert repaired_task.attempts == 2
+
+
+_OLED_CMAKE = (
+    'idf_component_register(SRCS "pdf1.c"\n'
+    '                    INCLUDE_DIRS ".")\n'
+)
+_OLED_SOURCE = (
+    "#include \"driver/i2c.h\"\n"
+    "void app_main(void) {\n"
+    "    i2c_config_t conf = {0};\n"
+    "    i2c_master_start(NULL);\n"
+    "}\n"
+)
+_OLED_ASSERTION = DeviceLogAssertion(
+    assertion_id="oled-displayed",
+    operator="contains",
+    pattern="Displayed helloworld",
+    description="设备日志出现显示成功标志",
+)
+
+
+def _oled_verification_state() -> tuple[dict[str, object], str, str]:
+    """构造 pdf1 场景：构建依赖修复 + preserve I2C，代码任务已有变更包。"""
+
+    project_files = [
+        ProjectFile(path="main/pdf1.c", content=_OLED_SOURCE),
+        ProjectFile(path="main/CMakeLists.txt", content=_OLED_CMAKE),
+    ]
+    model = ProjectModelExtractor().extract(project_files)
+    i2c_capability = next(
+        capability
+        for capability in model.capabilities
+        if capability.capability_id == "bus.i2c"
+    )
+    assert "main/pdf1.c" in i2c_capability.source_paths
+    objective = ProjectObjective(
+        objective_id="oled-helloworld",
+        title="OLED 显示 helloworld",
+        description="修复构建并验证 OLED 显示",
+        acceptance_criteria=["OLED 显示 helloworld 需实际验证"],
+    )
+    change_set = ChangeSet(
+        changes=[
+            CapabilityChange(
+                operation="modify",
+                capability_id="build.main_dependencies",
+                desired_state={"dependencies": ["ssd1306", "driver"]},
+                rationale="修复构建依赖",
+            ),
+            CapabilityChange(
+                operation="preserve",
+                capability_id="bus.i2c",
+            ),
+        ]
+    )
+    plan = VerificationPlan(
+        require_build=True,
+        require_device=True,
+        device_assertions=[_OLED_ASSERTION],
+    )
+    graph = build_task_graph(
+        objective,
+        change_set,
+        allowed_paths_by_capability={
+            "build.main_dependencies": ["main/CMakeLists.txt"]
+        },
+        verification_plan=plan,
+    )
+    for task in graph.tasks:
+        if task.kind in {"inspect_project", "architecture_plan"}:
+            graph = graph.update_task(task.task_id, status="passed", attempts=1)
+    code_task = next(task for task in graph.tasks if task.kind == "code_change")
+    verify_task = next(
+        task for task in graph.tasks if task.kind == "verify_acceptance"
+    )
+    fixed_cmake = _OLED_CMAKE.replace(
+        'INCLUDE_DIRS ".")',
+        'INCLUDE_DIRS "."\n                    REQUIRES ssd1306 driver)',
+    )
+    bundle = ChangeBundle(
+        bundle_id="bundle-cmake-fix",
+        task_id=code_task.task_id,
+        description="添加 driver 依赖修复构建",
+        allowed_paths=["main/CMakeLists.txt"],
+        preserves=["bus.i2c"],
+        changes=[
+            FileChange(
+                operation="modify",
+                path="main/CMakeLists.txt",
+                content=fixed_cmake,
+                expected_sha256=hashlib.sha256(
+                    _OLED_CMAKE.encode("utf-8")
+                ).hexdigest(),
+            )
+        ],
+    )
+    state: dict[str, object] = {
+        "objective": objective,
+        "change_set": change_set,
+        "capabilities": list(model.capabilities),
+        "project_files": project_files,
+        "project_model": model,
+        "hardware_report": model.hardware_report,
+        "inspection_complete": True,
+        "hardware_validated": True,
+        "task_graph": graph,
+        "verification_plan": plan,
+        "change_bundles": {code_task.task_id: bundle},
+        "evidence_ids": [
+            f"task:{task.task_id}"
+            for task in graph.tasks
+            if task.kind in {"inspect_project", "architecture_plan"}
+        ],
+        "trace": [],
+        "max_steps": 40,
+    }
+    return state, code_task.task_id, verify_task.task_id
+
+
+class _ScopedRepairEngineer:
+    def __init__(self, repaired_source: str) -> None:
+        self.repaired_source = repaired_source
+        self.calls = 0
+        self.feedback: list[str] = []
+        self.seen_allowed_paths: list[str] = []
+
+    def create_bundle(
+        self,
+        objective,
+        task,
+        project_model,
+        files,
+        build_evidence=None,
+        failure_feedback=None,
+        reuse_candidates=None,
+    ):
+        del objective, project_model, files, build_evidence, reuse_candidates
+        self.calls += 1
+        self.feedback = list(failure_feedback or [])
+        self.seen_allowed_paths = list(task.allowed_paths)
+        return {
+            "bundle_id": f"bundle-oled-repair-{self.calls}",
+            "task_id": task.task_id,
+            "description": "修复 OLED 初始化地址",
+            "allowed_paths": list(task.allowed_paths),
+            "preserves": ["bus.i2c"],
+            "changes": [
+                {
+                    "operation": "modify",
+                    "path": "main/pdf1.c",
+                    "content": self.repaired_source,
+                    "expected_sha256": hashlib.sha256(
+                        _OLED_SOURCE.encode("utf-8")
+                    ).hexdigest(),
+                }
+            ],
+        }
+
+
+class _AcceptingExecutor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute(self, project_path: Path, bundle) -> ChangeBundleValidation:
+        del project_path
+        self.calls += 1
+        return ChangeBundleValidation(
+            before_fingerprint="a" * 64,
+            after_fingerprint="b" * 64,
+            changed_files=[change.path for change in bundle.changes],
+            diff_summary=[
+                f"{change.operation}: {change.path}"
+                for change in bundle.changes
+            ],
+        )
+
+
+def test_device_log_failure_triggers_capability_scoped_repair_and_completes() -> None:
+    """设备验证失败后，允许路径扩大到能力实现文件，修复并重新验证直至完成。"""
+
+    state, code_task_id, _ = _oled_verification_state()
+    failing = _monitor_evidence(
+        "boot ok\nOLED init failed: ESP_FAIL",
+        diagnostics=[
+            DeviceLogDiagnostic(kind="error", summary="OLED init failed")
+        ],
+    )
+    healthy = _monitor_evidence("boot ok\nDisplayed helloworld")
+    monitor = _Monitor([failing, failing, healthy])
+    builder = _Builder()
+    engineer = _ScopedRepairEngineer(
+        _OLED_SOURCE.replace("i2c_master_start(NULL);", "i2c_master_start(NULL);\n    (void)0;")
+    )
+    executor = _AcceptingExecutor()
+
+    result = build_agent_graph().invoke(
+        state,
+        context=AgentRuntimeContext(
+            project_path=Path("F:/LUXAR"),
+            build_executor=builder,
+            monitor=monitor,
+            serial_port="COM3",
+            code_engineer=engineer,
+            code_executor=executor,
+        ),
+    )
+
+    assert result["status"] == "completed"
+    assert result["acceptance_passed"] is True
+    assert result["hardware_function_verified"] is True
+    assert result["verification_repairs"] == 1
+    assert engineer.calls == 1
+    assert "OLED init failed" in "\n".join(engineer.feedback)
+    assert "main/pdf1.c" in engineer.seen_allowed_paths
+    assert "main/CMakeLists.txt" in engineer.seen_allowed_paths
+    repaired_task = next(
+        task
+        for task in result["task_graph"].tasks
+        if task.task_id == code_task_id
+    )
+    assert "main/pdf1.c" in repaired_task.allowed_paths
+
+
+def test_repeated_device_failure_stops_after_repair_budget() -> None:
+    """修复预算耗尽后停止，避免无上限的烧录-验证循环。"""
+
+    state, code_task_id, _ = _oled_verification_state()
+    failing = _monitor_evidence(
+        "boot ok\nOLED init failed: ESP_FAIL",
+        diagnostics=[
+            DeviceLogDiagnostic(kind="error", summary="OLED init failed")
+        ],
+    )
+    monitor = _Monitor([failing])
+    builder = _Builder()
+    engineer = _ScopedRepairEngineer(_OLED_SOURCE)
+    executor = _AcceptingExecutor()
+
+    result = build_agent_graph().invoke(
+        state,
+        context=AgentRuntimeContext(
+            project_path=Path("F:/LUXAR"),
+            build_executor=builder,
+            monitor=monitor,
+            serial_port="COM3",
+            code_engineer=engineer,
+            code_executor=executor,
+        ),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["verification_repairs"] == 2
+    assert engineer.calls == 2
+    assert result["hardware_function_verified"] is False
+    verify_task = next(
+        task
+        for task in result["task_graph"].tasks
+        if task.kind == "verify_acceptance"
+    )
+    assert verify_task.status == "blocked"

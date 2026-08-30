@@ -219,11 +219,14 @@ def test_supervisor_requests_missing_bundle_from_code_engineer(tmp_path) -> None
             project_files,
             build_evidence=None,
             failure_feedback=None,
+            reuse_candidates=None,
         ):
-            del build_evidence, failure_feedback
+            del build_evidence, failure_feedback, reuse_candidates
             self.calls += 1
             assert task.task_id == code_task.task_id
-            assert project_files == files
+            # FakeWorkspace 会为每个文件填充 sha256；这里只比较 path/content
+            assert [f.path for f in project_files] == [f.path for f in files]
+            assert [f.content for f in project_files] == [f.content for f in files]
             return {
                 "bundle_id": "generated-bundle",
                 "task_id": task.task_id,

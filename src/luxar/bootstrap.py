@@ -46,6 +46,7 @@ from luxar.knowledge import KnowledgeService, ProjectContextProvider
 from luxar.sdk_knowledge import SdkExampleKnowledgeBase
 from luxar.ports.espidf import EspIdfPort
 from luxar.ports.espidf_device import EspIdfFlashPort, EspIdfMonitorPort
+from luxar.ports.driver_library import DriverLibraryPort
 from luxar.ports.espidf_project import EspIdfProjectPort
 from luxar.ports.log_analyst import LogAnalystPort
 from luxar.ports.workspace import WorkspacePort
@@ -80,6 +81,7 @@ def build_deepseek_agent_runtime_context(
     firmware_inspector: FirmwareInspectorPort | None = None,
     protocol_probe: ProtocolProbePort | None = None,
     runtime_scenario_runner: RuntimeScenarioPort | None = None,
+    driver_library: DriverLibraryPort | None = None,
 ) -> AgentRuntimeContext:
     """Compose the production Supervisor execution and Code Engineer ports."""
 
@@ -145,6 +147,7 @@ def build_deepseek_agent_runtime_context(
         firmware_inspector=firmware_inspector,
         protocol_probe=protocol_probe,
         runtime_scenario_runner=runtime_scenario_runner,
+        driver_library=driver_library,
     )
 
 

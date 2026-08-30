@@ -123,6 +123,17 @@ def test_transient_repository_has_same_conversation_and_approval_contract() -> N
         {"role": "assistant", "content": "completed"},
     ]
 
+    repository.append_exchange(
+        "0:blink",
+        thread_id="t1",
+        user_message="flash",
+        assistant_message="completed after retry",
+    )
+    assert repository.get_messages("0:blink") == [
+        {"role": "user", "content": "flash"},
+        {"role": "assistant", "content": "completed after retry"},
+    ]
+
     record = PendingApprovalRecord(
         task_key="0:blink",
         project_name="blink",

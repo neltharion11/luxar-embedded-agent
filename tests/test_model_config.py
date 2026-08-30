@@ -29,6 +29,7 @@ def test_model_config_store_persists_secret_but_never_exposes_it(tmp_path: Path)
     assert public["conversation"]["api_key_configured"] is True  # type: ignore[index]
     assert public["conversation"]["context_window_tokens"] == 128_000  # type: ignore[index]
     assert public["conversation"]["context_compaction_threshold"] == 0.95  # type: ignore[index]
+    assert public["conversation"]["thinking_enabled"] is False  # type: ignore[index]
     assert public["embedding"]["mode"] == "local_hash"  # type: ignore[index]
     assert public["embedding"]["configured"] is True  # type: ignore[index]
 

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import hashlib
+
 from langgraph.checkpoint.memory import InMemorySaver
 
 from luxar.adapters.fake_espidf import FakeEspIdf
@@ -18,6 +20,11 @@ from luxar.domain.plans import ExecutionPlan, PlanStep
 from luxar.domain.projects import ProjectEvidence
 from luxar.domain.repairs import FileReplacement, ProjectFile, RepairPlan
 from luxar.domain.requirements import FirmwareRequirement
+
+
+def _content_hash(content: str) -> str:
+    """与 fake_workspace/真实 Workspace 同一字节基准的 SHA-256（小写 hex）。"""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def make_fixture(
@@ -158,7 +165,13 @@ def test_source_failure_is_repaired_rebuilt_and_completed() -> None:
             requirement,
             plan,
             failed,
-            [ProjectFile(path="main/main.c", content="broken source")],
+            [
+                ProjectFile(
+                    path="main/main.c",
+                    content="broken source",
+                    sha256=_content_hash("broken source"),
+                )
+            ],
             None,
         )
     ]

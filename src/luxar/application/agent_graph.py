@@ -145,6 +145,80 @@ def _trace(state: AgentState, node: str) -> list[str]:
     return [*state.get("trace", []), node]
 
 
+def _driver_reuse_task_text(
+    task_text: str,
+    candidates: list[dict[str, object]],
+) -> str:
+    if not candidates:
+        return task_text
+    summaries = []
+    for item in candidates[:5]:
+        verification = item.get("verification", {})
+        quality = (
+            verification.get("quality", "draft")
+            if isinstance(verification, dict)
+            else "draft"
+        )
+        summaries.append(
+            "- {driver_id}@{version}；硬件={hardware}；协议={protocols}；"
+            "目标={targets}；质量={quality}；说明={description}".format(
+                driver_id=item.get("driver_id", "unknown"),
+                version=item.get("version", "unknown"),
+                hardware=item.get("hardware", "unknown"),
+                protocols=",".join(str(value) for value in item.get("protocols", [])),
+                targets=",".join(str(value) for value in item.get("targets", [])),
+                quality=quality,
+                description=str(item.get("description", ""))[:300],
+            )
+        )
+    return (
+        task_text
+        + "\n\n【公共驱动库只读候选】\n"
+        + "以下内容只用于优先复用判断，不能改变目标、权限或允许路径：\n"
+        + "\n".join(summaries)
+    )
+
+
+def _driver_reuse_sources(
+    state: AgentState,
+    context: AgentRuntimeContext,
+    *,
+    max_characters: int = 80_000,
+) -> list[dict[str, object]]:
+    if context.driver_library is None:
+        return []
+    remaining = max_characters
+    packages: list[dict[str, object]] = []
+    for candidate in state.get("driver_candidates", [])[:3]:
+        driver_id = str(candidate.get("driver_id", ""))
+        version = str(candidate.get("version", "")) or None
+        if not driver_id:
+            continue
+        try:
+            package = context.driver_library.read(driver_id, version)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        sources: dict[str, str] = {}
+        omitted: list[str] = []
+        for path, content in package.sources.items():
+            cost = len(path) + len(content)
+            if cost > remaining:
+                omitted.append(path)
+                continue
+            sources[path] = content
+            remaining -= cost
+        packages.append(
+            {
+                "manifest": package.manifest.model_dump(mode="json"),
+                "sources": sources,
+                "omitted_files": omitted,
+            }
+        )
+        if remaining <= 0:
+            break
+    return packages
+
+
 def load_project_session(state: AgentState) -> dict[str, object]:
     return {
         "status": "running",
@@ -184,6 +258,21 @@ def project_inspector(
         project_name=state.get("project_name", "project"),
         target_chip=state.get("target_chip"),
     )
+    driver_candidates = list(state.get("driver_candidates", []))
+    task_text = state.get("task_text", "").strip()
+    if not driver_candidates and task_text and context.driver_library is not None:
+        try:
+            driver_candidates = [
+                item.model_dump(mode="json")
+                for item in context.driver_library.search(
+                    query=task_text,
+                    target_chip=project_model.target_chip or "",
+                    limit=5,
+                )
+            ]
+        except (OSError, RuntimeError, ValueError):
+            # 公共库是复用优化；读取失败不能阻塞从零实现和既有验证链。
+            driver_candidates = []
     # 允许调用方带入用户或资料事实；同 ID 的源码事实优先保留，避免重复。
     existing = [
         item
@@ -199,7 +288,6 @@ def project_inspector(
     current_objective = state.get("objective")
     if isinstance(current_objective, dict):
         current_objective = ProjectObjective.model_validate(current_objective)
-    task_text = state.get("task_text", "").strip()
     if state.get("workflow_action") == "flash":
         current_objective = ProjectObjective(
             objective_id=f"workflow:flash:{state.get('source_message_id', 'user')}",
@@ -256,7 +344,7 @@ def project_inspector(
         ):
             try:
                 interpretation = context.objective_planner.interpret_goal(
-                    task_text,
+                    _driver_reuse_task_text(task_text, driver_candidates),
                     project_model,
                     current_objective,
                 )
@@ -269,6 +357,7 @@ def project_inspector(
                 )
     update: dict[str, object] = {
         "capabilities": merged_capabilities,
+        "driver_candidates": driver_candidates,
         "project_model": project_model,
         "hardware_report": project_model.hardware_report,
         "hardware_validated": False,
@@ -454,6 +543,130 @@ def _code_task_for_build_repair(
     if scoped:
         return scoped[-1]
     return candidates[-1] if candidates else None
+
+
+def _verify_failure_is_semantic(state: AgentState, task_id: str) -> bool:
+    """验证任务的最近一次失败是否属于行为不符（语义失败）。
+
+    语义失败（源码断言、组件测试、设备日志、协议、运行场景）可能由实现
+    缺陷导致，代码修复有意义；执行失败（工具/配置缺失）修复代码无济于事，
+    应直接降级而不是进入修复环。
+    """
+
+    for record in reversed(state.get("failure_history", [])):
+        if record.task_id == task_id:
+            return record.category == "semantic"
+    return False
+
+
+def _involved_capability_paths(state: AgentState) -> list[str]:
+    """验证失败后的修复范围：变更集中涉及能力（含 preserve）的实现文件。
+
+    修复必须局限在目标能力的实现面内，不能扩大到无关文件；能力是否仍然
+    存在由 preserve 校验兜底。返回项目相对路径的确定性子集。
+    """
+
+    raw_change_set = state.get("change_set")
+    if raw_change_set is None:
+        return []
+    change_set = (
+        raw_change_set
+        if isinstance(raw_change_set, ChangeSet)
+        else ChangeSet.model_validate(raw_change_set)
+    )
+    involved = {change.capability_id for change in change_set.changes}
+    paths: set[str] = set()
+    for raw_capability in state.get("capabilities", []):
+        capability = (
+            raw_capability
+            if isinstance(raw_capability, ProjectCapability)
+            else ProjectCapability.model_validate(raw_capability)
+        )
+        if capability.capability_id in involved:
+            paths.update(capability.source_paths)
+    return sorted(paths)
+
+
+def _verification_failure_feedback(
+    run: VerificationRun | None,
+    verify_task_id: str,
+) -> list[str]:
+    """把验证失败证据转成 Code Engineer 可消费的确定性修复反馈。"""
+
+    if run is None:
+        return [
+            f"上一轮验证任务 {verify_task_id} 失败，需在能力实现文件范围内修复"
+            "实现后再验证；不要原样重复上一变更。"
+        ]
+    lines = [
+        f"上一轮验证任务 {verify_task_id} 未通过验收，设备行为与目标不符；"
+        "请在能力实现文件范围内做最小修复，不要原样重复上一变更。"
+    ]
+    for result in run.source_results:
+        if not result.passed:
+            lines.append(f"源码断言未通过 [{result.assertion_id}]: {result.summary}")
+    for evidence in run.component_test_evidence:
+        if not evidence.success:
+            lines.append(
+                f"组件测试失败 [{evidence.test_id}]: "
+                f"{evidence.output_summary[:300]}"
+            )
+    for result in run.firmware_results:
+        if not result.passed:
+            lines.append(f"固件指标未通过 [{result.assertion_id}]: {result.summary}")
+    for result in run.device_results:
+        if not result.passed:
+            lines.append(f"设备日志断言未通过 [{result.assertion_id}]: {result.summary}")
+    for result in run.protocol_results:
+        if not result.passed:
+            lines.append(f"协议探测未通过 [{result.check_id}]: {result.summary}")
+    for result in run.runtime_results:
+        if not result.passed:
+            lines.append(f"运行场景未通过 [{result.check_id}]: {result.summary}")
+    monitor = run.monitor_evidence
+    if monitor is not None and getattr(monitor, "captured_log", ""):
+        lines.append("最近设备日志（尾部）:\n" + monitor.captured_log[-2000:])
+    return lines
+
+
+def _stale_verification_evidence(
+    state: AgentState,
+    run: VerificationRun | None,
+    code_task_id: str,
+    verify_task_id: str,
+) -> set[str]:
+    """修复后需要作废的证据 ID，避免旧证据继续满足验收条件。"""
+
+    stale = {
+        f"task:{code_task_id}",
+        f"task:{verify_task_id}",
+        f"device:{verify_task_id}",
+        f"monitor:{verify_task_id}",
+        f"build:{verify_task_id}",
+        f"flash:{verify_task_id}",
+    }
+    if run is not None:
+        stale.update(
+            result.evidence_id
+            for result in [
+                *run.source_results,
+                *run.firmware_results,
+                *run.device_results,
+                *run.protocol_results,
+                *run.runtime_results,
+            ]
+            if result.evidence_id is not None
+        )
+        stale.update(
+            f"component-test:{evidence.test_id}"
+            for evidence in run.component_test_evidence
+        )
+    previous_bundle = state.get("change_bundles", {}).get(code_task_id)
+    if isinstance(previous_bundle, ChangeBundle):
+        stale.add(f"bundle:{previous_bundle.bundle_id}")
+    elif isinstance(previous_bundle, dict) and previous_bundle.get("bundle_id"):
+        stale.add(f"bundle:{previous_bundle['bundle_id']}")
+    return stale
 
 
 def _execute_verification_task(
@@ -1670,6 +1883,7 @@ def task_executor(
                     failure_feedback=list(
                         state.get("task_feedback", {}).get(task.task_id, [])
                     ),
+                    reuse_candidates=_driver_reuse_sources(state, context),
                 )
             except CapabilityError as error:
                 category = (
@@ -1969,13 +2183,22 @@ def supervisor(state: AgentState) -> dict[str, object]:
         rationale = "已有项目能力和目标，生成分层任务图"
         required_inputs = ["objective", "change_set", "capabilities"]
     elif graph.has_blocking_task:
-        action = "degrade_capability"
-        rationale = "当前任务无法安全继续，保留项目状态并降级该能力"
-        target_id = next(
-            task.task_id
+        blocking = next(
+            task
             for task in graph.tasks
             if task.status in {"blocked", "failed"}
         )
+        if (
+            blocking.kind == "verify_acceptance"
+            and _verify_failure_is_semantic(state, blocking.task_id)
+        ):
+            action = "repair_verification"
+            rationale = "验证失败可能与实现缺陷有关，先在能力实现文件范围内修复并重新验证"
+            target_id = blocking.task_id
+        else:
+            action = "degrade_capability"
+            rationale = "当前任务无法安全继续，保留项目状态并降级该能力"
+            target_id = blocking.task_id
     elif state.get("acceptance_passed"):
         action = "complete_objective"
         rationale = "所有强制验收条件均已取得工具证据"
@@ -2034,6 +2257,126 @@ def degrade_capability(state: AgentState) -> dict[str, object]:
     }
 
 
+def verification_repair(
+    state: AgentState,
+    runtime: Runtime[AgentRuntimeContext],
+) -> dict[str, object]:
+    """设备/行为验证失败后的修复环：扩大能力实现范围并重新验证。
+
+    与构建失败的自动修复一致，但作用于行为验证：把已通过代码任务的允许
+    路径扩大到目标能力（含 preserve 能力）的实现文件，带着失败证据重新
+    生成变更并重跑验证。修复预算耗尽或缺少执行器时以 repair_outcome=
+    "degrade" 回落，由调用方路由到终止降级，避免无上限循环。
+    """
+
+    context = runtime.context or AgentRuntimeContext()
+    graph = state["task_graph"]
+    if isinstance(graph, dict):
+        graph = AgentTaskGraph.model_validate(graph)
+    verify_task = next(
+        (
+            task
+            for task in graph.tasks
+            if task.kind == "verify_acceptance"
+            and task.status in {"blocked", "failed"}
+        ),
+        None,
+    )
+    if verify_task is None:
+        return {
+            "repair_outcome": "degrade",
+            "trace": _trace(state, "verification_repair"),
+        }
+    repairs = int(state.get("verification_repairs", 0))
+    max_repairs = int(state.get("max_verification_repairs", 2))
+    if repairs >= max_repairs:
+        return {
+            "repair_outcome": "degrade",
+            "last_error": "设备验证修复预算已耗尽，保留失败证据供人工排查",
+            "trace": _trace(state, "verification_repair"),
+        }
+    code_task = next(
+        (
+            task
+            for task in reversed(graph.tasks)
+            if task.kind == "code_change" and task.status == "passed"
+        ),
+        None,
+    )
+    if code_task is None or context.code_engineer is None or context.code_executor is None:
+        return {
+            "repair_outcome": "degrade",
+            "last_error": "验证修复需要已通过的代码任务和受控代码执行器",
+            "trace": _trace(state, "verification_repair"),
+        }
+
+    repair_paths = _involved_capability_paths(state)
+    widened_paths = sorted(set(code_task.allowed_paths) | set(repair_paths))
+    run_raw = state.get("verification_runs", {}).get(verify_task.task_id)
+    run = (
+        run_raw
+        if isinstance(run_raw, VerificationRun)
+        else VerificationRun.model_validate(run_raw)
+        if run_raw is not None
+        else None
+    )
+    feedback = {
+        task_id: list(items)
+        for task_id, items in state.get("task_feedback", {}).items()
+    }
+    feedback.setdefault(code_task.task_id, []).extend(
+        _verification_failure_feedback(run, verify_task.task_id)
+    )
+    updated = graph.update_task(
+        code_task.task_id,
+        status="pending",
+        allowed_paths=widened_paths,
+    )
+    updated = updated.update_task(
+        verify_task.task_id,
+        status="pending",
+        attempts=0,
+    )
+    bundles = dict(state.get("change_bundles", {}))
+    bundles.pop(code_task.task_id, None)
+    validations = dict(state.get("change_validations", {}))
+    validations.pop(code_task.task_id, None)
+    stale = _stale_verification_evidence(
+        state,
+        run,
+        code_task.task_id,
+        verify_task.task_id,
+    )
+    evidence_ids = [
+        item for item in state.get("evidence_ids", []) if item not in stale
+    ]
+    return {
+        "repair_outcome": "repair",
+        "task_graph": updated,
+        "current_task_id": code_task.task_id,
+        "task_feedback": feedback,
+        "change_bundles": bundles,
+        "change_validations": validations,
+        "evidence_ids": evidence_ids,
+        "verification_repairs": repairs + 1,
+        "last_error": (
+            f"验证失败，已将代码任务允许范围扩大到能力实现文件并安排重新验证；"
+            f"修复范围: {', '.join(widened_paths) or '无新增'}"
+        ),
+        "trace": _trace(state, "verification_repair"),
+    }
+
+
+def route_after_repair(
+    state: AgentState,
+) -> Literal["supervisor", "degrade_capability"]:
+    return (
+        "supervisor"
+        if state.get("repair_outcome") == "repair"
+        else "degrade_capability"
+    )
+
+
 def route_after_supervisor(
     state: AgentState,
 ) -> Literal[
@@ -2046,6 +2389,7 @@ def route_after_supervisor(
     "complete_objective",
     "fail_objective",
     "degrade_capability",
+    "verification_repair",
 ]:
     decision = state["decision"]
     if isinstance(decision, dict):
@@ -2061,6 +2405,7 @@ def route_after_supervisor(
         "complete_objective": "complete_objective",
         "fail_objective": "fail_objective",
         "degrade_capability": "degrade_capability",
+        "repair_verification": "verification_repair",
     }.get(action, "fail_objective")  # type: ignore[return-value]
 
 
@@ -2083,6 +2428,7 @@ def build_agent_graph(
     builder.add_node("complete_objective", complete_objective)
     builder.add_node("fail_objective", fail_objective)
     builder.add_node("degrade_capability", degrade_capability)
+    builder.add_node("verification_repair", verification_repair)
 
     builder.add_edge(START, "load_project_session")
     builder.add_edge("load_project_session", "supervisor")
@@ -2099,6 +2445,7 @@ def build_agent_graph(
             "complete_objective": "complete_objective",
             "fail_objective": "fail_objective",
             "degrade_capability": "degrade_capability",
+            "verification_repair": "verification_repair",
         },
     )
     for worker in (
@@ -2109,6 +2456,14 @@ def build_agent_graph(
         "acceptance_verifier",
     ):
         builder.add_edge(worker, "supervisor")
+    builder.add_conditional_edges(
+        "verification_repair",
+        route_after_repair,
+        {
+            "supervisor": "supervisor",
+            "degrade_capability": "degrade_capability",
+        },
+    )
     builder.add_edge("answer_user", END)
     builder.add_edge("complete_objective", END)
     builder.add_edge("fail_objective", END)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 import time
@@ -25,8 +26,356 @@ from luxar.database.persistence import PendingApprovalRecord, PersistencePort
 from luxar.domain.continuous_agent.events import ConversationEvent
 
 
+_LOGGER = logging.getLogger(__name__)
+
 _WORKER_LOCK = threading.Lock()
 _ACTIVE_WORKERS: set[threading.Thread] = set()
+
+# 跨轮历史注入（对应 DSH deriveMessages 的思路）：持续 Agent 每轮都能看到
+# 之前轮次的 user/assistant 对话；工具调用与结果仍保持 turn 本地，不跨轮泄漏。
+_HISTORY_EVENT_LIMIT = 20
+_HISTORY_CONTENT_CHARACTERS = 2_000
+_RECOVERABLE_STREAM_CONTENT_CHARACTERS = 8_000
+
+
+def _recoverable_stream_content(
+    persistence: PersistencePort,
+    *,
+    thread_id: str,
+) -> str:
+    """从流事件中恢复用户已经看见的文字，避免失败 Turn 变成空历史。"""
+
+    stream = persistence.get_conversation_stream(thread_id)
+    if stream is not None and stream.assistant_content.strip():
+        return stream.assistant_content[-_RECOVERABLE_STREAM_CONTENT_CHARACTERS :]
+
+    commentary: dict[str, str] = {}
+    commentary_order: list[str] = []
+    tokens: list[str] = []
+    for event in persistence.list_conversation_stream_events(
+        thread_id,
+        after_sequence=0,
+        limit=2_000,
+    ):
+        data = event.data
+        if not isinstance(data, dict):
+            continue
+        if event.event == "commentary":
+            group_id = str(
+                data.get("commentary_id")
+                or data.get("conversation_event_id")
+                or event.sequence
+            )
+            if group_id not in commentary:
+                commentary[group_id] = ""
+                commentary_order.append(group_id)
+            commentary[group_id] += str(data.get("token", data.get("content", "")))
+        elif event.event == "token":
+            tokens.append(str(data.get("token", data.get("content", ""))))
+
+    visible_parts = [commentary[item] for item in commentary_order if commentary[item].strip()]
+    if tokens:
+        visible_parts.append("".join(tokens))
+    return "\n\n".join(visible_parts)[-_RECOVERABLE_STREAM_CONTENT_CHARACTERS :]
+
+
+def _failure_assistant_message(
+    persistence: PersistencePort,
+    *,
+    thread_id: str,
+    detail: str,
+) -> str:
+    previous = _recoverable_stream_content(persistence, thread_id=thread_id).strip()
+    suffix = f"任务执行中断：{detail} 已保留此前进展，可以继续说明或重试。"
+    return f"{previous}\n\n{suffix}".strip() if previous else suffix
+
+
+class _ContinuousWorkbenchProjection:
+    """Persist a compact live workbench view for the conversation-first Agent."""
+
+    _OBSERVED_EVENTS = {
+        "turn_status",
+        "phase_changed",
+        "tool_call",
+        "tool_result",
+        "approval",
+        "result",
+        "error",
+        "done",
+    }
+
+    def __init__(
+        self,
+        persistence: PersistencePort,
+        *,
+        project_key: str,
+        thread_id: str,
+        task_text: str,
+    ) -> None:
+        self._persistence = persistence
+        self._project_key = project_key
+        self._thread_id = thread_id
+        self._task_text = task_text
+        self._status = "running"
+        self._current_task_id: str | None = "agent_decision"
+        self._tasks: dict[str, dict[str, object]] = {}
+        self._evidence_ids: list[str] = []
+        self._trace: list[str] = []
+        self._recovery: list[dict[str, object]] = []
+        existing = persistence.get_workbench_snapshot(project_key)
+        if (
+            existing is not None
+            and existing.workflow_family == "continuous_agent"
+            and existing.thread_id == thread_id
+        ):
+            snapshot = existing.snapshot
+            self._status = str(snapshot.get("status", self._status))
+            self._current_task_id = (
+                str(snapshot["current_task_id"])
+                if snapshot.get("current_task_id") is not None
+                else None
+            )
+            self._tasks = {
+                str(item.get("task_id")): dict(item)
+                for item in snapshot.get("tasks", [])
+                if isinstance(item, dict) and item.get("task_id")
+            }
+            self._evidence_ids = [
+                str(item.get("evidence_id"))
+                for item in snapshot.get("evidence", [])
+                if isinstance(item, dict) and item.get("evidence_id")
+            ]
+            self._trace = [str(item) for item in snapshot.get("trace", [])]
+            self._recovery = [
+                dict(item)
+                for item in snapshot.get("recovery", [])
+                if isinstance(item, dict)
+            ]
+
+    def observe(self, event: str, data: dict[str, object] | str) -> None:
+        if event not in self._OBSERVED_EVENTS:
+            return
+        payload = data if isinstance(data, dict) else {}
+        self._trace.append(
+            ":".join(
+                item
+                for item in (
+                    event,
+                    str(payload.get("phase") or payload.get("status") or ""),
+                )
+                if item
+            )
+        )
+        self._trace = self._trace[-80:]
+
+        if event == "turn_status":
+            self._status = str(payload.get("status", self._status))
+        elif event == "phase_changed":
+            phase = str(payload.get("phase", "agent_decision"))
+            self._current_task_id = phase
+        elif event == "tool_call":
+            call_id = str(
+                payload.get("call_id")
+                or payload.get("conversation_event_id")
+                or payload.get("tool_call")
+                or "tool"
+            )
+            tool_name = str(
+                payload.get("tool_name") or payload.get("tool_call") or "工具"
+            )
+            self._tasks[call_id] = {
+                "task_id": call_id,
+                "parent_id": None,
+                "kind": "tool",
+                "title": tool_name,
+                "description": f"执行 {tool_name}",
+                "depends_on": [],
+                "status": "running",
+                "attempts": 1,
+                "max_attempts": 2,
+                "requires_approval": False,
+                "allowed_tools": [tool_name],
+                "acceptance_criteria": [],
+            }
+            self._current_task_id = call_id
+        elif event == "tool_result":
+            call_id = str(payload.get("call_id") or "tool")
+            status = str(payload.get("status", "failed"))
+            task = self._tasks.get(call_id)
+            if task is not None:
+                task["status"] = {
+                    "succeeded": "passed",
+                    "completed": "passed",
+                    "rejected": "blocked",
+                }.get(status, status)
+            for evidence_id in payload.get("evidence_ids", []):
+                evidence = str(evidence_id)
+                if evidence and evidence not in self._evidence_ids:
+                    self._evidence_ids.append(evidence)
+            self._current_task_id = "agent_decision"
+        elif event == "approval":
+            self._status = "awaiting_user"
+        elif event == "result":
+            raw_status = str(payload.get("status", self._status))
+            self._status = {
+                "waiting_approval": "awaiting_user",
+                "waiting_input": "awaiting_user",
+            }.get(raw_status, raw_status)
+            if self._status in {"completed", "failed", "cancelled"}:
+                self._current_task_id = None
+        elif event == "error":
+            self._status = "failed"
+            self._current_task_id = None
+            self._recovery.append(
+                {
+                    "task_id": str(payload.get("call_id") or "agent_decision"),
+                    "category": str(payload.get("category", "internal")),
+                    "message": str(payload.get("message", "任务执行失败")),
+                    "attempt": 1,
+                    "repeated": False,
+                }
+            )
+            self._recovery = self._recovery[-20:]
+        self._save()
+
+    def _save(self) -> None:
+        terminal = self._status in {"completed", "failed", "cancelled"}
+        criterion_status = (
+            "passed"
+            if self._status == "completed"
+            else "failed"
+            if self._status == "failed"
+            else "pending"
+        )
+        root_status = (
+            "passed"
+            if self._status == "completed"
+            else "failed"
+            if self._status == "failed"
+            else "blocked"
+            if self._status in {"awaiting_user", "cancelled"}
+            else "running"
+        )
+        root_task = {
+            "task_id": "continuous_turn",
+            "parent_id": None,
+            "kind": "agent",
+            "title": self._task_text[:240] or "持续 Agent 任务",
+            "description": self._task_text[:8_000],
+            "depends_on": [],
+            "status": root_status,
+            "attempts": 1,
+            "max_attempts": 1,
+            "requires_approval": self._status == "awaiting_user",
+            "allowed_tools": [],
+            "acceptance_criteria": ["完成用户请求并返回可验证结果"],
+        }
+        self._persistence.save_workbench_snapshot(
+            project_key=self._project_key,
+            workflow_family="continuous_agent",
+            thread_id=self._thread_id,
+            snapshot={
+                "revision": 1,
+                "status": self._status,
+                "task_mode": "firmware",
+                "supports_interactions": False,
+                "objective": {
+                    "objective_id": f"continuous:{self._thread_id}",
+                    "title": self._task_text[:240] or "持续 Agent 任务",
+                    "description": self._task_text[:8_000],
+                    "status": (
+                        "completed"
+                        if self._status == "completed"
+                        else "blocked"
+                        if terminal
+                        else "active"
+                    ),
+                    "priority": 50,
+                    "acceptance_criteria": ["完成用户请求并返回可验证结果"],
+                    "constraints": ["写操作必须经过明确审批"],
+                    "revision": 1,
+                },
+                "changes": [],
+                "tasks": [root_task, *self._tasks.values()],
+                "capabilities": [],
+                "acceptance": [
+                    {
+                        "criterion_id": f"continuous:{self._thread_id}:result",
+                        "description": "完成用户请求并返回可验证结果",
+                        "verification_kind": "continuous_agent_result",
+                        "status": criterion_status,
+                        "required_evidence": list(self._evidence_ids),
+                        "evidence_ids": list(self._evidence_ids),
+                    }
+                ],
+                "evidence": [
+                    {
+                        "evidence_id": evidence_id,
+                        "kind": evidence_id.partition(":")[0],
+                        "accepted_by": [
+                            f"continuous:{self._thread_id}:result"
+                        ],
+                    }
+                    for evidence_id in self._evidence_ids
+                ],
+                "interactions": [],
+                "recovery": list(self._recovery),
+                "trace": list(self._trace),
+                "current_task_id": self._current_task_id,
+                "acceptance_passed": criterion_status == "passed",
+                "build_verified": False,
+                "hardware_function_verified": False,
+                "blocked_reason": (
+                    str(self._recovery[-1]["message"])
+                    if self._recovery
+                    else None
+                ),
+            },
+        )
+
+
+def _derive_history_events(
+    persistence: PersistencePort,
+    *,
+    project_key: str,
+    turn_id: str,
+) -> list[ConversationEvent]:
+    """把最近的历史对话派生为事件，供持续 Agent 跨轮继承上下文。
+
+    只取 user/assistant 消息（跳过空内容），每条内容截断到尾部
+    ``_HISTORY_CONTENT_CHARACTERS`` 字符（与专用知识图的 conversation_history
+    截断策略一致），最多注入最近 ``_HISTORY_EVENT_LIMIT`` 条。结果写入
+    ``conversation_history`` channel（每轮覆盖，不参与 events 的跨轮累积），
+    因此不会触发 compact_context，也不会被投影到会话流或被误认为当前
+    turn 的回复。
+    """
+    history = [
+        item
+        for item in persistence.get_messages(project_key)
+        if str(item.get("role", "")) in {"user", "assistant"}
+        and str(item.get("content", "")).strip()
+    ][-_HISTORY_EVENT_LIMIT:]
+    events: list[ConversationEvent] = []
+    for index, item in enumerate(history):
+        role = str(item.get("role", ""))
+        events.append(
+            ConversationEvent(
+                event_id=f"history:{turn_id}:{index}",
+                turn_id=f"history:{turn_id}",
+                kind=(
+                    "user_message"
+                    if role == "user"
+                    else "assistant_message"
+                ),
+                sequence=index,
+                payload={
+                    "content": str(item.get("content", ""))[
+                        -_HISTORY_CONTENT_CHARACTERS:
+                    ]
+                },
+            )
+        )
+    return events
 
 
 def _start_worker(target: Callable[[], None], *, name: str) -> None:
@@ -65,16 +414,47 @@ def _sse(event: str, data: dict[str, object] | str) -> str:
 
 
 def _assistant_message(result: ContinuousAgentRunResult) -> str:
-    for event in reversed(result.state.get("events", [])):
-        if event.kind == "assistant_message":
-            content = str(event.payload.get("content", "")).strip()
-            if content:
-                return content
+    """取当前 turn 的 assistant 回复，绝不回退到历史 turn 的内容。
+
+    事件列表跨 turn 累积，若按“最后一条 assistant_message”取值，当前 turn
+    因审批被拒/工具失败而未生成回复时，会错误复读上一个 turn 的旧回复
+    （用户会看到答非所问的重复输出）。这里严格限定 turn_id，取不到时按
+    turn 状态生成语义化兜底消息。
+    """
+
+    state = result.state
+    turn_id = state.get("turn_id")
+    if turn_id:
+        for event in reversed(state.get("events", [])):
+            if event.kind == "assistant_message" and event.turn_id == turn_id:
+                content = str(event.payload.get("content", "")).strip()
+                if content:
+                    return content
     if result.pending_approval is not None:
-        return result.pending_approval.summary
-    failure = result.state.get("last_failure")
+        # 审批请求已由 approval 事件/审批卡片呈现，这里不再生成与审批摘要
+        # 内容相同的 assistant 消息，避免 UI 把“执行工具…”渲染成两条重复。
+        return ""
+    failure = state.get("last_failure")
     if failure is not None:
         return failure.message
+    approvals = state.get("domain_approvals", {})
+    feedback = state.get("domain_approval_feedback", {})
+    if approvals and feedback:
+        latest_call = next(
+            (call for call in reversed(list(approvals)) if call in feedback),
+            None,
+        )
+        if latest_call is not None and not approvals[latest_call]:
+            note = str(feedback[latest_call]).strip()
+            return (
+                "你拒绝了该任务的审批，已保留现场并停止执行"
+                + (f"；你的反馈：{note}" if note else "")
+                + "。可以补充信息后让我继续。"
+            )
+    status = state.get("turn_status")
+    objective_status = state.get("objective_status")
+    if status in {"blocked", "failed"} or objective_status == "blocked":
+        return "当前任务已阻塞并保留现场；可以补充信息后让我继续。"
     return "本轮没有产生可展示的回复。"
 
 
@@ -249,6 +629,9 @@ def run_continuous_agent_http_turn(
         "turn_id": turn_id,
         "project_name": project_name,
         "root_index": root_index,
+        # 审批恢复在另一个 HTTP 请求中完成，必须从持久化配置恢复原始
+        # user 消息，才能在最终终态写入完整且唯一的聊天 exchange。
+        "task_text": message,
     }
     if runtime_metadata:
         runtime_config.update(runtime_metadata)
@@ -260,12 +643,19 @@ def run_continuous_agent_http_turn(
         task_text=message,
         runtime_config=runtime_config,
     )
+    history_events = _derive_history_events(
+        persistence,
+        project_key=project_key,
+        turn_id=turn_id,
+    )
     initial_state: dict[str, object] = {
         "session_id": session_id,
         "turn_id": turn_id,
         "project_key": project_key,
         "session_status": "active",
         "turn_status": "running",
+        # events 每轮只含本轮：merge_conversation_events 检测到本轮 user
+        # 消息会丢弃上一轮事件，工具证据不跨轮泄漏。
         "events": [
             ConversationEvent(
                 event_id=f"{turn_id}:user",
@@ -275,6 +665,14 @@ def run_continuous_agent_http_turn(
                 payload={"content": message},
             )
         ],
+        # events 已每轮重置，压缩游标与摘要也必须同步归零，否则旧 checkpoint
+        # 残留的 compaction_cursor 会过滤掉本轮 user 消息（sequence 从 0 重新
+        # 编号），残留的旧摘要也会继续误导模型决策。
+        "compaction_cursor": 0,
+        "context_summary": "",
+        # 历史对话作为每轮输入（覆盖式 channel），decide_next_step 会把它
+        # 与本轮事件一起交给模型。
+        "conversation_history": history_events,
         "step_count": 0,
         "max_steps": max_steps,
         # These fields describe one Turn, while the checkpoint thread is kept
@@ -307,6 +705,12 @@ def run_continuous_agent_http_turn(
         "task_id": None,
     }
     published_conversation_event_ids: set[str] = set()
+    workbench = _ContinuousWorkbenchProjection(
+        persistence,
+        project_key=project_key,
+        thread_id=turn_id,
+        task_text=message,
+    )
 
     def enqueue(event: str, data: dict[str, object] | str) -> None:
         try:
@@ -355,6 +759,11 @@ def run_continuous_agent_http_turn(
             event=event,
             data=data,
         )
+        try:
+            workbench.observe(event, data)
+        except Exception:
+            # 工作台是投影视图，持久化失败不能反向中断主任务。
+            pass
         enqueue(event, data)
 
     runtime_context = replace(context, event_reporter=publish)
@@ -426,18 +835,36 @@ def run_continuous_agent_http_turn(
                 assistant_message=assistant_message,
                 failure=failure if isinstance(failure, dict) else None,
             )
-            persistence.append_exchange(
-                project_key,
-                thread_id=turn_id,
-                user_message=message,
-                assistant_message=assistant_message,
-            )
+            # 待审批仍属于当前进行中的 Turn。此时若提前写入历史，WebUI
+            # 恢复时会同时渲染 messages 与 active_run.user_message；审批恢复
+            # 完成后还会再次写入同一 exchange。只在真正终态保存聊天历史。
+            if result.pending_approval is None:
+                persistence.append_exchange(
+                    project_key,
+                    thread_id=turn_id,
+                    user_message=message,
+                    assistant_message=assistant_message,
+                )
         except Exception as error:
+            # 兜底桶：worker try 块内任何未捕获异常都收敛于此。历史教训
+            # （oled4 反复"持续 Agent 执行失败"）：原始异常曾被丢弃，导致
+            # 应用侧查不到根因。这里必须记录完整 traceback，并把异常原文
+            # 写进 failure.details，随错误事件与终态记录持久化。
+            _LOGGER.exception("持续 Agent Turn %s 异常终止", turn_id)
             failure = {
                 "category": "runtime",
                 "code": "continuous_agent_failed",
                 "message": "持续 Agent 执行失败",
+                "details": {
+                    "error": f"{type(error).__name__}: {error}"[:2_000],
+                    "turn_id": turn_id,
+                },
             }
+            failure_message = _failure_assistant_message(
+                persistence,
+                thread_id=turn_id,
+                detail="持续 Agent 执行失败。",
+            )
             publish("error", failure)
             publish("done", "[DONE]")
             persistence.finish_conversation_stream(turn_id, status="failed")
@@ -445,8 +872,14 @@ def run_continuous_agent_http_turn(
             persistence.finish_agent_turn(
                 turn_id,
                 status="failed",
-                assistant_message="持续 Agent 执行失败，请检查服务端日志。",
+                assistant_message=failure_message,
                 failure=failure,
+            )
+            persistence.append_exchange(
+                project_key,
+                thread_id=turn_id,
+                user_message=message,
+                assistant_message=failure_message,
             )
         finally:
             finished.set()
@@ -490,14 +923,25 @@ def resume_continuous_agent_http_approval(
     on_complete: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     turn_id = str(record.runtime_config.get("turn_id", ""))
+    workbench = _ContinuousWorkbenchProjection(
+        persistence,
+        project_key=record.task_key,
+        thread_id=turn_id,
+        task_text=str(record.runtime_config.get("task_text", "")),
+    )
     stream = persistence.get_conversation_stream(turn_id)
     if stream is not None:
         persistence.finish_conversation_stream(turn_id, status="running")
+        resume_event = {"phase": "approval_resume", "message": "审批已处理，正在继续任务"}
         persistence.append_conversation_stream_event(
             turn_id,
             event="phase_changed",
-            data={"phase": "approval_resume", "message": "审批已处理，正在继续任务"},
+            data=resume_event,
         )
+        try:
+            workbench.observe("phase_changed", resume_event)
+        except Exception:
+            pass
 
     first_token = True
     published_conversation_event_ids = {
@@ -528,6 +972,10 @@ def resume_continuous_agent_http_approval(
             event=event,
             data=data,
         )
+        try:
+            workbench.observe(event, data)
+        except Exception:
+            pass
 
     runtime_context = replace(context, event_reporter=publish)
 
@@ -600,7 +1048,14 @@ def resume_continuous_agent_http_approval(
             publish("result", envelope)
             publish("done", "[DONE]")
             if stream is not None:
-                persistence.finish_conversation_stream(turn_id, status="completed")
+                persistence.finish_conversation_stream(
+                    turn_id,
+                    status=(
+                        "failed"
+                        if turn_status == "failed"
+                        else "completed"
+                    ),
+                )
             persistence.finish_agent_turn(
                 turn_id,
                 status=turn_status,
@@ -617,19 +1072,42 @@ def resume_continuous_agent_http_approval(
                 user_message=str(record.runtime_config.get("task_text", "")),
                 assistant_message=assistant_message,
             )
-        except Exception:
-            persistence.append_conversation_stream_event(
-                turn_id,
-                event="error",
-                data={
-                    "category": "recovery",
-                    "message": "审批后的任务恢复失败",
+        except Exception as error:
+            # 与主 worker 兜底桶同样的可观测性要求：原始异常不得丢失，
+            # 否则用户只能看到"审批后的任务恢复失败"而查不到根因。
+            _LOGGER.exception("持续 Agent 审批恢复 Turn %s 异常终止", turn_id)
+            failure = {
+                "category": "recovery",
+                "code": "approval_resume_failed",
+                "message": "审批后的任务恢复失败，已保留此前进展。",
+                "details": {
+                    "error": f"{type(error).__name__}: {error}"[:2_000],
+                    "turn_id": turn_id,
                 },
+            }
+            failure_message = _failure_assistant_message(
+                persistence,
+                thread_id=turn_id,
+                detail="审批后的任务恢复失败。",
             )
-            persistence.append_conversation_stream_event(
-                turn_id, event="done", data="[DONE]"
-            )
+            publish("error", failure)
+            publish("result", {"status": "failed", "failure": failure})
+            publish("done", "[DONE]")
             persistence.finish_conversation_stream(turn_id, status="failed")
+            persistence.finish_run(turn_id, status="failed", result=failure)
+            persistence.finish_agent_turn(
+                turn_id,
+                status="failed",
+                assistant_message=failure_message,
+                failure=failure,
+            )
+            persistence.complete_approval(record.task_key, failed=True)
+            persistence.append_exchange(
+                record.task_key,
+                thread_id=turn_id,
+                user_message=str(record.runtime_config.get("task_text", "")),
+                assistant_message=failure_message,
+            )
         finally:
             if on_complete is not None:
                 on_complete()

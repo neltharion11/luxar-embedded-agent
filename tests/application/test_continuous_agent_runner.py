@@ -106,7 +106,8 @@ def test_runner_resumes_same_checkpoint_after_tool_approval() -> None:
     )
 
     assert interrupted.pending_approval is not None
-    assert interrupted.pending_approval.call_id == "flash-1"
+    # call_id 已被 execute_tools 重映射为 turn 内全局唯一（step{step_count}:{raw}）
+    assert interrupted.pending_approval.call_id == "step1:flash-1"
     assert tool.calls == 0
 
     resumed = resume_continuous_agent_workflow(

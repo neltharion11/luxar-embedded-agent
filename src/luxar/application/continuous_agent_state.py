@@ -43,6 +43,9 @@ class ContinuousAgentState(TypedDict, total=False):
     turn_status: TurnLifecycle
     objective_status: ObjectiveLifecycle
     events: Annotated[list[ConversationEvent], merge_conversation_events]
+    # 每轮注入的历史对话（user/assistant），属于"输入"而非"状态"：
+    # 无 reducer，每轮由 initial_state 整体覆盖，不跨轮累积。
+    conversation_history: list[ConversationEvent]
     context_summary: str
     compaction_cursor: int
     active_objective: ProjectObjective

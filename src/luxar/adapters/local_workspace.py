@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 from dataclasses import dataclass
@@ -360,6 +361,10 @@ class LocalWorkspaceAdapter:
                 ProjectFile(
                     path=source_path.relative_to(root).as_posix(),
                     content=content,
+                    # 与 transactional_code_executor._content_hash 同一基准：
+                    # 对磁盘原始字节做 SHA-256。apply_change_bundle 的
+                    # expected_sha256 必须精确等于此值，否则 stale_snapshot。
+                    sha256=hashlib.sha256(data).hexdigest(),
                 )
             )
 

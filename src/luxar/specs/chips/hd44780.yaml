@@ -1,0 +1,64 @@
+# LUXAR 芯片 Skill 规格：HD44780（字符 LCD，16x2/20x4）
+# 字符型控制器：非点阵页寻址，而是 DDRAM 字符位置 + 用户自定义字形 RAM（CGRAM）。
+# 取模按逐行式(row) + MSB（行内位序），**未真机验证**，保持 unverified。
+schema: luxar/chip-skill/2
+controller: hd44780
+aliases: []
+family: hd44780
+facts:
+  vendor: Hitachi
+  interfaces:
+  - '8080'
+  - '6800'
+  - i2c
+  - spi
+  default_address: '0x27'
+  resolutions:
+  - - 16
+    - 2
+  - - 20
+    - 4
+  - - 16
+    - 1
+  memory_layout: row
+  sources:
+  - kind: library
+    name: Arduino-LiquidCrystal
+    ref: LiquidCrystal.cpp
+    confidence: high
+    note: 字符模式：每字符 5x8 点阵，逐行取模
+  - kind: pdf
+    name: HD44780U datasheet
+    ref: HD44780U.pdf
+    confidence: medium
+    note: CGRAM 每字形 8 字节，每字节一行（MSB 为左）
+spec:
+  init:
+  - cmd: '0x30'
+  - cmd: '0x30'
+  - cmd: '0x30'
+  - cmd: '0x38'
+  - cmd: '0x0C'
+  - cmd: '0x01'
+  driver_template: hd44780_i2c
+diagnostics:
+- id: char_row_probe
+  description: 字符单元横线探针：确认 5x8 字形内行序与位序
+  draw: 在 CGRAM 字形内画 row=0 全行 0x80；确认显示在字形最上一行
+  probes:
+  - kind: hline
+    row: 0
+    mask: '0x80'
+  expect: 位7=行首(MSB) 时 0x80 出现在字形最左列；位0=行首(LSB) 时最右列
+verified: unverified
+verification: []
+display:
+  layout:
+    scan: row
+    bit_order: msb
+    invert: false
+  screen:
+    width: 16
+    height: 2
+  column_offset: 0
+  display_options: {}

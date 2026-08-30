@@ -78,6 +78,15 @@ class AgentStepEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
+    commentary: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=800,
+        description=(
+            "面向用户的自然语言进展消息。需要调用工具或进入新阶段时，用一到两句"
+            "话说明刚确认的事实和接下来要做什么；直接给最终答复时为 null。"
+        ),
+    )
     step: AgentStep
 
 

@@ -81,6 +81,12 @@ def test_sqlite_repository_survives_reopen(tmp_path: Path) -> None:
         user_message="build",
         assistant_message="completed",
     )
+    repository.append_exchange(
+        "0:test",
+        thread_id="thread-1",
+        user_message="build",
+        assistant_message="completed after recovery",
+    )
     repository.upsert_memory(
         project_key="0:test",
         memory_key="device.target_chip",
@@ -100,7 +106,10 @@ def test_sqlite_repository_survives_reopen(tmp_path: Path) -> None:
     )
 
     reopened = SQLitePersistence(database)
-    assert reopened.get_messages("0:test")[-1]["content"] == "completed"
+    assert reopened.get_messages("0:test") == [
+        {"role": "user", "content": "build"},
+        {"role": "assistant", "content": "completed after recovery"},
+    ]
     assert reopened.find_memories("0:test")[0].value == {
         "target_chip": "esp32"
     }
@@ -254,7 +263,7 @@ def test_sqlite_checkpointer_resumes_after_runtime_restart(tmp_path: Path) -> No
         second.close()
 
 
-def test_lancedb_knowledge_index_persists_and_filters_projects(
+def test_lancedb_knowledge_index_is_global_across_projects(
     tmp_path: Path,
 ) -> None:
     index = LanceDBKnowledgeIndex(tmp_path / "knowledge.lance", dimensions=3)
@@ -280,14 +289,15 @@ def test_lancedb_knowledge_index_persists_and_filters_projects(
     reopened = LanceDBKnowledgeIndex(
         tmp_path / "knowledge.lance", dimensions=3
     )
+    # 知识库全局共享：在 0:test 项目中检索也能命中 0:other 入库的文档。
     matches = reopened.search_knowledge(
         project_key="0:test",
         query_text="build",
         query_embedding=[1.0, 0.0, 0.0],
         limit=3,
     )
-    assert reopened.count_knowledge_documents("0:test") == 1
-    assert [match.document_id for match in matches] == ["doc-a"]
+    assert reopened.count_all_knowledge_documents() == 2
+    assert {match.document_id for match in matches} == {"doc-a", "doc-b"}
 
 
 def test_lancedb_empty_index_rebuilds_for_new_embedding_dimensions(

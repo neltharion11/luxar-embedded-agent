@@ -20,3 +20,5 @@ class DeepSeekSettings(BaseSettings):
     repair_model: str = "deepseek-v4-pro"
     # gt=0 表示超时必须严格大于 0，防止无效配置进入 HTTP 客户端。
     timeout_seconds: float = Field(default=60.0, gt=0)
+    thinking_enabled: bool = False
+    thinking_effort: str = "high"

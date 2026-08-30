@@ -697,6 +697,23 @@ class SQLitePersistence:
             raise RuntimeError("Tool execution completion failed")
         return self._sqlite_tool_execution(row)
 
+    def get_tool_execution(
+        self,
+        idempotency_key: str,
+    ) -> ToolExecutionRecord | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT idempotency_key, session_id, turn_id, call_id,
+                       tool_name, arguments_fingerprint, status, result, failure
+                FROM luxar_tool_executions WHERE idempotency_key = ?
+                """,
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._sqlite_tool_execution(row)
+
     def get_messages(self, task_key: str) -> list[dict[str, str]]:
         with self._connection() as connection:
             rows = connection.execute(
@@ -717,6 +734,13 @@ class SQLitePersistence:
         assistant_message: str,
     ) -> None:
         with self._connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM luxar_conversation_messages
+                WHERE task_key = ? AND thread_id = ?
+                """,
+                (task_key, thread_id),
+            )
             connection.executemany(
                 """
                 INSERT INTO luxar_conversation_messages
@@ -889,6 +913,23 @@ class SQLitePersistence:
                 FROM luxar_conversation_streams
                 WHERE task_key = ?
                   AND status IN ('running', 'pending_approval')
+                ORDER BY rowid DESC LIMIT 1
+                """,
+                (task_key,),
+            ).fetchone()
+        return self._sqlite_stream_record(row) if row is not None else None
+
+    def get_latest_conversation_stream(
+        self,
+        task_key: str,
+    ) -> ConversationStreamRecord | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT thread_id, task_key, user_message, assistant_content,
+                       status, last_sequence, last_event, updated_at
+                FROM luxar_conversation_streams
+                WHERE task_key = ?
                 ORDER BY rowid DESC LIMIT 1
                 """,
                 (task_key,),
@@ -1288,6 +1329,9 @@ class SQLitePersistence:
 
     def count_knowledge_documents(self, project_key: str) -> int:
         del project_key
+        return 0
+
+    def count_all_knowledge_documents(self) -> int:
         return 0
 
     def save_agent_project(

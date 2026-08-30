@@ -119,6 +119,46 @@ class ToolRegistry:
             arguments_fingerprint=fingerprint,
         )
 
+    def _resolve_idempotency(
+        self,
+        base_key: str,
+        call: ToolCall,
+        fingerprint: str,
+    ) -> tuple[str, ToolDispatchOutcome | None]:
+        """解析幂等键。
+
+        同一键的完全一致调用（工具名与参数指纹相同）直接回放缓存/ledger 结果；
+        撞号（同键但工具或参数不同）时确定性派生新键 ``{base}#{n}``。派生键对
+        内存缓存与 ledger 同时生效——绝不能把另一调用的记录当成当前调用返回
+        （否则会把 e.g. driver.search 的结果伪装成 font.extract 的结果）。
+        """
+        candidate = base_key
+        suffix = 1
+        while True:
+            cached = self._completed.get(candidate)
+            if cached is not None:
+                cached_name, cached_fingerprint, outcome = cached
+                if (
+                    cached_name == call.tool_name
+                    and cached_fingerprint == fingerprint
+                ):
+                    return candidate, outcome
+                candidate = f"{base_key}#{suffix}"
+                suffix += 1
+                continue
+            if self._ledger is not None:
+                record = self._ledger.get_tool_execution(candidate)
+                if record is not None:
+                    if (
+                        record.tool_name == call.tool_name
+                        and record.arguments_fingerprint == fingerprint
+                    ):
+                        return candidate, self._outcome_from_record(record, call)
+                    candidate = f"{base_key}#{suffix}"
+                    suffix += 1
+                    continue
+            return candidate, None
+
     def dispatch(
         self,
         call: ToolCall,
@@ -126,14 +166,15 @@ class ToolRegistry:
         *,
         approved: bool | None = None,
     ) -> ToolDispatchOutcome:
-        idempotency_key = self._idempotency_key(call, context)
+        base_key = self._idempotency_key(call, context)
         fingerprint = self._arguments_fingerprint(call.arguments)
-        cached = self._completed.get(idempotency_key)
+        idempotency_key, cached = self._resolve_idempotency(
+            base_key,
+            call,
+            fingerprint,
+        )
         if cached is not None:
-            cached_name, cached_fingerprint, outcome = cached
-            if cached_name != call.tool_name or cached_fingerprint != fingerprint:
-                raise ValueError("Tool idempotency key was reused with new arguments")
-            return outcome
+            return cached
 
         tool = self._tools.get(call.tool_name)
         if tool is None:
@@ -199,7 +240,9 @@ class ToolRegistry:
                 )
 
         if tool.descriptor.requires_approval and approved is None:
-            target = call.arguments.get("serial_port")
+            target = call.arguments.get("serial_port") or call.arguments.get(
+                "file_path"
+            ) or call.arguments.get("driver_id")
             target_suffix = f"（目标：{target}）" if target else ""
             return ToolDispatchOutcome(
                 call=ToolCallState(

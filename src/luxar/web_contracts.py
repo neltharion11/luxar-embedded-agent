@@ -156,6 +156,59 @@ class WebSerialPortList(BaseModel):
     ports: list[WebSerialPort]
 
 
+class WebSerialOpenRequest(BaseModel):
+    """Validated settings for one process-local interactive serial session."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    port: str = Field(min_length=1, max_length=80)
+    baud_rate: int = Field(default=115_200, ge=300, le=4_000_000)
+    data_bits: Literal[5, 6, 7, 8] = 8
+    parity: Literal["none", "even", "odd", "mark", "space"] = "none"
+    stop_bits: Literal[1.0, 1.5, 2.0] = 1.0
+
+    @field_validator("port")
+    @classmethod
+    def normalize_port(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("串口不能为空")
+        return normalized
+
+
+class WebSerialWriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    mode: Literal["text", "hex"] = "text"
+    payload: str = Field(min_length=1, max_length=32_768)
+    line_ending: Literal["none", "lf", "crlf"] = "none"
+
+
+class WebDriverPublishRequest(BaseModel):
+    """Publish selected current-project files as one immutable public driver."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    root_index: int = Field(default=0, ge=0)
+    driver_id: str = Field(
+        min_length=1,
+        max_length=120,
+        pattern=r"^[a-z0-9][a-z0-9._-]*$",
+    )
+    version: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]*$",
+    )
+    name: str = Field(min_length=1, max_length=160)
+    vendor: str = Field(default="", max_length=120)
+    hardware: str = Field(min_length=1, max_length=160)
+    protocols: list[str] = Field(min_length=1, max_length=16)
+    targets: list[str] = Field(default_factory=list, max_length=32)
+    description: str = Field(default="", max_length=2_000)
+    file_paths: list[str] = Field(min_length=1, max_length=64)
+
+
 class WebHealth(BaseModel):
     status: Literal["ok"] = "ok"
     service: Literal["luxar-langgraph"] = "luxar-langgraph"
@@ -189,6 +242,8 @@ class WebModelEndpointUpdate(BaseModel):
     base_url: str = Field(default="", max_length=1000)
     model: str = Field(default="", max_length=300)
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    thinking_enabled: bool = False
+    thinking_effort: Literal["low", "high", "max"] = "high"
     context_window_tokens: int | None = Field(
         default=None,
         ge=4_096,

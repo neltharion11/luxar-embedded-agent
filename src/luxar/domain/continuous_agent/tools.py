@@ -62,7 +62,12 @@ class ToolExecutionRecord(BaseModel):
     turn_id: str = Field(min_length=1, max_length=128)
     call_id: str = Field(min_length=1, max_length=160)
     tool_name: str = Field(min_length=1, max_length=240)
-    arguments_fingerprint: str = Field(min_length=1, max_length=8_000)
+    # 指纹 = 参数 JSON（排序序列化）。workspace.apply_change_bundle 的参数包含
+    # 完整文件内容（bundle JSON），可达数万字符；历史上 8_000 上限导致审批恢复
+    # 时 reserve_tool_execution 校验失败、被兜底桶吞成 approval_resume_failed。
+    # 上限放宽到 300_000（远大于任何现实 bundle，仍是有界值）；DB 列本身为 TEXT
+    # 无长度限制。只用于幂等比较，不参与业务语义。
+    arguments_fingerprint: str = Field(min_length=1, max_length=300_000)
     status: ToolExecutionLedgerStatus
     result: dict[str, object] | None = None
     failure: ContinuousAgentFailure | None = None

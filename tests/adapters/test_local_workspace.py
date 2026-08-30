@@ -60,6 +60,31 @@ def test_read_project_files_returns_allowed_files_in_path_order(
     assert files[1].content == "// 中文\nvoid app_main(void) {}\n"
 
 
+def test_read_project_files_reports_per_file_sha256_of_disk_bytes(
+    tmp_path: Path,
+) -> None:
+    """回归：read_project 每个文件必须带磁盘原始字节的 SHA-256（小写 hex），
+    且与 apply_change_bundle 的 expected_sha256 校验基准（transactional_
+    code_executor._content_hash 对原始字节）一致，让代理无需向用户索要哈希。"""
+    import hashlib
+
+    main_directory = tmp_path / "main"
+    main_directory.mkdir()
+    raw = "void app_main(void) {}\n".encode("utf-8")
+    (main_directory / "main.c").write_bytes(raw)
+
+    files = LocalWorkspaceAdapter().read_project_files(tmp_path)
+
+    entry = next(file for file in files if file.path == "main/main.c")
+    expected = hashlib.sha256(raw).hexdigest()
+    assert entry.sha256 == expected
+    assert entry.sha256 == entry.sha256.lower()
+    # 与事务执行器对同一文件的字节哈希一致（直接引用其基准函数）
+    from luxar.adapters.transactional_code_executor import _content_hash
+
+    assert entry.sha256 == _content_hash(raw)
+
+
 @pytest.mark.parametrize(
     "directory_name",
     [
